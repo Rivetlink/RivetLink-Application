@@ -219,10 +219,33 @@
 							<template #prepend>
 								<VIcon icon="mdi-monitor" />
 							</template>
-							<VListItemTitle>{{ d.name }}</VListItemTitle>
+							<VListItemTitle>
+								{{ d.name }}
+								<VChip
+									v-if="store.connectedLanId === d.id"
+									size="x-small"
+									color="green"
+									variant="flat"
+									class="ml-2"
+								>
+									{{ t("connect.lanConnected") }}
+								</VChip>
+							</VListItemTitle>
 							<VListItemSubtitle>{{ d.address }}:{{ d.port }}</VListItemSubtitle>
 							<template #append>
 								<VBtn
+									v-if="store.connectedLanId === d.id"
+									size="small"
+									color="error"
+									variant="tonal"
+									prepend-icon="mdi-close"
+									class="mr-2"
+									@click="onLanDisconnect"
+								>
+									{{ t("connect.lanDisconnect") }}
+								</VBtn>
+								<VBtn
+									v-else
 									size="small"
 									color="primary"
 									variant="flat"
@@ -241,11 +264,6 @@
 							</template>
 						</VListItem>
 					</VList>
-				</VCard>
-
-				<VCard v-if="lanShot" class="mt-4">
-					<VCardTitle>{{ t("connect.screenshot") }}</VCardTitle>
-					<VImg :src="lanShot" />
 				</VCard>
 			</VWindowItem>
 
@@ -303,7 +321,8 @@
 		discoverLan,
 		type Device,
 		type LanDevice,
-		lanScreenshot,
+		lanConnect,
+		lanDisconnect,
 		listDevices,
 		login,
 		removeLanDevice,
@@ -332,7 +351,6 @@
 	// --- LAN state ---
 	const scanning = ref(false);
 	const lanFound = ref<LanDevice[]>([]);
-	const lanShot = ref<string | null>(null);
 	const connectOpen = ref(false);
 	const connectTarget = ref<SavedLanDevice | null>(null);
 
@@ -446,7 +464,6 @@
 
 	function openConnect(d: SavedLanDevice) {
 		connectTarget.value = d;
-		lanShot.value = null;
 		connectOpen.value = true;
 	}
 
@@ -454,19 +471,22 @@
 		const target = connectTarget.value;
 		if (!target) return;
 		error.value = null;
-		lanShot.value = null;
 		busyMsg.value = t("connect.lanConnecting");
 		try {
-			lanShot.value = await lanScreenshot(
-				target.address,
-				target.port,
-				pin || null,
-				target.public_key,
-			);
+			await lanConnect(target, pin || null);
 		} catch (e) {
 			fail(e);
 		} finally {
 			busyMsg.value = null;
+		}
+	}
+
+	async function onLanDisconnect() {
+		error.value = null;
+		try {
+			await lanDisconnect();
+		} catch (e) {
+			fail(e);
 		}
 	}
 </script>

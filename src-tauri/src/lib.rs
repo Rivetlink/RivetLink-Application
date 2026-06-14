@@ -21,6 +21,13 @@ use rivetlink_sdk::{ClientConfig, Device, Identity, RivetClient};
 
 use settings::{AppSettings, Relay};
 
+/// A running live-stream session: the task pumping frames, plus which saved
+/// LAN device it belongs to (for the "connected" badge).
+struct StreamSession {
+    task: tokio::task::JoinHandle<()>,
+    device_id: String,
+}
+
 /// Shared app state.
 struct AppState {
     /// Where settings + identity live (the OS app-data dir).
@@ -29,6 +36,8 @@ struct AppState {
     settings: Mutex<AppSettings>,
     /// The connected client (after `connect`).
     client: Arc<Mutex<Option<RivetClient>>>,
+    /// The active LAN live-stream session, if any.
+    stream: Mutex<Option<StreamSession>>,
 }
 
 impl AppState {
@@ -378,6 +387,107 @@ async fn lan_screenshot(
     Ok(format!("data:image/png;base64,{b64}"))
 }
 
+/// Open (or focus) the standalone viewer window that renders the live stream.
+fn open_viewer(app: &tauri::AppHandle, title: &str) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("viewer") {
+        let _ = win.set_focus();
+        return Ok(());
+    }
+    tauri::WebviewWindowBuilder::new(
+        app,
+        "viewer",
+        tauri::WebviewUrl::App("index.html#/viewer".into()),
+    )
+    .title(title)
+    .inner_size(1280.0, 800.0)
+    .min_inner_size(640.0, 400.0)
+    .build()
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Connect to a LAN host and open a live screen stream in its own window.
+///
+/// Frames are emitted to the frontend as `lan://frame` (a JPEG data URL); the
+/// viewer window renders them. `lan://connected` / `lan://disconnected` drive
+/// the "connected" badge in the main window.
+#[tauri::command]
+async fn lan_connect(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+    address: String,
+    port: u16,
+    device_id: String,
+    pin: Option<String>,
+    host_public_key: Option<String>,
+) -> Result<(), String> {
+    use base64::engine::general_purpose::STANDARD as B64;
+
+    let addr: std::net::SocketAddr = format!("{address}:{port}")
+        .parse()
+        .map_err(|_| format!("bad address: {address}:{port}"))?;
+
+    // Establish the encrypted channel (PIN/PAKE, or key/TOFU with host pinning).
+    let (mut stream, channel) = match pin {
+        Some(pin) if !pin.trim().is_empty() => {
+            rivetlink_sdk::lan::connect_password(addr, pin.trim())
+                .await
+                .map_err(|e| e.to_string())?
+        },
+        _ => {
+            let identity =
+                Identity::load_or_create(&state.identity_path()).map_err(|e| e.to_string())?;
+            rivetlink_sdk::lan::connect_key_pinned(addr, &identity, host_public_key.as_deref())
+                .await
+                .map_err(|e| e.to_string())?
+        },
+    };
+
+    // Stop any previous session before starting a new one.
+    stop_stream(&state).await;
+    open_viewer(&app, &format!("RivetLink — {name}"))?;
+
+    let app_for_task = app.clone();
+    let task = tokio::spawn(async move {
+        let result = rivetlink_sdk::lan::stream_frames(&mut stream, &channel, 15, |jpeg| {
+            let url = format!("data:image/jpeg;base64,{}", B64.encode(&jpeg));
+            // If the viewer window is gone, stop the stream.
+            app_for_task.emit("lan://frame", url).is_ok()
+        })
+        .await;
+        if let Err(e) = result {
+            let _ = app_for_task.emit("lan://error", e.to_string());
+        }
+        let _ = app_for_task.emit("lan://disconnected", ());
+    });
+
+    *state.stream.lock().await = Some(StreamSession {
+        task,
+        device_id: device_id.clone(),
+    });
+    let _ = app.emit("lan://connected", device_id);
+    Ok(())
+}
+
+/// Stop the active stream (if any) and abort its task.
+async fn stop_stream(state: &AppState) {
+    if let Some(session) = state.stream.lock().await.take() {
+        session.task.abort();
+    }
+}
+
+/// Disconnect the current LAN stream and close the viewer window.
+#[tauri::command]
+async fn lan_disconnect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    stop_stream(&state).await;
+    if let Some(win) = app.get_webview_window("viewer") {
+        let _ = win.close();
+    }
+    let _ = app.emit("lan://disconnected", ());
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -393,6 +503,7 @@ pub fn run() {
                 data_dir,
                 settings: Mutex::new(settings),
                 client: Arc::new(Mutex::new(None)),
+                stream: Mutex::new(None),
             });
 
             // Native menu bar (RivetLink + Edit). The "Check for Updates" item
@@ -431,7 +542,9 @@ pub fn run() {
             discover_lan,
             add_lan_device,
             remove_lan_device,
-            lan_screenshot
+            lan_screenshot,
+            lan_connect,
+            lan_disconnect
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

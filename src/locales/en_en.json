@@ -81,7 +81,9 @@
         "lanConnecting": "Connecting over the local network…",
         "lanConnectTitle": "Connect to {name}",
         "lanPinLabel": "PIN (if the other computer shows one)",
-        "lanPinHint": "Leave empty to connect with this device's key instead."
+        "lanPinHint": "Leave empty to connect with this device's key instead.",
+        "lanConnected": "Connected",
+        "lanDisconnect": "Disconnect"
     },
     "device": {
         "thisDevice": "This device",
@@ -130,5 +132,9 @@
         "error": "Couldn't check for updates right now.",
         "download": "Download",
         "install": "Update & Restart"
+    },
+    "viewer": {
+        "connecting": "Connecting — pick a screen to share on the other computer…",
+        "ended": "The connection has ended."
     }
 }

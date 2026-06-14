@@ -81,7 +81,9 @@
         "lanConnecting": "Verbinden via het lokale netwerk…",
         "lanConnectTitle": "Verbinden met {name}",
         "lanPinLabel": "PIN (als de andere computer er een toont)",
-        "lanPinHint": "Laat leeg om in plaats daarvan met de sleutel van dit apparaat te verbinden."
+        "lanPinHint": "Laat leeg om in plaats daarvan met de sleutel van dit apparaat te verbinden.",
+        "lanConnected": "Verbonden",
+        "lanDisconnect": "Verbreken"
     },
     "device": {
         "thisDevice": "Dit apparaat",
@@ -130,5 +132,9 @@
         "error": "Kon nu niet op updates controleren.",
         "download": "Downloaden",
         "install": "Updaten en herstarten"
+    },
+    "viewer": {
+        "connecting": "Verbinden — kies een scherm om te delen op de andere computer…",
+        "ended": "De verbinding is beëindigd."
     }
 }

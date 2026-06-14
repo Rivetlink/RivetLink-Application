@@ -10,6 +10,7 @@ import Connect from "./views/Connect.vue";
 import ThisDevice from "./views/ThisDevice.vue";
 import Relays from "./views/Relays.vue";
 import Settings from "./views/Settings.vue";
+import Viewer from "./views/Viewer.vue";
 
 export const router = createRouter({
 	history: createWebHashHistory(),
@@ -50,6 +51,14 @@ export const router = createRouter({
 			meta: {
 				titleKey: "nav.settings",
 				icon: "mdi-cog",
+			},
+		},
+		{
+			// Standalone live-stream window — no nav shell (meta.bare).
+			path: "/viewer",
+			component: Viewer,
+			meta: {
+				bare: true,
 			},
 		},
 	],

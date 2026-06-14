@@ -1,53 +1,58 @@
 <template>
 	<VApp>
-		<!-- Loading -->
-		<VMain v-if="!store.loaded">
-			<VContainer class="fill-height d-flex align-center justify-center">
-				<VProgressCircular indeterminate color="primary" size="40" />
-			</VContainer>
-		</VMain>
+		<!-- Standalone windows (e.g. the live viewer) render bare, no shell. -->
+		<RouterView v-if="route.meta.bare" />
 
-		<!-- First-run onboarding -->
-		<VMain v-else-if="!store.settings.setup_complete">
-			<Onboarding @done="router.replace('/')" />
-		</VMain>
-
-		<!-- Main shell -->
 		<template v-else>
-			<VNavigationDrawer v-model="drawer" color="grey-darken-4">
-				<div class="pa-4 d-flex align-center">
-					<VIcon icon="mdi-shield-lock-outline" color="primary" class="mr-2" />
-					<span class="text-h6">RivetLink</span>
-				</div>
-				<VDivider />
-				<VList nav density="comfortable">
-					<VListItem
-						v-for="item in navItems"
-						:key="item.path"
-						:to="item.path"
-						:prepend-icon="item.icon"
-						:title="t(item.titleKey)"
-					/>
-				</VList>
-				<template #append>
-					<div class="pa-3 text-caption text-medium-emphasis">
-						{{ store.settings.device_name || t("app.unnamedDevice") }}
-					</div>
-				</template>
-			</VNavigationDrawer>
-
-			<VAppBar flat color="grey-darken-4" density="comfortable">
-				<VAppBarNavIcon @click="drawer = !drawer" />
-				<VAppBarTitle>{{ currentTitle }}</VAppBarTitle>
-			</VAppBar>
-
-			<VMain>
-				<RouterView />
+			<!-- Loading -->
+			<VMain v-if="!store.loaded">
+				<VContainer class="fill-height d-flex align-center justify-center">
+					<VProgressCircular indeterminate color="primary" size="40" />
+				</VContainer>
 			</VMain>
-		</template>
 
-		<!-- Check for updates (from the RivetLink native menu) -->
-		<UpdateModal />
+			<!-- First-run onboarding -->
+			<VMain v-else-if="!store.settings.setup_complete">
+				<Onboarding @done="router.replace('/')" />
+			</VMain>
+
+			<!-- Main shell -->
+			<template v-else>
+				<VNavigationDrawer v-model="drawer" color="grey-darken-4">
+					<div class="pa-4 d-flex align-center">
+						<VIcon icon="mdi-shield-lock-outline" color="primary" class="mr-2" />
+						<span class="text-h6">RivetLink</span>
+					</div>
+					<VDivider />
+					<VList nav density="comfortable">
+						<VListItem
+							v-for="item in navItems"
+							:key="item.path"
+							:to="item.path"
+							:prepend-icon="item.icon"
+							:title="t(item.titleKey)"
+						/>
+					</VList>
+					<template #append>
+						<div class="pa-3 text-caption text-medium-emphasis">
+							{{ store.settings.device_name || t("app.unnamedDevice") }}
+						</div>
+					</template>
+				</VNavigationDrawer>
+
+				<VAppBar flat color="grey-darken-4" density="comfortable">
+					<VAppBarNavIcon @click="drawer = !drawer" />
+					<VAppBarTitle>{{ currentTitle }}</VAppBarTitle>
+				</VAppBar>
+
+				<VMain>
+					<RouterView />
+				</VMain>
+			</template>
+
+			<!-- Check for updates (from the RivetLink native menu) -->
+			<UpdateModal />
+		</template>
 	</VApp>
 </template>
 
@@ -73,6 +78,8 @@
 	const { t } = useI18n();
 	const drawer = ref(true);
 	let unlistenMenu: UnlistenFn | null = null;
+	let unlistenConnected: UnlistenFn | null = null;
+	let unlistenDisconnected: UnlistenFn | null = null;
 
 	// Developer console is off by default; toggle it with Ctrl/Cmd+Shift+I or F12.
 	function onKeydown(e: KeyboardEvent) {
@@ -87,12 +94,21 @@
 		window.addEventListener("keydown", onKeydown);
 		// The native "RivetLink -> Check for Updates" menu item fires this event.
 		unlistenMenu = await listen("menu://check-updates", () => checkForUpdates());
+		// Track the active LAN live session for the "connected" badge.
+		unlistenConnected = await listen<string>("lan://connected", (e) => {
+			store.connectedLanId = e.payload;
+		});
+		unlistenDisconnected = await listen("lan://disconnected", () => {
+			store.connectedLanId = null;
+		});
 		await loadSettings();
 	});
 
 	onUnmounted(() => {
 		window.removeEventListener("keydown", onKeydown);
 		unlistenMenu?.();
+		unlistenConnected?.();
+		unlistenDisconnected?.();
 	});
 
 	// Nav items, filtered by the roles the user enabled during onboarding.

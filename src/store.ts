@@ -60,6 +60,8 @@ export const store = reactive({
 	connected: false,
 	loggedIn: false,
 	publicKey: "",
+	/// Saved LAN device id of the active live session, or null.
+	connectedLanId: null as string | null,
 });
 
 export function isHost(): boolean {
@@ -177,4 +179,24 @@ export async function lanScreenshot(
 		pin,
 		hostPublicKey,
 	});
+}
+
+/// Open a live screen stream to a saved LAN device (renders in its own window).
+export async function lanConnect(
+	device: SavedLanDevice,
+	pin: string | null,
+): Promise<void> {
+	await invoke("lan_connect", {
+		name: device.name,
+		address: device.address,
+		port: device.port,
+		deviceId: device.id,
+		pin,
+		hostPublicKey: device.public_key,
+	});
+}
+
+/// Stop the active live stream and close the viewer window.
+export async function lanDisconnect(): Promise<void> {
+	await invoke("lan_disconnect");
 }
