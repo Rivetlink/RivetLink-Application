@@ -93,3 +93,53 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+  # tauri-action names artifacts without the OS word (e.g. RivetLink_0.1.4_amd64.deb).
+  # Rename every asset to RivetLink_<version>_<os>_<arch>.<ext> and patch the
+  # matching URLs inside latest.json so the updater still resolves them.
+  rename-assets:
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Rename release assets + patch latest.json
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          V="${TAG#v}"
+          gh release view "$TAG" --repo "$REPO" --json assets \
+            -q '.assets[] | "\(.apiUrl)\t\(.name)"' > assets.tsv
+          while IFS=$'\t' read -r url name; do
+            case "$name" in
+              *_amd64.deb)                new="RivetLink_${V}_linux_amd64.deb" ;;
+              *_amd64.deb.sig)            new="RivetLink_${V}_linux_amd64.deb.sig" ;;
+              *.x86_64.rpm)               new="RivetLink_${V}_linux_x86_64.rpm" ;;
+              *.x86_64.rpm.sig)           new="RivetLink_${V}_linux_x86_64.rpm.sig" ;;
+              *_universal.dmg)            new="RivetLink_${V}_macos_universal.dmg" ;;
+              *_universal.app.tar.gz)     new="RivetLink_${V}_macos_universal.app.tar.gz" ;;
+              *_universal.app.tar.gz.sig) new="RivetLink_${V}_macos_universal.app.tar.gz.sig" ;;
+              *x64-setup.exe)             new="RivetLink_${V}_windows_x64-setup.exe" ;;
+              *x64-setup.exe.sig)         new="RivetLink_${V}_windows_x64-setup.exe.sig" ;;
+              *x64_en-US.msi)             new="RivetLink_${V}_windows_x64_en-US.msi" ;;
+              *x64_en-US.msi.sig)         new="RivetLink_${V}_windows_x64_en-US.msi.sig" ;;
+              *) continue ;;
+            esac
+            [ "$name" = "$new" ] && continue
+            gh api -X PATCH "${url#https://api.github.com}" -f name="$new" -q '.name' \
+              | sed "s/^/renamed: $name -> /"
+          done < assets.tsv
+
+          LJ_URL=$(gh release view "$TAG" --repo "$REPO" --json assets \
+            -q '.assets[] | select(.name=="latest.json") | .apiUrl')
+          gh api "${LJ_URL#https://api.github.com}" \
+            -H "Accept: application/octet-stream" > latest.json
+          sed -i \
+            -e "s#RivetLink_${V}_amd64.deb#RivetLink_${V}_linux_amd64.deb#g" \
+            -e "s#RivetLink-${V}-1.x86_64.rpm#RivetLink_${V}_linux_x86_64.rpm#g" \
+            -e "s#RivetLink_${V}_x64_en-US.msi#RivetLink_${V}_windows_x64_en-US.msi#g" \
+            -e "s#RivetLink_${V}_x64-setup.exe#RivetLink_${V}_windows_x64-setup.exe#g" \
+            -e "s#RivetLink_universal.app.tar.gz#RivetLink_${V}_macos_universal.app.tar.gz#g" \
+            latest.json
+          gh release upload "$TAG" latest.json --repo "$REPO" --clobber
