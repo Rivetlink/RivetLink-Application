@@ -67,6 +67,10 @@ jobs:
         uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           workspaces: RivetLink-Application/src-tauri -> target
+          # Cache even when the build fails (faster red-build iteration) and
+          # keep every downloaded crate, not just the ones that made it in.
+          cache-on-failure: "true"
+          cache-all-crates: "true"
 
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
