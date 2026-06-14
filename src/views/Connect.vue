@@ -2,6 +2,7 @@
 import {
     onMounted, ref,
 } from "vue";
+import { useI18n } from "vue-i18n";
 import {
     activeRelay,
     captureScreenshot,
@@ -11,6 +12,8 @@ import {
     store,
     type Device,
 } from "../store";
+
+const { t } = useI18n();
 
 const tab = ref("devices");
 
@@ -31,8 +34,14 @@ function fail(e: unknown) {
     error.value = typeof e === "string" ? e : String(e);
 }
 
+function deviceMeta(d: Device): string {
+    return t("connect.deviceMeta", {
+        platform: d.platform || t("connect.unknown"),
+        seen: d.last_seen || t("connect.never"),
+    });
+}
+
 onMounted(() => {
-    // Best-effort: open the relay connection up front.
     if (activeRelay() && !store.connected) {
         doConnect();
     }
@@ -79,7 +88,7 @@ async function capture() {
     if (!selected.value) return;
     error.value = null;
     screenshot.value = null;
-    busyMsg.value = "Sessie aanvragen — de host kan om goedkeuring vragen…";
+    busyMsg.value = t("connect.requestingSession");
     try {
         screenshot.value = await captureScreenshot(selected.value);
     } catch (e) {
@@ -99,10 +108,10 @@ async function capture() {
             variant="tonal"
             class="mb-4"
         >
-            Nog geen actieve relay. Voeg er een toe onder
+            {{ t("connect.noRelayBefore") }}
             <router-link to="/relays">
-                Relays
-            </router-link>.
+                {{ t("connect.noRelayLink") }}
+            </router-link>{{ t("connect.noRelayAfter") }}
         </v-alert>
 
         <template v-else>
@@ -123,17 +132,17 @@ async function capture() {
                         size="small"
                         variant="flat"
                     >
-                        {{ store.connected ? "verbonden" : "niet verbonden" }}
+                        {{ store.connected ? t("connect.connected") : t("connect.notConnected") }}
                     </v-chip>
                 </v-card-text>
             </v-card>
 
             <v-tabs v-model="tab" class="mb-4">
                 <v-tab value="devices" prepend-icon="mdi-monitor">
-                    Apparaten
+                    {{ t("connect.tabDevices") }}
                 </v-tab>
                 <v-tab value="code" prepend-icon="mdi-numeric">
-                    Sessie-code
+                    {{ t("connect.tabCode") }}
                 </v-tab>
             </v-tabs>
 
@@ -142,20 +151,18 @@ async function capture() {
                 <v-window-item value="devices">
                     <!-- Sign in -->
                     <v-card v-if="!store.loggedIn" variant="tonal">
-                        <v-card-title>Inloggen</v-card-title>
-                        <v-card-subtitle>
-                            Meld je aan om de apparaten in je organisatie te zien.
-                        </v-card-subtitle>
+                        <v-card-title>{{ t("connect.signInTitle") }}</v-card-title>
+                        <v-card-subtitle>{{ t("connect.signInSubtitle") }}</v-card-subtitle>
                         <v-card-text>
                             <v-text-field
                                 v-model="email"
-                                label="E-mail"
+                                :label="t('connect.email')"
                                 prepend-inner-icon="mdi-email-outline"
                                 density="comfortable"
                             />
                             <v-text-field
                                 v-model="password"
-                                label="Wachtwoord"
+                                :label="t('connect.password')"
                                 type="password"
                                 prepend-inner-icon="mdi-lock-outline"
                                 density="comfortable"
@@ -172,7 +179,7 @@ async function capture() {
                                 :disabled="!store.connected"
                                 @click="doLogin"
                             >
-                                Inloggen
+                                {{ t("connect.signIn") }}
                             </v-btn>
                         </v-card-actions>
                     </v-card>
@@ -181,7 +188,7 @@ async function capture() {
                     <template v-else>
                         <v-card variant="tonal">
                             <v-card-title class="d-flex align-center">
-                                Apparaten
+                                {{ t("connect.devices") }}
                                 <v-spacer />
                                 <v-btn
                                     size="small"
@@ -198,7 +205,7 @@ async function capture() {
                                     variant="tonal"
                                     density="compact"
                                 >
-                                    Nog geen apparaten in je organisatie.
+                                    {{ t("connect.noDevices") }}
                                 </v-alert>
                                 <v-list v-else lines="two" density="comfortable">
                                     <v-list-item
@@ -211,10 +218,7 @@ async function capture() {
                                             <v-icon icon="mdi-monitor" />
                                         </template>
                                         <v-list-item-title>{{ d.hostname || d.id }}</v-list-item-title>
-                                        <v-list-item-subtitle>
-                                            {{ d.platform || "onbekend" }} · laatst gezien
-                                            {{ d.last_seen || "nooit" }}
-                                        </v-list-item-subtitle>
+                                        <v-list-item-subtitle>{{ deviceMeta(d) }}</v-list-item-subtitle>
                                         <template #append>
                                             <v-icon
                                                 v-if="selected === d.id"
@@ -235,13 +239,13 @@ async function capture() {
                                     :loading="!!busyMsg"
                                     @click="capture"
                                 >
-                                    Screenshot maken
+                                    {{ t("connect.capture") }}
                                 </v-btn>
                             </v-card-actions>
                         </v-card>
 
                         <v-card v-if="screenshot" class="mt-4">
-                            <v-card-title>Screenshot</v-card-title>
+                            <v-card-title>{{ t("connect.screenshot") }}</v-card-title>
                             <v-img :src="screenshot" />
                         </v-card>
                     </template>
@@ -251,22 +255,16 @@ async function capture() {
                 <v-window-item value="code">
                     <v-card variant="tonal">
                         <v-card-title class="d-flex align-center">
-                            Verbinden met een sessie-code
+                            {{ t("connect.sessionCodeTitle") }}
                             <v-chip class="ml-2" size="x-small" color="amber">
-                                binnenkort
+                                {{ t("common.soon") }}
                             </v-chip>
                         </v-card-title>
-                        <v-card-subtitle>
-                            Ad-hoc support zonder account — de host deelt een code.
-                        </v-card-subtitle>
+                        <v-card-subtitle>{{ t("connect.sessionCodeSubtitle") }}</v-card-subtitle>
                         <v-card-text>
-                            <v-otp-input
-                                v-model="sessionCode"
-                                length="9"
-                                disabled
-                            />
+                            <v-otp-input v-model="sessionCode" length="9" disabled />
                             <p class="text-caption text-medium-emphasis">
-                                Dit verbindingsmodel wordt nog gebouwd (relay + protocol).
+                                {{ t("connect.sessionCodeNote") }}
                             </p>
                         </v-card-text>
                     </v-card>

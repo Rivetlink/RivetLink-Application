@@ -2,9 +2,12 @@
 import {
     computed, ref,
 } from "vue";
+import { useI18n } from "vue-i18n";
 import {
     addRelay, removeRelay, setActiveRelay, store,
 } from "../store";
+
+const { t } = useI18n();
 
 const showAdd = ref(false);
 const name = ref("");
@@ -54,7 +57,7 @@ async function remove(id: string) {
     <v-container style="max-width: 880px">
         <div class="d-flex align-center mb-4">
             <h2 class="text-h6">
-                Opgeslagen relays
+                {{ t("relays.title") }}
             </h2>
             <v-spacer />
             <v-btn
@@ -63,7 +66,7 @@ async function remove(id: string) {
                 prepend-icon="mdi-plus"
                 @click="showAdd = !showAdd"
             >
-                Relay toevoegen
+                {{ t("relays.add") }}
             </v-btn>
         </div>
 
@@ -72,15 +75,15 @@ async function remove(id: string) {
                 <v-card-text>
                     <v-text-field
                         v-model="name"
-                        label="Naam"
+                        :label="t('relays.name')"
                         prepend-inner-icon="mdi-tag-outline"
                         density="comfortable"
                     />
                     <v-text-field
                         v-model="http"
-                        label="Serveradres"
-                        placeholder="https://relay.mijnbedrijf.nl"
-                        hint="De app maakt zelf de beveiligde verbinding aan."
+                        :label="t('relays.serverLabel')"
+                        :placeholder="t('relays.serverPlaceholder')"
+                        :hint="t('relays.serverHint')"
                         persistent-hint
                         prepend-inner-icon="mdi-web"
                         density="comfortable"
@@ -89,7 +92,7 @@ async function remove(id: string) {
                 <v-card-actions>
                     <v-spacer />
                     <v-btn variant="text" @click="showAdd = false">
-                        Annuleren
+                        {{ t("common.cancel") }}
                     </v-btn>
                     <v-btn
                         color="primary"
@@ -98,7 +101,7 @@ async function remove(id: string) {
                         :loading="busy"
                         @click="add"
                     >
-                        Opslaan
+                        {{ t("common.save") }}
                     </v-btn>
                 </v-card-actions>
             </v-card>
@@ -109,7 +112,7 @@ async function remove(id: string) {
             type="info"
             variant="tonal"
         >
-            Nog geen relays opgeslagen.
+            {{ t("relays.empty") }}
         </v-alert>
 
         <v-card v-else variant="tonal">
@@ -123,7 +126,7 @@ async function remove(id: string) {
                         <v-icon icon="mdi-server-network" />
                     </template>
                     <v-list-item-title>{{ r.name }}</v-list-item-title>
-                    <v-list-item-subtitle>{{ r.http_url }} · {{ r.ws_url }}</v-list-item-subtitle>
+                    <v-list-item-subtitle>{{ r.http_url }}</v-list-item-subtitle>
                     <template #append>
                         <v-chip
                             v-if="store.settings.active_relay_id === r.id"
@@ -132,7 +135,7 @@ async function remove(id: string) {
                             variant="flat"
                             class="mr-2"
                         >
-                            actief
+                            {{ t("relays.active") }}
                         </v-chip>
                         <v-btn
                             v-else
@@ -140,7 +143,7 @@ async function remove(id: string) {
                             variant="text"
                             @click="makeActive(r.id)"
                         >
-                            Activeren
+                            {{ t("relays.activate") }}
                         </v-btn>
                         <v-btn
                             size="small"

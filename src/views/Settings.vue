@@ -1,29 +1,41 @@
 <script setup lang="ts">
 import { onMounted } from "vue";
+import { useI18n } from "vue-i18n";
 import {
     isClient, isHost, loadPublicKey, store,
 } from "../store";
+import {
+    SUPPORTED, setLocale,
+} from "../i18n";
+
+const {
+    t, locale,
+} = useI18n();
 
 onMounted(async () => {
     if (!store.publicKey) {
         await loadPublicKey();
     }
 });
+
+function onLocaleChange(code: string) {
+    setLocale(code);
+}
 </script>
 
 <template>
     <v-container style="max-width: 880px">
         <v-card variant="tonal" class="mb-4">
-            <v-card-title>Dit apparaat</v-card-title>
+            <v-card-title>{{ t("settings.thisDevice") }}</v-card-title>
             <v-list class="bg-transparent">
-                <v-list-item title="Naam" :subtitle="store.settings.device_name || '—'" />
-                <v-list-item title="Rollen">
+                <v-list-item :title="t('settings.name')" :subtitle="store.settings.device_name || '—'" />
+                <v-list-item :title="t('settings.roles')">
                     <template #subtitle>
                         <v-chip v-if="isHost()" size="x-small" class="mr-1">
-                            Host
+                            {{ t("common.host") }}
                         </v-chip>
                         <v-chip v-if="isClient()" size="x-small">
-                            Client
+                            {{ t("common.client") }}
                         </v-chip>
                         <span v-if="!isHost() && !isClient()">—</span>
                     </template>
@@ -32,26 +44,42 @@ onMounted(async () => {
         </v-card>
 
         <v-card variant="tonal" class="mb-4">
-            <v-card-title>Identiteit</v-card-title>
+            <v-card-title>{{ t("settings.language") }}</v-card-title>
+            <v-card-text>
+                <v-select
+                    :model-value="locale"
+                    :items="SUPPORTED"
+                    item-title="label"
+                    item-value="code"
+                    density="comfortable"
+                    hide-details
+                    prepend-inner-icon="mdi-translate"
+                    @update:model-value="onLocaleChange"
+                />
+            </v-card-text>
+        </v-card>
+
+        <v-card variant="tonal" class="mb-4">
+            <v-card-title>{{ t("settings.identityTitle") }}</v-card-title>
             <v-card-text>
                 <v-text-field
                     :model-value="store.publicKey"
-                    label="Publieke sleutel"
+                    :label="t('settings.publicKey')"
                     readonly
                     density="comfortable"
                     hide-details
                 />
                 <p class="text-caption text-medium-emphasis mt-2">
-                    De privésleutel verlaat dit apparaat nooit.
+                    {{ t("settings.privateNote") }}
                 </p>
             </v-card-text>
         </v-card>
 
         <v-card variant="tonal">
-            <v-card-title>Over</v-card-title>
+            <v-card-title>{{ t("settings.about") }}</v-card-title>
             <v-list class="bg-transparent">
-                <v-list-item title="RivetLink" subtitle="Zero-trust remote control" />
-                <v-list-item title="Versie" subtitle="0.1.0" />
+                <v-list-item title="RivetLink" :subtitle="t('settings.tagline')" />
+                <v-list-item :title="t('settings.version')" subtitle="0.1.0" />
             </v-list>
         </v-card>
     </v-container>

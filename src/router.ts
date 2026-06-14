@@ -1,5 +1,6 @@
 // App routes. Hash history because the webview loads from a custom protocol —
-// there's no dev server doing path-based routing.
+// there's no dev server doing path-based routing. `titleKey` is an i18n key
+// resolved in the shell.
 
 import {
     createRouter, createWebHashHistory,
@@ -21,7 +22,7 @@ export const router = createRouter({
             path: "/connect",
             component: Connect,
             meta: {
-                title: "Verbinden",
+                titleKey: "nav.connect",
                 icon: "mdi-monitor-share",
                 role: "client",
             },
@@ -30,7 +31,7 @@ export const router = createRouter({
             path: "/device",
             component: ThisDevice,
             meta: {
-                title: "Dit apparaat",
+                titleKey: "nav.device",
                 icon: "mdi-laptop",
                 role: "host",
             },
@@ -39,7 +40,7 @@ export const router = createRouter({
             path: "/relays",
             component: Relays,
             meta: {
-                title: "Relays",
+                titleKey: "nav.relays",
                 icon: "mdi-server-network",
             },
         },
@@ -47,7 +48,7 @@ export const router = createRouter({
             path: "/settings",
             component: Settings,
             meta: {
-                title: "Instellingen",
+                titleKey: "nav.settings",
                 icon: "mdi-cog",
             },
         },

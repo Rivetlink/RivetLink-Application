@@ -2,11 +2,13 @@
 import {
     computed, ref,
 } from "vue";
+import { useI18n } from "vue-i18n";
 import {
     addRelay, completeSetup,
 } from "../store";
 
 const emit = defineEmits<{ done: [] }>();
+const { t } = useI18n();
 
 const step = ref(1);
 
@@ -16,7 +18,7 @@ const roleClient = ref(true);
 const rolesValid = computed(() => roleHost.value || roleClient.value);
 
 // Step 2 — server (only the HTTP address; the app derives the rest)
-const relayName = ref("Mijn server");
+const relayName = ref(t("onboarding.defaultServerName"));
 const relayUrl = ref("");
 const relayValid = computed(
     () => relayName.value.trim().length > 0 && relayUrl.value.trim().startsWith("http"),
@@ -36,7 +38,7 @@ async function finish() {
         const roles: string[] = [];
         if (roleHost.value) roles.push("host");
         if (roleClient.value) roles.push("client");
-        await completeSetup(deviceName.value.trim() || "Mijn computer", roles);
+        await completeSetup(deviceName.value.trim() || t("onboarding.defaultDeviceName"), roles);
         emit("done");
     } catch (e) {
         error.value = typeof e === "string" ? e : String(e);
@@ -53,12 +55,10 @@ async function finish() {
             <div class="text-center mb-6">
                 <v-icon icon="mdi-shield-lock-outline" color="primary" size="48" />
                 <h1 class="text-h4 mt-2">
-                    Welkom bij RivetLink
+                    {{ t("onboarding.welcomeTitle") }}
                 </h1>
                 <p class="text-medium-emphasis">
-                    Hiermee kijk je veilig op afstand mee op een computer — of laat je een
-                    ander meekijken op die van jou. We stellen deze computer even in.
-                    Dit hoeft maar één keer.
+                    {{ t("onboarding.welcomeSubtitle") }}
                 </p>
             </div>
 
@@ -66,8 +66,8 @@ async function finish() {
                 <!-- Step 1: role -->
                 <v-window-item :value="1">
                     <v-card variant="tonal">
-                        <v-card-title>Wat ga je met deze computer doen?</v-card-title>
-                        <v-card-subtitle>Kies wat past. Je mag ook allebei kiezen.</v-card-subtitle>
+                        <v-card-title>{{ t("onboarding.roleQuestion") }}</v-card-title>
+                        <v-card-subtitle>{{ t("onboarding.roleHint") }}</v-card-subtitle>
                         <v-card-text>
                             <v-list-item
                                 class="rounded mb-2 border"
@@ -77,11 +77,9 @@ async function finish() {
                                 <template #prepend>
                                     <v-checkbox-btn :model-value="roleHost" />
                                 </template>
-                                <v-list-item-title>Ik wil hulp krijgen op deze computer</v-list-item-title>
+                                <v-list-item-title>{{ t("onboarding.hostTitle") }}</v-list-item-title>
                                 <v-list-item-subtitle class="text-wrap">
-                                    Iemand anders mag dan op dit scherm meekijken — maar alleen
-                                    als jij op dat moment zelf op "Ja" klikt. Kies dit als jíj
-                                    geholpen wilt worden.
+                                    {{ t("onboarding.hostSubtitle") }}
                                 </v-list-item-subtitle>
                             </v-list-item>
 
@@ -93,15 +91,14 @@ async function finish() {
                                 <template #prepend>
                                     <v-checkbox-btn :model-value="roleClient" />
                                 </template>
-                                <v-list-item-title>Ik wil iemand anders helpen</v-list-item-title>
+                                <v-list-item-title>{{ t("onboarding.clientTitle") }}</v-list-item-title>
                                 <v-list-item-subtitle class="text-wrap">
-                                    Jij kijkt mee op de computer van een ander om te helpen.
-                                    Kies dit als jíj degene bent die helpt.
+                                    {{ t("onboarding.clientSubtitle") }}
                                 </v-list-item-subtitle>
                             </v-list-item>
 
                             <p class="text-caption text-medium-emphasis mt-3">
-                                Je kunt dit later altijd nog aanpassen.
+                                {{ t("onboarding.changeLater") }}
                             </p>
                         </v-card-text>
                         <v-card-actions>
@@ -112,7 +109,7 @@ async function finish() {
                                 :disabled="!rolesValid"
                                 @click="step = 2"
                             >
-                                Volgende
+                                {{ t("common.next") }}
                             </v-btn>
                         </v-card-actions>
                     </v-card>
@@ -121,17 +118,15 @@ async function finish() {
                 <!-- Step 2: server -->
                 <v-window-item :value="2">
                     <v-card variant="tonal">
-                        <v-card-title>Met welke server verbind je?</v-card-title>
+                        <v-card-title>{{ t("onboarding.serverTitle") }}</v-card-title>
                         <v-card-subtitle class="text-wrap">
-                            RivetLink gebruikt een server als tussenpersoon om de verbinding te
-                            leggen. Je hebt het adres nodig — meestal krijg je dat van je
-                            beheerder, of je gebruikt je eigen server.
+                            {{ t("onboarding.serverSubtitle") }}
                         </v-card-subtitle>
                         <v-card-text>
                             <v-text-field
                                 v-model="relayName"
-                                label="Naam"
-                                hint="Een naam die jij herkent, bijvoorbeeld 'Werk'."
+                                :label="t('onboarding.nameLabel')"
+                                :hint="t('onboarding.nameHint')"
                                 persistent-hint
                                 prepend-inner-icon="mdi-tag-outline"
                                 density="comfortable"
@@ -139,9 +134,9 @@ async function finish() {
                             />
                             <v-text-field
                                 v-model="relayUrl"
-                                label="Serveradres"
-                                placeholder="https://relay.mijnbedrijf.nl"
-                                hint="Het webadres van de server. De app regelt de rest zelf."
+                                :label="t('onboarding.serverLabel')"
+                                :placeholder="t('onboarding.serverPlaceholder')"
+                                :hint="t('onboarding.serverHint')"
                                 persistent-hint
                                 prepend-inner-icon="mdi-web"
                                 density="comfortable"
@@ -149,7 +144,7 @@ async function finish() {
                         </v-card-text>
                         <v-card-actions>
                             <v-btn variant="text" @click="step = 1">
-                                Terug
+                                {{ t("common.back") }}
                             </v-btn>
                             <v-spacer />
                             <v-btn
@@ -158,7 +153,7 @@ async function finish() {
                                 :disabled="!relayValid"
                                 @click="step = 3"
                             >
-                                Volgende
+                                {{ t("common.next") }}
                             </v-btn>
                         </v-card-actions>
                     </v-card>
@@ -167,13 +162,13 @@ async function finish() {
                 <!-- Step 3: device name -->
                 <v-window-item :value="3">
                     <v-card variant="tonal">
-                        <v-card-title>Hoe heet deze computer?</v-card-title>
-                        <v-card-subtitle>Zo ziet de ander meteen welke computer van jou is.</v-card-subtitle>
+                        <v-card-title>{{ t("onboarding.deviceTitle") }}</v-card-title>
+                        <v-card-subtitle>{{ t("onboarding.deviceSubtitle") }}</v-card-subtitle>
                         <v-card-text>
                             <v-text-field
                                 v-model="deviceName"
-                                label="Naam van deze computer"
-                                placeholder="bijvoorbeeld: Laptop van Jan"
+                                :label="t('onboarding.deviceLabel')"
+                                :placeholder="t('onboarding.devicePlaceholder')"
                                 prepend-inner-icon="mdi-laptop"
                                 density="comfortable"
                                 @keyup.enter="finish"
@@ -189,7 +184,7 @@ async function finish() {
                         </v-card-text>
                         <v-card-actions>
                             <v-btn variant="text" @click="step = 2">
-                                Terug
+                                {{ t("common.back") }}
                             </v-btn>
                             <v-spacer />
                             <v-btn
@@ -198,7 +193,7 @@ async function finish() {
                                 :loading="busy"
                                 @click="finish"
                             >
-                                Klaar, ga verder
+                                {{ t("onboarding.finish") }}
                             </v-btn>
                         </v-card-actions>
                     </v-card>

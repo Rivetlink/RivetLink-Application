@@ -2,10 +2,12 @@
 import {
     onMounted, ref,
 } from "vue";
+import { useI18n } from "vue-i18n";
 import {
     loadPublicKey, store,
 } from "../store";
 
+const { t } = useI18n();
 const copied = ref(false);
 
 onMounted(async () => {
@@ -32,57 +34,57 @@ async function copyKey() {
                 <v-icon icon="mdi-laptop" size="32" class="mr-3" />
                 <div>
                     <div class="text-h6">
-                        {{ store.settings.device_name || "Naamloos apparaat" }}
+                        {{ store.settings.device_name || t("app.unnamedDevice") }}
                     </div>
                     <div class="text-caption text-medium-emphasis">
-                        Dit apparaat
+                        {{ t("device.thisDevice") }}
                     </div>
                 </div>
                 <v-spacer />
                 <v-chip color="grey" size="small" variant="flat">
-                    <v-icon start icon="mdi-circle" size="x-small" /> offline
+                    <v-icon start icon="mdi-circle" size="x-small" /> {{ t("device.offline") }}
                 </v-chip>
             </v-card-text>
         </v-card>
 
         <v-card variant="tonal" class="mb-4">
-            <v-card-title>Identiteit</v-card-title>
-            <v-card-subtitle>
-                Geef deze sleutel aan een support-client om die vooraf te vertrouwen (TOFU).
+            <v-card-title>{{ t("device.identityTitle") }}</v-card-title>
+            <v-card-subtitle class="text-wrap">
+                {{ t("device.identitySubtitle") }}
             </v-card-subtitle>
             <v-card-text>
                 <v-text-field
                     :model-value="store.publicKey"
-                    label="Publieke sleutel"
+                    :label="t('device.publicKey')"
                     readonly
                     density="comfortable"
                     append-inner-icon="mdi-content-copy"
                     @click:append-inner="copyKey"
                 />
                 <v-fade-transition>
-                    <span v-if="copied" class="text-caption text-success">Gekopieerd!</span>
+                    <span v-if="copied" class="text-caption text-success">{{ t("device.copied") }}</span>
                 </v-fade-transition>
             </v-card-text>
         </v-card>
 
         <v-card variant="tonal">
             <v-card-title class="d-flex align-center">
-                Host-agent
+                {{ t("device.hostAgentTitle") }}
                 <v-chip class="ml-2" size="x-small" color="amber">
-                    binnenkort
+                    {{ t("common.soon") }}
                 </v-chip>
             </v-card-title>
             <v-card-text>
                 <p class="text-body-2 text-medium-emphasis mb-2">
-                    Om deze pc echt bedienbaar te maken draait er straks een host-agent die:
+                    {{ t("device.hostAgentIntro") }}
                 </p>
                 <v-list density="compact" class="bg-transparent">
-                    <v-list-item prepend-icon="mdi-shield-check" title="Toestemming vraagt bij elke verbinding (consent-dialog)" />
-                    <v-list-item prepend-icon="mdi-account-key" title="Vertrouwde clients beheert (toevoegen / intrekken)" />
-                    <v-list-item prepend-icon="mdi-monitor-screenshot" title="Scherm deelt en input ontvangt" />
+                    <v-list-item prepend-icon="mdi-shield-check" :title="t('device.hostConsent')" />
+                    <v-list-item prepend-icon="mdi-account-key" :title="t('device.hostTrusted')" />
+                    <v-list-item prepend-icon="mdi-monitor-screenshot" :title="t('device.hostScreen')" />
                 </v-list>
                 <p class="text-caption text-medium-emphasis mt-2">
-                    Deze integratie (rivetlink-agent) is de volgende milestone.
+                    {{ t("device.hostAgentNote") }}
                 </p>
             </v-card-text>
         </v-card>

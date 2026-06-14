@@ -3,6 +3,7 @@ import {
     computed, onMounted, onUnmounted, ref,
 } from "vue";
 import { useRoute } from "vue-router";
+import { useI18n } from "vue-i18n";
 import { invoke } from "@tauri-apps/api/core";
 import { router } from "./router";
 import {
@@ -11,6 +12,7 @@ import {
 import Onboarding from "./views/Onboarding.vue";
 
 const route = useRoute();
+const { t } = useI18n();
 const drawer = ref(true);
 
 // Developer console is off by default; toggle it with Ctrl/Cmd+Shift+I or F12.
@@ -34,7 +36,7 @@ onUnmounted(() => {
 // Nav items, filtered by the roles the user enabled during onboarding.
 const navItems = computed(() => {
     return router.options.routes
-        .filter((r) => r.meta && r.meta.title)
+        .filter((r) => r.meta && r.meta.titleKey)
         .filter((r) => {
             const role = r.meta?.role;
             if (role === "client") return isClient();
@@ -43,17 +45,15 @@ const navItems = computed(() => {
         })
         .map((r) => ({
             path: r.path,
-            title: r.meta?.title as string,
+            titleKey: r.meta?.titleKey as string,
             icon: r.meta?.icon as string,
         }));
 });
 
-const currentTitle = computed(() => (route.meta?.title as string) ?? "RivetLink");
-
-function onSetupDone() {
-    // Settings are refreshed inside completeSetup; just leave the gate.
-    router.replace("/");
-}
+const currentTitle = computed(() => {
+    const key = route.meta?.titleKey as string | undefined;
+    return key ? t(key) : "RivetLink";
+});
 </script>
 
 <template>
@@ -67,7 +67,7 @@ function onSetupDone() {
 
         <!-- First-run onboarding -->
         <v-main v-else-if="!store.settings.setup_complete">
-            <Onboarding @done="onSetupDone" />
+            <Onboarding @done="router.replace('/')" />
         </v-main>
 
         <!-- Main shell -->
@@ -84,12 +84,12 @@ function onSetupDone() {
                         :key="item.path"
                         :to="item.path"
                         :prepend-icon="item.icon"
-                        :title="item.title"
+                        :title="t(item.titleKey)"
                     />
                 </v-list>
                 <template #append>
                     <div class="pa-3 text-caption text-medium-emphasis">
-                        {{ store.settings.device_name || "Naamloos apparaat" }}
+                        {{ store.settings.device_name || t("app.unnamedDevice") }}
                     </div>
                 </template>
             </v-navigation-drawer>
