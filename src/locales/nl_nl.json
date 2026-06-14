@@ -5,6 +5,7 @@
         "skip": "Overslaan",
         "save": "Opslaan",
         "cancel": "Annuleren",
+        "close": "Sluiten",
         "soon": "binnenkort",
         "host": "Host",
         "client": "Client"
@@ -104,5 +105,13 @@
         "tagline": "Zero-trust remote control",
         "version": "Versie",
         "language": "Taal"
+    },
+    "updates": {
+        "title": "Updates",
+        "checking": "Controleren op updates…",
+        "upToDate": "Je hebt de nieuwste versie.",
+        "available": "Er is een nieuwe versie: {version}",
+        "error": "Kon nu niet op updates controleren.",
+        "download": "Downloaden"
     }
 }

@@ -5,6 +5,7 @@
         "skip": "Skip",
         "save": "Save",
         "cancel": "Cancel",
+        "close": "Close",
         "soon": "coming soon",
         "host": "Host",
         "client": "Client"
@@ -104,5 +105,13 @@
         "tagline": "Zero-trust remote control",
         "version": "Version",
         "language": "Language"
+    },
+    "updates": {
+        "title": "Updates",
+        "checking": "Checking for updates…",
+        "upToDate": "You're on the latest version.",
+        "available": "A new version is available: {version}",
+        "error": "Couldn't check for updates right now.",
+        "download": "Download"
     }
 }

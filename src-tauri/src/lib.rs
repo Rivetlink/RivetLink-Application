@@ -13,7 +13,8 @@ use std::sync::Arc;
 
 use base64::Engine;
 use serde::Serialize;
-use tauri::{Manager, State};
+use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
+use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
 
 use rivetlink_sdk::{ClientConfig, Device, Identity, RivetClient};
@@ -95,6 +96,51 @@ fn toggle_devtools(window: tauri::WebviewWindow) {
     } else {
         window.open_devtools();
     }
+}
+
+/// This app's version (from Cargo.toml), shown in the About dialog.
+#[tauri::command]
+fn app_version(app: tauri::AppHandle) -> String {
+    app.package_info().version.to_string()
+}
+
+/// Build the native menu bar: a "RivetLink" menu (version + check for updates +
+/// quit) and a standard "Edit" menu so clipboard shortcuts work everywhere.
+fn install_menu(app: &tauri::App) -> tauri::Result<()> {
+    let version = app.package_info().version.to_string();
+
+    let version_item = MenuItemBuilder::new(format!("Version {version}"))
+        .id("version")
+        .enabled(false)
+        .build(app)?;
+    let check_updates = MenuItemBuilder::new("Check for Updates…")
+        .id("check_updates")
+        .build(app)?;
+
+    let rivetlink_menu = SubmenuBuilder::new(app, "RivetLink")
+        .item(&version_item)
+        .item(&check_updates)
+        .separator()
+        .quit()
+        .build()?;
+
+    let edit_menu = SubmenuBuilder::new(app, "Edit")
+        .undo()
+        .redo()
+        .separator()
+        .cut()
+        .copy()
+        .paste()
+        .select_all()
+        .build()?;
+
+    let menu = MenuBuilder::new(app)
+        .item(&rivetlink_menu)
+        .item(&edit_menu)
+        .build()?;
+
+    app.set_menu(menu)?;
+    Ok(())
 }
 
 // ---- Relays ----------------------------------------------------------------
@@ -253,6 +299,15 @@ pub fn run() {
                 client: Arc::new(Mutex::new(None)),
             });
 
+            // Native menu bar (RivetLink + Edit). The "Check for Updates" item
+            // forwards to the frontend, which does the actual version check.
+            install_menu(app)?;
+            app.on_menu_event(|app, event| {
+                if event.id() == "check_updates" {
+                    let _ = app.emit("menu://check-updates", ());
+                }
+            });
+
             // Open the web inspector from the Rust side when RIVETLINK_DEVTOOLS
             // is set. This works even if the frontend never mounts (white
             // screen), unlike the in-app keyboard shortcut.
@@ -267,6 +322,7 @@ pub fn run() {
             get_settings,
             complete_setup,
             public_key,
+            app_version,
             toggle_devtools,
             add_relay,
             remove_relay,
