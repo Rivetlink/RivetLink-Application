@@ -23,6 +23,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync"] }
 base64 = "0.22"
+uuid = { version = "1", features = ["v4"] }
 
 # Local path dep on the SDK while both repos sit side by side. For distribution
 # this switches to a git dep or a crates.io release.
