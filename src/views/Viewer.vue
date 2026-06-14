@@ -103,28 +103,28 @@
 </script>
 
 <style scoped>
-.viewer {
-	width: 100vw;
-	height: 100vh;
-	background: #000;
-	display: flex;
-	align-items: center;
-	justify-content: center;
-	overflow: hidden;
-}
+	.viewer {
+		width: 100vw;
+		height: 100vh;
+		background: #000;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		overflow: hidden;
+	}
 
-.screen {
-	max-width: 100%;
-	max-height: 100%;
-	object-fit: contain;
-}
+	.screen {
+		max-width: 100%;
+		max-height: 100%;
+		object-fit: contain;
+	}
 
-.hidden {
-	display: none;
-}
+	.hidden {
+		display: none;
+	}
 
-.waiting {
-	color: #fff;
-	text-align: center;
-}
+	.waiting {
+		color: #fff;
+		text-align: center;
+	}
 </style>
