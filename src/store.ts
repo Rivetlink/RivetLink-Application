@@ -72,11 +72,11 @@ export async function completeSetup(deviceName: string, roles: string[]): Promis
     });
 }
 
-export async function addRelay(name: string, httpUrl: string, wsUrl: string): Promise<void> {
+export async function addRelay(name: string, httpUrl: string): Promise<void> {
+    // Only the HTTP URL is needed; the backend derives the WebSocket URL.
     store.settings = await invoke<AppSettings>("add_relay", {
         name,
         httpUrl,
-        wsUrl,
     });
 }
 

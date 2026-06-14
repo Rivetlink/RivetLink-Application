@@ -86,19 +86,47 @@ async fn public_key(state: State<'_, AppState>) -> Result<String, String> {
     Ok(identity.public_key_b64())
 }
 
+/// Toggle the web inspector. Bound to a keyboard shortcut in the frontend so
+/// the console is off by default but one keystroke away.
+#[tauri::command]
+fn toggle_devtools(window: tauri::WebviewWindow) {
+    if window.is_devtools_open() {
+        window.close_devtools();
+    } else {
+        window.open_devtools();
+    }
+}
+
 // ---- Relays ----------------------------------------------------------------
 
-/// Add a saved relay. Validates the URLs, becomes active if it's the first.
+/// Derive the WebSocket URL from the server's HTTP URL: http -> ws, https ->
+/// wss, same host/port, with the relay's `/ws` signaling path. The user only
+/// enters the HTTP URL.
+fn derive_ws_url(http_url: &str) -> Result<String, String> {
+    let trimmed = http_url.trim().trim_end_matches('/');
+    let ws_base = if let Some(rest) = trimmed.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = trimmed.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        return Err("server-URL moet met http:// of https:// beginnen".to_string());
+    };
+    Ok(format!("{ws_base}/ws"))
+}
+
+/// Add a saved relay from just the HTTP URL (the WS URL is derived). Becomes
+/// active if it's the first one saved.
 #[tauri::command]
 async fn add_relay(
     state: State<'_, AppState>,
     name: String,
     http_url: String,
-    ws_url: String,
 ) -> Result<AppSettings, String> {
+    let ws_url = derive_ws_url(&http_url)?;
+
     // Validate via the SDK's config rules before saving.
     ClientConfig {
-        relay_http_url: http_url.clone(),
+        relay_http_url: http_url.trim().to_string(),
         relay_ws_url: ws_url.clone(),
         identity_path: state.identity_path(),
     }
@@ -109,8 +137,8 @@ async fn add_relay(
     let relay = Relay {
         id: uuid::Uuid::new_v4().to_string(),
         name: name.trim().to_string(),
-        http_url: http_url.trim().to_string(),
-        ws_url: ws_url.trim().to_string(),
+        http_url: http_url.trim().trim_end_matches('/').to_string(),
+        ws_url,
     };
     if settings.active_relay_id.is_none() {
         settings.active_relay_id = Some(relay.id.clone());
@@ -224,20 +252,13 @@ pub fn run() {
                 settings: Mutex::new(settings),
                 client: Arc::new(Mutex::new(None)),
             });
-
-            // Auto-open the web inspector on debug builds.
-            #[cfg(debug_assertions)]
-            {
-                if let Some(window) = app.get_webview_window("main") {
-                    window.open_devtools();
-                }
-            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             get_settings,
             complete_setup,
             public_key,
+            toggle_devtools,
             add_relay,
             remove_relay,
             set_active_relay,

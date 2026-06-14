@@ -8,24 +8,22 @@ import {
 
 const showAdd = ref(false);
 const name = ref("");
-const http = ref("http://127.0.0.1:8080");
-const ws = ref("ws://127.0.0.1:8080/ws");
+const http = ref("");
 const busy = ref(false);
 const error = ref<string | null>(null);
 
 const valid = computed(
-    () => name.value.trim().length > 0
-        && http.value.startsWith("http")
-        && ws.value.startsWith("ws"),
+    () => name.value.trim().length > 0 && http.value.trim().startsWith("http"),
 );
 
 async function add() {
     error.value = null;
     busy.value = true;
     try {
-        await addRelay(name.value, http.value, ws.value);
+        await addRelay(name.value, http.value);
         showAdd.value = false;
         name.value = "";
+        http.value = "";
     } catch (e) {
         error.value = typeof e === "string" ? e : String(e);
     } finally {
@@ -80,16 +78,12 @@ async function remove(id: string) {
                     />
                     <v-text-field
                         v-model="http"
-                        label="HTTP URL"
+                        label="Serveradres"
+                        placeholder="https://relay.mijnbedrijf.nl"
+                        hint="De app maakt zelf de beveiligde verbinding aan."
+                        persistent-hint
                         prepend-inner-icon="mdi-web"
                         density="comfortable"
-                    />
-                    <v-text-field
-                        v-model="ws"
-                        label="WebSocket URL"
-                        prepend-inner-icon="mdi-transit-connection-variant"
-                        density="comfortable"
-                        hide-details
                     />
                 </v-card-text>
                 <v-card-actions>

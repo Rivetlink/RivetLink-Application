@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import {
-    computed, onMounted, ref,
+    computed, onMounted, onUnmounted, ref,
 } from "vue";
 import { useRoute } from "vue-router";
+import { invoke } from "@tauri-apps/api/core";
 import { router } from "./router";
 import {
     loadSettings, store, isHost, isClient,
@@ -12,8 +13,22 @@ import Onboarding from "./views/Onboarding.vue";
 const route = useRoute();
 const drawer = ref(true);
 
+// Developer console is off by default; toggle it with Ctrl/Cmd+Shift+I or F12.
+function onKeydown(e: KeyboardEvent) {
+    const toggleCombo = (e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === "i";
+    if (toggleCombo || e.key === "F12") {
+        e.preventDefault();
+        invoke("toggle_devtools").catch(() => { /* devtools unavailable */ });
+    }
+}
+
 onMounted(async () => {
+    window.addEventListener("keydown", onKeydown);
     await loadSettings();
+});
+
+onUnmounted(() => {
+    window.removeEventListener("keydown", onKeydown);
 });
 
 // Nav items, filtered by the roles the user enabled during onboarding.
