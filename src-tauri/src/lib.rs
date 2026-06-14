@@ -449,8 +449,6 @@ async fn lan_connect(
     target: LanTarget,
     pin: Option<String>,
 ) -> Result<(), String> {
-    use base64::engine::general_purpose::STANDARD as B64;
-
     let addr: std::net::SocketAddr = format!("{}:{}", target.address, target.port)
         .parse()
         .map_err(|_| format!("bad address: {}:{}", target.address, target.port))?;
@@ -477,10 +475,10 @@ async fn lan_connect(
 
     let app_for_task = app.clone();
     let task = tokio::spawn(async move {
-        let result = rivetlink_sdk::lan::stream_frames(&mut stream, &channel, 15, |jpeg| {
-            let url = format!("data:image/jpeg;base64,{}", B64.encode(&jpeg));
-            // If the viewer window is gone, stop the stream.
-            app_for_task.emit("lan://frame", url).is_ok()
+        let result = rivetlink_sdk::lan::stream_frames(&mut stream, &channel, 20, |delta| {
+            // Forward the delta frame to the viewer window. If emit fails the
+            // window is gone — stop the stream.
+            app_for_task.emit("lan://frame", delta).is_ok()
         })
         .await;
         if let Err(e) = result {
