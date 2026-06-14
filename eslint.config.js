@@ -1,9 +1,10 @@
 // Flat ESLint config (ESLint 9) for the RivetLink desktop app.
 //
 // Stack: Vue 3 SFCs + TypeScript. Formatting is owned by @stylistic (no
-// Prettier, so the two never fight). House style: 2-space indent, double
-// quotes, semicolons, trailing commas on multiline, and — per project
-// preference — object literals expanded with each property on its own line.
+// Prettier, so the two never fight). House style: tab indentation (one tab
+// per level, displayed 4 wide), double quotes, semicolons, trailing commas on
+// multiline, and — per project preference — object literals expanded with each
+// property on its own line.
 
 import js from "@eslint/js";
 import globals from "globals";
@@ -71,7 +72,7 @@ export default tseslint.config(
       "@stylistic/object-curly-spacing": ["error", "always"],
 
       // ---- General formatting --------------------------------------------
-      "@stylistic/indent": ["error", 4],
+      "@stylistic/indent": ["error", "tab"],
       "@stylistic/quotes": ["error", "double", { avoidEscape: true }],
       "@stylistic/semi": ["error", "always"],
       "@stylistic/comma-dangle": ["error", "always-multiline"],
@@ -96,11 +97,21 @@ export default tseslint.config(
       // ---- Vue ------------------------------------------------------------
       // <script setup> components don't need a multi-word name.
       "vue/multi-word-component-names": "off",
-      // 4-space indentation in both template and <script> blocks.
-      "vue/html-indent": ["error", 4],
+      // Write components PascalCase in templates: <VCard>, not <v-card>.
+      // registeredComponentsOnly:false so it also covers Vuetify's globally
+      // registered v-* components (and RouterView/RouterLink).
+      "vue/component-name-in-template-casing": [
+        "error",
+        "PascalCase",
+        {
+          registeredComponentsOnly: false,
+        },
+      ],
+      // Tab indentation in both template and <script> blocks.
+      "vue/html-indent": ["error", "tab"],
       "vue/script-indent": [
         "error",
-        4,
+        "tab",
         {
           baseIndent: 0,
           switchCase: 1,

@@ -9,7 +9,7 @@ import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import {
-    check, type Update,
+	check, type Update,
 } from "@tauri-apps/plugin-updater";
 import { relaunch } from "@tauri-apps/plugin-process";
 
@@ -23,85 +23,85 @@ const isLinux = navigator.userAgent.includes("Linux")
 export type UpdateStatus = "idle" | "uptodate" | "available" | "error";
 
 export const updateState = reactive({
-    dialog: false,
-    checking: false,
-    installing: false,
-    current: "",
-    latest: "",
-    status: "idle" as UpdateStatus,
-    canAutoInstall: !isLinux,
+	dialog: false,
+	checking: false,
+	installing: false,
+	current: "",
+	latest: "",
+	status: "idle" as UpdateStatus,
+	canAutoInstall: !isLinux,
 });
 
 let pending: Update | null = null;
 
 /** Semver-ish compare: 1 if a > b, -1 if a < b, 0 if equal. */
 function compareVersions(a: string, b: string): number {
-    const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
-    const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
-    const len = Math.max(pa.length, pb.length);
-    for (let i = 0; i < len; i++) {
-        const diff = (pa[i] || 0) - (pb[i] || 0);
-        if (diff !== 0) return diff > 0 ? 1 : -1;
-    }
-    return 0;
+	const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
+	const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
+	const len = Math.max(pa.length, pb.length);
+	for (let i = 0; i < len; i++) {
+		const diff = (pa[i] || 0) - (pb[i] || 0);
+		if (diff !== 0) return diff > 0 ? 1 : -1;
+	}
+	return 0;
 }
 
 async function checkDesktop(): Promise<void> {
-    const update = await check();
-    if (update) {
-        pending = update;
-        updateState.latest = update.version;
-        updateState.status = "available";
-    } else {
-        updateState.status = "uptodate";
-    }
+	const update = await check();
+	if (update) {
+		pending = update;
+		updateState.latest = update.version;
+		updateState.status = "available";
+	} else {
+		updateState.status = "uptodate";
+	}
 }
 
 async function checkLinux(): Promise<void> {
-    const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-        headers: { Accept: "application/vnd.github+json" },
-    });
-    if (!res.ok) {
-        throw new Error(`HTTP ${res.status}`);
-    }
-    const data = await res.json();
-    const tag = String(data.tag_name ?? "").replace(/^v/, "");
-    updateState.latest = tag;
-    updateState.status = compareVersions(tag, updateState.current) > 0 ? "available" : "uptodate";
+	const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+		headers: { Accept: "application/vnd.github+json" },
+	});
+	if (!res.ok) {
+		throw new Error(`HTTP ${res.status}`);
+	}
+	const data = await res.json();
+	const tag = String(data.tag_name ?? "").replace(/^v/, "");
+	updateState.latest = tag;
+	updateState.status = compareVersions(tag, updateState.current) > 0 ? "available" : "uptodate";
 }
 
 export async function checkForUpdates(): Promise<void> {
-    updateState.dialog = true;
-    updateState.checking = true;
-    updateState.status = "idle";
-    updateState.latest = "";
-    pending = null;
-    try {
-        updateState.current = await invoke<string>("app_version");
-        if (isLinux) {
-            await checkLinux();
-        } else {
-            await checkDesktop();
-        }
-    } catch {
-        updateState.status = "error";
-    } finally {
-        updateState.checking = false;
-    }
+	updateState.dialog = true;
+	updateState.checking = true;
+	updateState.status = "idle";
+	updateState.latest = "";
+	pending = null;
+	try {
+		updateState.current = await invoke<string>("app_version");
+		if (isLinux) {
+			await checkLinux();
+		} else {
+			await checkDesktop();
+		}
+	} catch {
+		updateState.status = "error";
+	} finally {
+		updateState.checking = false;
+	}
 }
 
 /** Install (desktop) or open the download page (Linux). */
 export async function installUpdate(): Promise<void> {
-    if (isLinux || !pending) {
-        await openUrl(RELEASES_URL);
-        return;
-    }
-    updateState.installing = true;
-    try {
-        await pending.downloadAndInstall();
-        await relaunch();
-    } catch {
-        updateState.status = "error";
-        updateState.installing = false;
-    }
+	if (isLinux || !pending) {
+		await openUrl(RELEASES_URL);
+		return;
+	}
+	updateState.installing = true;
+	try {
+		await pending.downloadAndInstall();
+		await relaunch();
+	} catch {
+		updateState.status = "error";
+		updateState.installing = false;
+	}
 }

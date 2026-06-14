@@ -11,10 +11,10 @@ import * as directives from "vuetify/directives";
 import "@mdi/font/css/materialdesignicons.css";
 
 const vuetify = createVuetify({
-    components,
-    directives,
-    theme: { defaultTheme: "dark" },
-    icons: { defaultSet: "mdi" },
+	components,
+	directives,
+	theme: { defaultTheme: "dark" },
+	icons: { defaultSet: "mdi" },
 });
 
 createApp(App).use(vuetify).use(router).use(i18n).mount("#app");

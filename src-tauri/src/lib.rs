@@ -80,6 +80,20 @@ async fn complete_setup(
     Ok(settings.clone())
 }
 
+/// Update this device's name and enabled roles after onboarding.
+#[tauri::command]
+async fn update_device(
+    state: State<'_, AppState>,
+    device_name: String,
+    roles: Vec<String>,
+) -> Result<AppSettings, String> {
+    let mut settings = state.settings.lock().await;
+    settings.device_name = device_name.trim().to_string();
+    settings.roles = roles;
+    settings.save(&state.data_dir)?;
+    Ok(settings.clone())
+}
+
 /// This client's identity public key (base64) — what a host trusts (TOFU).
 #[tauri::command]
 async fn public_key(state: State<'_, AppState>) -> Result<String, String> {
@@ -323,6 +337,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_settings,
             complete_setup,
+            update_device,
             public_key,
             app_version,
             toggle_devtools,

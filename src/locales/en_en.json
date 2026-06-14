@@ -8,7 +8,8 @@
         "close": "Close",
         "soon": "coming soon",
         "host": "Host",
-        "client": "Client"
+        "client": "Client",
+        "edit": "Edit"
     },
     "app": {
         "unnamedDevice": "Unnamed device"
@@ -104,7 +105,9 @@
         "about": "About",
         "tagline": "Zero-trust remote control",
         "version": "Version",
-        "language": "Language"
+        "language": "Language",
+        "editDevice": "Edit this device",
+        "rolesRequired": "Choose at least one."
     },
     "updates": {
         "title": "Updates",

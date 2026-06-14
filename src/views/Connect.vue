@@ -1,16 +1,16 @@
 <script setup lang="ts">
 import {
-    onMounted, ref,
+	onMounted, ref,
 } from "vue";
 import { useI18n } from "vue-i18n";
 import {
-    activeRelay,
-    captureScreenshot,
-    connect,
-    listDevices,
-    login,
-    store,
-    type Device,
+	activeRelay,
+	captureScreenshot,
+	connect,
+	listDevices,
+	login,
+	store,
+	type Device,
 } from "../store";
 
 const { t } = useI18n();
@@ -31,258 +31,258 @@ const error = ref<string | null>(null);
 const sessionCode = ref("");
 
 function fail(e: unknown) {
-    error.value = typeof e === "string" ? e : String(e);
+	error.value = typeof e === "string" ? e : String(e);
 }
 
 function deviceMeta(d: Device): string {
-    return t("connect.deviceMeta", {
-        platform: d.platform || t("connect.unknown"),
-        seen: d.last_seen || t("connect.never"),
-    });
+	return t("connect.deviceMeta", {
+		platform: d.platform || t("connect.unknown"),
+		seen: d.last_seen || t("connect.never"),
+	});
 }
 
 onMounted(() => {
-    if (activeRelay() && !store.connected) {
-        doConnect();
-    }
+	if (activeRelay() && !store.connected) {
+		doConnect();
+	}
 });
 
 async function doConnect() {
-    error.value = null;
-    busy.value = true;
-    try {
-        await connect();
-    } catch (e) {
-        fail(e);
-    } finally {
-        busy.value = false;
-    }
+	error.value = null;
+	busy.value = true;
+	try {
+		await connect();
+	} catch (e) {
+		fail(e);
+	} finally {
+		busy.value = false;
+	}
 }
 
 async function doLogin() {
-    error.value = null;
-    busy.value = true;
-    try {
-        await login(email.value, password.value);
-        await refresh();
-    } catch (e) {
-        fail(e);
-    } finally {
-        busy.value = false;
-    }
+	error.value = null;
+	busy.value = true;
+	try {
+		await login(email.value, password.value);
+		await refresh();
+	} catch (e) {
+		fail(e);
+	} finally {
+		busy.value = false;
+	}
 }
 
 async function refresh() {
-    error.value = null;
-    busy.value = true;
-    try {
-        devices.value = await listDevices();
-    } catch (e) {
-        fail(e);
-    } finally {
-        busy.value = false;
-    }
+	error.value = null;
+	busy.value = true;
+	try {
+		devices.value = await listDevices();
+	} catch (e) {
+		fail(e);
+	} finally {
+		busy.value = false;
+	}
 }
 
 async function capture() {
-    if (!selected.value) return;
-    error.value = null;
-    screenshot.value = null;
-    busyMsg.value = t("connect.requestingSession");
-    try {
-        screenshot.value = await captureScreenshot(selected.value);
-    } catch (e) {
-        fail(e);
-    } finally {
-        busyMsg.value = null;
-    }
+	if (!selected.value) return;
+	error.value = null;
+	screenshot.value = null;
+	busyMsg.value = t("connect.requestingSession");
+	try {
+		screenshot.value = await captureScreenshot(selected.value);
+	} catch (e) {
+		fail(e);
+	} finally {
+		busyMsg.value = null;
+	}
 }
 </script>
 
 <template>
-    <v-container style="max-width: 880px">
-        <!-- No relay yet -->
-        <v-alert
-            v-if="!activeRelay()"
-            type="info"
-            variant="tonal"
-            class="mb-4"
-        >
-            {{ t("connect.noRelayBefore") }}
-            <router-link to="/relays">
-                {{ t("connect.noRelayLink") }}
-            </router-link>{{ t("connect.noRelayAfter") }}
-        </v-alert>
+	<VContainer style="max-width: 880px">
+		<!-- No relay yet -->
+		<VAlert
+			v-if="!activeRelay()"
+			type="info"
+			variant="tonal"
+			class="mb-4"
+		>
+			{{ t("connect.noRelayBefore") }}
+			<RouterLink to="/relays">
+				{{ t("connect.noRelayLink") }}
+			</RouterLink>{{ t("connect.noRelayAfter") }}
+		</VAlert>
 
-        <template v-else>
-            <v-card variant="tonal" class="mb-4">
-                <v-card-text class="d-flex align-center">
-                    <v-icon icon="mdi-server-network" class="mr-2" />
-                    <div>
-                        <div class="text-body-1">
-                            {{ activeRelay()?.name }}
-                        </div>
-                        <div class="text-caption text-medium-emphasis">
-                            {{ activeRelay()?.http_url }}
-                        </div>
-                    </div>
-                    <v-spacer />
-                    <v-chip
-                        :color="store.connected ? 'green' : 'grey'"
-                        size="small"
-                        variant="flat"
-                    >
-                        {{ store.connected ? t("connect.connected") : t("connect.notConnected") }}
-                    </v-chip>
-                </v-card-text>
-            </v-card>
+		<template v-else>
+			<VCard variant="tonal" class="mb-4">
+				<VCardText class="d-flex align-center">
+					<VIcon icon="mdi-server-network" class="mr-2" />
+					<div>
+						<div class="text-body-1">
+							{{ activeRelay()?.name }}
+						</div>
+						<div class="text-caption text-medium-emphasis">
+							{{ activeRelay()?.http_url }}
+						</div>
+					</div>
+					<VSpacer />
+					<VChip
+						:color="store.connected ? 'green' : 'grey'"
+						size="small"
+						variant="flat"
+					>
+						{{ store.connected ? t("connect.connected") : t("connect.notConnected") }}
+					</VChip>
+				</VCardText>
+			</VCard>
 
-            <v-tabs v-model="tab" class="mb-4">
-                <v-tab value="devices" prepend-icon="mdi-monitor">
-                    {{ t("connect.tabDevices") }}
-                </v-tab>
-                <v-tab value="code" prepend-icon="mdi-numeric">
-                    {{ t("connect.tabCode") }}
-                </v-tab>
-            </v-tabs>
+			<VTabs v-model="tab" class="mb-4">
+				<VTab value="devices" prepend-icon="mdi-monitor">
+					{{ t("connect.tabDevices") }}
+				</VTab>
+				<VTab value="code" prepend-icon="mdi-numeric">
+					{{ t("connect.tabCode") }}
+				</VTab>
+			</VTabs>
 
-            <v-window v-model="tab">
-                <!-- Managed devices -->
-                <v-window-item value="devices">
-                    <!-- Sign in -->
-                    <v-card v-if="!store.loggedIn" variant="tonal">
-                        <v-card-title>{{ t("connect.signInTitle") }}</v-card-title>
-                        <v-card-subtitle>{{ t("connect.signInSubtitle") }}</v-card-subtitle>
-                        <v-card-text>
-                            <v-text-field
-                                v-model="email"
-                                :label="t('connect.email')"
-                                prepend-inner-icon="mdi-email-outline"
-                                density="comfortable"
-                            />
-                            <v-text-field
-                                v-model="password"
-                                :label="t('connect.password')"
-                                type="password"
-                                prepend-inner-icon="mdi-lock-outline"
-                                density="comfortable"
-                                hide-details
-                                @keyup.enter="doLogin"
-                            />
-                        </v-card-text>
-                        <v-card-actions>
-                            <v-spacer />
-                            <v-btn
-                                color="primary"
-                                variant="flat"
-                                :loading="busy"
-                                :disabled="!store.connected"
-                                @click="doLogin"
-                            >
-                                {{ t("connect.signIn") }}
-                            </v-btn>
-                        </v-card-actions>
-                    </v-card>
+			<VWindow v-model="tab">
+				<!-- Managed devices -->
+				<VWindowItem value="devices">
+					<!-- Sign in -->
+					<VCard v-if="!store.loggedIn" variant="tonal">
+						<VCardTitle>{{ t("connect.signInTitle") }}</VCardTitle>
+						<VCardSubtitle>{{ t("connect.signInSubtitle") }}</VCardSubtitle>
+						<VCardText>
+							<VTextField
+								v-model="email"
+								:label="t('connect.email')"
+								prepend-inner-icon="mdi-email-outline"
+								density="comfortable"
+							/>
+							<VTextField
+								v-model="password"
+								:label="t('connect.password')"
+								type="password"
+								prepend-inner-icon="mdi-lock-outline"
+								density="comfortable"
+								hide-details
+								@keyup.enter="doLogin"
+							/>
+						</VCardText>
+						<VCardActions>
+							<VSpacer />
+							<VBtn
+								color="primary"
+								variant="flat"
+								:loading="busy"
+								:disabled="!store.connected"
+								@click="doLogin"
+							>
+								{{ t("connect.signIn") }}
+							</VBtn>
+						</VCardActions>
+					</VCard>
 
-                    <!-- Device list -->
-                    <template v-else>
-                        <v-card variant="tonal">
-                            <v-card-title class="d-flex align-center">
-                                {{ t("connect.devices") }}
-                                <v-spacer />
-                                <v-btn
-                                    size="small"
-                                    variant="text"
-                                    icon="mdi-refresh"
-                                    :loading="busy"
-                                    @click="refresh"
-                                />
-                            </v-card-title>
-                            <v-card-text>
-                                <v-alert
-                                    v-if="!busy && devices.length === 0"
-                                    type="warning"
-                                    variant="tonal"
-                                    density="compact"
-                                >
-                                    {{ t("connect.noDevices") }}
-                                </v-alert>
-                                <v-list v-else lines="two" density="comfortable">
-                                    <v-list-item
-                                        v-for="d in devices"
-                                        :key="d.id"
-                                        :active="selected === d.id"
-                                        @click="selected = d.id"
-                                    >
-                                        <template #prepend>
-                                            <v-icon icon="mdi-monitor" />
-                                        </template>
-                                        <v-list-item-title>{{ d.hostname || d.id }}</v-list-item-title>
-                                        <v-list-item-subtitle>{{ deviceMeta(d) }}</v-list-item-subtitle>
-                                        <template #append>
-                                            <v-icon
-                                                v-if="selected === d.id"
-                                                icon="mdi-check-circle"
-                                                color="primary"
-                                            />
-                                        </template>
-                                    </v-list-item>
-                                </v-list>
-                            </v-card-text>
-                            <v-card-actions>
-                                <v-spacer />
-                                <v-btn
-                                    color="primary"
-                                    variant="flat"
-                                    prepend-icon="mdi-camera"
-                                    :disabled="!selected"
-                                    :loading="!!busyMsg"
-                                    @click="capture"
-                                >
-                                    {{ t("connect.capture") }}
-                                </v-btn>
-                            </v-card-actions>
-                        </v-card>
+					<!-- Device list -->
+					<template v-else>
+						<VCard variant="tonal">
+							<VCardTitle class="d-flex align-center">
+								{{ t("connect.devices") }}
+								<VSpacer />
+								<VBtn
+									size="small"
+									variant="text"
+									icon="mdi-refresh"
+									:loading="busy"
+									@click="refresh"
+								/>
+							</VCardTitle>
+							<VCardText>
+								<VAlert
+									v-if="!busy && devices.length === 0"
+									type="warning"
+									variant="tonal"
+									density="compact"
+								>
+									{{ t("connect.noDevices") }}
+								</VAlert>
+								<VList v-else lines="two" density="comfortable">
+									<VListItem
+										v-for="d in devices"
+										:key="d.id"
+										:active="selected === d.id"
+										@click="selected = d.id"
+									>
+										<template #prepend>
+											<VIcon icon="mdi-monitor" />
+										</template>
+										<VListItemTitle>{{ d.hostname || d.id }}</VListItemTitle>
+										<VListItemSubtitle>{{ deviceMeta(d) }}</VListItemSubtitle>
+										<template #append>
+											<VIcon
+												v-if="selected === d.id"
+												icon="mdi-check-circle"
+												color="primary"
+											/>
+										</template>
+									</VListItem>
+								</VList>
+							</VCardText>
+							<VCardActions>
+								<VSpacer />
+								<VBtn
+									color="primary"
+									variant="flat"
+									prepend-icon="mdi-camera"
+									:disabled="!selected"
+									:loading="!!busyMsg"
+									@click="capture"
+								>
+									{{ t("connect.capture") }}
+								</VBtn>
+							</VCardActions>
+						</VCard>
 
-                        <v-card v-if="screenshot" class="mt-4">
-                            <v-card-title>{{ t("connect.screenshot") }}</v-card-title>
-                            <v-img :src="screenshot" />
-                        </v-card>
-                    </template>
-                </v-window-item>
+						<VCard v-if="screenshot" class="mt-4">
+							<VCardTitle>{{ t("connect.screenshot") }}</VCardTitle>
+							<VImg :src="screenshot" />
+						</VCard>
+					</template>
+				</VWindowItem>
 
-                <!-- Session code (planned) -->
-                <v-window-item value="code">
-                    <v-card variant="tonal">
-                        <v-card-title class="d-flex align-center">
-                            {{ t("connect.sessionCodeTitle") }}
-                            <v-chip class="ml-2" size="x-small" color="amber">
-                                {{ t("common.soon") }}
-                            </v-chip>
-                        </v-card-title>
-                        <v-card-subtitle>{{ t("connect.sessionCodeSubtitle") }}</v-card-subtitle>
-                        <v-card-text>
-                            <v-otp-input v-model="sessionCode" length="9" disabled />
-                            <p class="text-caption text-medium-emphasis">
-                                {{ t("connect.sessionCodeNote") }}
-                            </p>
-                        </v-card-text>
-                    </v-card>
-                </v-window-item>
-            </v-window>
-        </template>
+				<!-- Session code (planned) -->
+				<VWindowItem value="code">
+					<VCard variant="tonal">
+						<VCardTitle class="d-flex align-center">
+							{{ t("connect.sessionCodeTitle") }}
+							<VChip class="ml-2" size="x-small" color="amber">
+								{{ t("common.soon") }}
+							</VChip>
+						</VCardTitle>
+						<VCardSubtitle>{{ t("connect.sessionCodeSubtitle") }}</VCardSubtitle>
+						<VCardText>
+							<VOtpInput v-model="sessionCode" length="9" disabled />
+							<p class="text-caption text-medium-emphasis">
+								{{ t("connect.sessionCodeNote") }}
+							</p>
+						</VCardText>
+					</VCard>
+				</VWindowItem>
+			</VWindow>
+		</template>
 
-        <!-- Feedback -->
-        <v-snackbar :model-value="!!busyMsg" color="grey-darken-3" timeout="-1">
-            <v-progress-circular indeterminate size="18" class="mr-2" /> {{ busyMsg }}
-        </v-snackbar>
-        <v-snackbar
-            :model-value="!!error"
-            color="error"
-            timeout="6000"
-            @update:model-value="error = null"
-        >
-            {{ error }}
-        </v-snackbar>
-    </v-container>
+		<!-- Feedback -->
+		<VSnackbar :model-value="!!busyMsg" color="grey-darken-3" timeout="-1">
+			<VProgressCircular indeterminate size="18" class="mr-2" /> {{ busyMsg }}
+		</VSnackbar>
+		<VSnackbar
+			:model-value="!!error"
+			color="error"
+			timeout="6000"
+			@update:model-value="error = null"
+		>
+			{{ error }}
+		</VSnackbar>
+	</VContainer>
 </template>

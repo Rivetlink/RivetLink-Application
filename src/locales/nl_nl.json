@@ -8,7 +8,8 @@
         "close": "Sluiten",
         "soon": "binnenkort",
         "host": "Host",
-        "client": "Client"
+        "client": "Client",
+        "edit": "Wijzigen"
     },
     "app": {
         "unnamedDevice": "Naamloos apparaat"
@@ -104,7 +105,9 @@
         "about": "Over",
         "tagline": "Zero-trust remote control",
         "version": "Versie",
-        "language": "Taal"
+        "language": "Taal",
+        "editDevice": "Dit apparaat wijzigen",
+        "rolesRequired": "Kies er minstens één."
     },
     "updates": {
         "title": "Updates",
