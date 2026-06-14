@@ -79,7 +79,7 @@ function onLocaleChange(code: string) {
             <v-card-title>{{ t("settings.about") }}</v-card-title>
             <v-list class="bg-transparent">
                 <v-list-item title="RivetLink" :subtitle="t('settings.tagline')" />
-                <v-list-item :title="t('settings.version')" subtitle="0.1.0" />
+                <v-list-item :title="t('settings.version')" subtitle="0.1.1" />
             </v-list>
         </v-card>
     </v-container>
