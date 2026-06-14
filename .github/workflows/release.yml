@@ -80,6 +80,27 @@ jobs:
         working-directory: RivetLink-Application
         run: npm ci
 
+      # The AppStream <releases> entry should always match the tag being built.
+      # Stamp it here so it never needs manual editing per version.
+      - name: Stamp metainfo release
+        if: matrix.os == 'ubuntu-latest'
+        working-directory: RivetLink-Application/src-tauri/metainfo
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          V="${TAG#v}"
+          DATE="$(date +%F)"
+          python3 - "$V" "$DATE" <<'PY'
+          import re, sys
+          v, d = sys.argv[1], sys.argv[2]
+          f = "com.rivetlink.app.metainfo.xml"
+          s = open(f).read()
+          block = f'  <releases>\n    <release version="{v}" date="{d}" />\n  </releases>'
+          s = re.sub(r"  <releases>.*?</releases>", block, s, flags=re.S)
+          open(f, "w").write(s)
+          print(block)
+          PY
+
       - name: Build, sign, and publish to a draft release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # action-v0.6.2
         env:
