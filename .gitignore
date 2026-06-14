@@ -141,3 +141,10 @@ dist
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 .vite/
+
+# RivetLink runtime identity / key material — NEVER commit. The app stores
+# these in the OS app-data dir, but guard against stray copies in the tree.
+client_identity.json
+client-config.json
+*.identity.json
+keys/

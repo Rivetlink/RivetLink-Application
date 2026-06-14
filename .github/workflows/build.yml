@@ -1,0 +1,85 @@
+name: Build app
+
+# Verifies the desktop app compiles on Linux, macOS, and Windows.
+# The Rust backend path-depends on ../RivetLink/crates/rivetlink-sdk, so each
+# job checks out the (private) RivetLink repo as a sibling alongside this one.
+#
+# Requires a repo secret SDK_REPO_TOKEN: a fine-grained PAT with
+# Contents: read on Rivetlink/RivetLink (the default GITHUB_TOKEN can't read a
+# different private repo).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Fast frontend gate — lint + typecheck + vite build. No Rust, no SDK needed.
+  frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  # Full cross-platform compile of the Tauri app (backend + frontend).
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          path: RivetLink-Application
+
+      - name: Checkout RivetLink (SDK source, sibling for the path dep)
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          repository: Rivetlink/RivetLink
+          path: RivetLink
+          token: ${{ secrets.SDK_REPO_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: RivetLink-Application/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          workspaces: RivetLink-Application/src-tauri -> target
+
+      - name: Install Linux dependencies
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev \
+            libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev
+
+      - name: Install npm dependencies
+        working-directory: RivetLink-Application
+        run: npm ci
+
+      - name: Build (compile, skip installers)
+        working-directory: RivetLink-Application
+        run: npm run tauri build -- --no-bundle
