@@ -117,6 +117,20 @@ pub fn run() {
     tauri::Builder::default()
         .manage(AppState::default())
         .plugin(tauri_plugin_opener::init())
+        .setup(|app| {
+            // Auto-open the web inspector on debug builds so the console is
+            // right there. In release, right-click -> Inspect Element still
+            // works thanks to the `devtools` feature.
+            #[cfg(debug_assertions)]
+            {
+                use tauri::Manager;
+                if let Some(window) = app.get_webview_window("main") {
+                    window.open_devtools();
+                }
+            }
+            let _ = app;
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             init_client,
             login,

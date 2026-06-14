@@ -2,5 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // Work around a WebKitGTK bug that renders a blank/white window on some
+    // Linux GPU/driver combinations. Must be set before the webview starts.
+    #[cfg(target_os = "linux")]
+    std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+
     rivetlink_app_lib::run()
 }
