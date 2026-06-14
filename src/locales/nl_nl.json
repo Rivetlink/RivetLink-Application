@@ -2,6 +2,7 @@
     "common": {
         "back": "Terug",
         "next": "Volgende",
+        "skip": "Overslaan",
         "save": "Opslaan",
         "cancel": "Annuleren",
         "soon": "binnenkort",
@@ -27,8 +28,8 @@
         "clientTitle": "Ik wil iemand anders helpen",
         "clientSubtitle": "Jij kijkt mee op de computer van een ander om te helpen. Kies dit als jíj degene bent die helpt.",
         "changeLater": "Je kunt dit later altijd nog aanpassen.",
-        "serverTitle": "Met welke server verbind je?",
-        "serverSubtitle": "RivetLink gebruikt een server als tussenpersoon om de verbinding te leggen. Je hebt het adres nodig — meestal krijg je dat van je beheerder, of je gebruikt je eigen server.",
+        "serverTitle": "Server toevoegen (optioneel)",
+        "serverSubtitle": "Een server verbindt je over internet of met beheerde apparaten. Het adres krijg je meestal van je beheerder. Je kunt dit overslaan en later toevoegen onder Servers — of straks direct verbinden op je lokale netwerk.",
         "nameLabel": "Naam",
         "nameHint": "Een naam die jij herkent, bijvoorbeeld “Werk”.",
         "serverLabel": "Serveradres",

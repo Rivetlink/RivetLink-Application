@@ -17,12 +17,14 @@ const roleHost = ref(true);
 const roleClient = ref(true);
 const rolesValid = computed(() => roleHost.value || roleClient.value);
 
-// Step 2 — server (only the HTTP address; the app derives the rest)
+// Step 2 — server (optional; only the HTTP address, the app derives the rest)
 const relayName = ref(t("onboarding.defaultServerName"));
 const relayUrl = ref("");
-const relayValid = computed(
-    () => relayName.value.trim().length > 0 && relayUrl.value.trim().startsWith("http"),
-);
+// Empty is allowed (skip); if filled it must look like an http(s) URL.
+const relayOk = computed(() => {
+    const url = relayUrl.value.trim();
+    return url === "" || url.startsWith("http");
+});
 
 // Step 3 — device name
 const deviceName = ref("");
@@ -34,7 +36,10 @@ async function finish() {
     error.value = null;
     busy.value = true;
     try {
-        await addRelay(relayName.value, relayUrl.value);
+        // The server is optional — only save one if an address was entered.
+        if (relayUrl.value.trim()) {
+            await addRelay(relayName.value, relayUrl.value);
+        }
         const roles: string[] = [];
         if (roleHost.value) roles.push("host");
         if (roleClient.value) roles.push("client");
@@ -150,10 +155,10 @@ async function finish() {
                             <v-btn
                                 color="primary"
                                 variant="flat"
-                                :disabled="!relayValid"
+                                :disabled="!relayOk"
                                 @click="step = 3"
                             >
-                                {{ t("common.next") }}
+                                {{ relayUrl.trim() ? t("common.next") : t("common.skip") }}
                             </v-btn>
                         </v-card-actions>
                     </v-card>

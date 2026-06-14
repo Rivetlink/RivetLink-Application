@@ -2,6 +2,7 @@
     "common": {
         "back": "Back",
         "next": "Next",
+        "skip": "Skip",
         "save": "Save",
         "cancel": "Cancel",
         "soon": "coming soon",
@@ -27,8 +28,8 @@
         "clientTitle": "I want to help someone else",
         "clientSubtitle": "You watch someone else's computer to help them. Choose this if you're the one helping.",
         "changeLater": "You can always change this later.",
-        "serverTitle": "Which server do you connect to?",
-        "serverSubtitle": "RivetLink uses a server as a go-between to make the connection. You need its address — usually you get it from your administrator, or you run your own server.",
+        "serverTitle": "Add a server (optional)",
+        "serverSubtitle": "A server connects you over the internet or to managed devices. You usually get its address from your administrator. You can skip this and add one later under Servers — or connect directly on your local network.",
         "nameLabel": "Name",
         "nameHint": "A name you recognise, for example “Work”.",
         "serverLabel": "Server address",
