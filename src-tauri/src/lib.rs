@@ -29,8 +29,9 @@ struct AppState {
     settings: Mutex<AppSettings>,
     /// The connected client (after `connect`).
     client: Arc<Mutex<Option<RivetClient>>>,
-    /// The task pumping frames for the active LAN live-stream, if any.
-    stream: Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The task pumping frames for the active LAN live-stream, if any. A sync
+    /// mutex so the viewer window's close handler can stop it without awaiting.
+    stream: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
 
 /// A saved LAN device the frontend asks to connect to.
@@ -406,12 +407,13 @@ async fn lan_screenshot(
 }
 
 /// Open (or focus) the standalone viewer window that renders the live stream.
+/// Closing the window stops the stream.
 fn open_viewer(app: &tauri::AppHandle, title: &str) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("viewer") {
         let _ = win.set_focus();
         return Ok(());
     }
-    tauri::WebviewWindowBuilder::new(
+    let window = tauri::WebviewWindowBuilder::new(
         app,
         "viewer",
         tauri::WebviewUrl::App("index.html#/viewer".into()),
@@ -421,6 +423,17 @@ fn open_viewer(app: &tauri::AppHandle, title: &str) -> Result<(), String> {
     .min_inner_size(640.0, 400.0)
     .build()
     .map_err(|e| e.to_string())?;
+
+    // Closing the viewer disconnects the live stream.
+    let handle = app.clone();
+    window.on_window_event(move |event| {
+        if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            if let Some(state) = handle.try_state::<AppState>() {
+                stop_stream(&state);
+            }
+            let _ = handle.emit("lan://disconnected", ());
+        }
+    });
     Ok(())
 }
 
@@ -459,7 +472,7 @@ async fn lan_connect(
     };
 
     // Stop any previous session before starting a new one.
-    stop_stream(&state).await;
+    stop_stream(&state);
     open_viewer(&app, &format!("RivetLink — {}", target.name))?;
 
     let app_for_task = app.clone();
@@ -476,22 +489,27 @@ async fn lan_connect(
         let _ = app_for_task.emit("lan://disconnected", ());
     });
 
-    *state.stream.lock().await = Some(task);
+    if let Ok(mut guard) = state.stream.lock() {
+        *guard = Some(task);
+    }
     let _ = app.emit("lan://connected", target.device_id);
     Ok(())
 }
 
-/// Stop the active stream (if any) and abort its task.
-async fn stop_stream(state: &AppState) {
-    if let Some(task) = state.stream.lock().await.take() {
-        task.abort();
+/// Stop the active stream (if any) and abort its task. Sync so it can run from
+/// a window-event handler.
+fn stop_stream(state: &AppState) {
+    if let Ok(mut guard) = state.stream.lock() {
+        if let Some(task) = guard.take() {
+            task.abort();
+        }
     }
 }
 
 /// Disconnect the current LAN stream and close the viewer window.
 #[tauri::command]
 async fn lan_disconnect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
-    stop_stream(&state).await;
+    stop_stream(&state);
     if let Some(win) = app.get_webview_window("viewer") {
         let _ = win.close();
     }
@@ -514,7 +532,7 @@ pub fn run() {
                 data_dir,
                 settings: Mutex::new(settings),
                 client: Arc::new(Mutex::new(None)),
-                stream: Mutex::new(None),
+                stream: std::sync::Mutex::new(None),
             });
 
             // Native menu bar (RivetLink + Edit). The "Check for Updates" item
