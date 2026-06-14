@@ -1,18 +1,18 @@
 name: Release
 
-# Builds native installers for Linux, macOS, and Windows, renames them to
-# RivetLink_<version>_<os>.<ext>, and attaches them to a draft GitHub Release.
+# Builds native installers for Linux, macOS, and Windows, signs the updater
+# artifacts, and publishes them + a `latest.json` to a draft GitHub Release.
 # Triggered by pushing a version tag (v1.2.3) or manually.
 #
-# Outputs (unsigned for now — see the signing note below):
-#   Linux   → RivetLink_<v>_linux.AppImage + .deb
-#   macOS   → RivetLink_<v>_macos.dmg (universal: Intel + Apple Silicon)
-#   Windows → RivetLink_<v>_windows.exe (NSIS) + .msi
+# Bundles: deb/rpm (Linux), dmg/app (macOS, universal), nsis/msi (Windows).
+# Auto-update works on macOS + Windows (the app's updater fetches latest.json
+# and installs in place). Linux installs via the .deb/.rpm; the app only
+# notifies about new versions there.
 #
-# Signing is a follow-up and needs paid certs, NOT a physical Mac:
-#   macOS   → Apple Developer ID cert + notarization, supplied via secrets.
-#   Windows → Authenticode code-signing cert.
-#   Linux   → no signing ecosystem; ships as-is.
+# Requires repo secrets:
+#   SDK_REPO_TOKEN            — read access to the private Rivetlink/RivetLink.
+#   TAURI_SIGNING_PRIVATE_KEY — the minisign private key for updater signatures.
+# The matching public key lives in tauri.conf.json (plugins.updater.pubkey).
 on:
   push:
     tags:
@@ -29,16 +29,10 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            label: linux
-            arch: amd64
             args: ""
           - os: macos-latest
-            label: macos
-            arch: universal
             args: "--target universal-apple-darwin"
           - os: windows-latest
-            label: windows
-            arch: x64
             args: ""
     runs-on: ${{ matrix.os }}
     steps:
@@ -86,55 +80,16 @@ jobs:
         working-directory: RivetLink-Application
         run: npm ci
 
-      # Build only — no release here. tauri-action exposes the built bundle
-      # paths via its `artifactPaths` output, which the next step renames.
-      - name: Build installers
-        id: tauri
+      - name: Build, sign, and publish to a draft release
         uses: tauri-apps/tauri-action@84b9d35b5fc46c1e45415bdb6144030364f7ebc5 # action-v0.6.2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         with:
           projectPath: RivetLink-Application
-          args: ${{ matrix.args }}
-
-      - name: Rename artifacts -> RivetLink_<version>_<os>
-        id: rename
-        shell: bash
-        env:
-          OS_LABEL: ${{ matrix.label }}
-          OS_ARCH: ${{ matrix.arch }}
-          REF_NAME: ${{ github.ref_name }}
-          ARTIFACTS_JSON: ${{ steps.tauri.outputs.artifactPaths }}
-        run: |
-          set -euo pipefail
-          version="${REF_NAME#v}"
-          mkdir -p dist-artifacts
-          # artifactPaths is a JSON array of file paths produced by the bundler.
-          echo "$ARTIFACTS_JSON" | jq -r '.[]' | while IFS= read -r src; do
-            # Tauri emits Windows paths with backslashes; Git-bash needs slashes.
-            src="${src//\\//}"
-            [ -f "$src" ] || continue
-            base="$(basename "$src")"
-            ext="${base##*.}"
-            # Keep .tar.gz / .app.tar.gz style double extensions intact.
-            case "$base" in
-              *.app.tar.gz) ext="app.tar.gz" ;;
-              *.tar.gz)     ext="tar.gz" ;;
-            esac
-            dest="dist-artifacts/RivetLink_${version}_${OS_LABEL}_${OS_ARCH}.${ext}"
-            # If two bundles share an extension, suffix to avoid clobbering.
-            if [ -e "$dest" ]; then
-              dest="dist-artifacts/RivetLink_${version}_${OS_LABEL}_${OS_ARCH}_$(echo "$base" | tr -cd '[:alnum:]' | tail -c 6).${ext}"
-            fi
-            cp "$src" "$dest"
-            echo "renamed: $base -> $(basename "$dest")"
-          done
-          ls -la dist-artifacts
-
-      - name: Publish to draft release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
-        with:
-          tag_name: ${{ github.ref_name }}
-          name: RivetLink ${{ github.ref_name }}
-          draft: true
+          tagName: ${{ github.ref_name }}
+          releaseName: "RivetLink ${{ github.ref_name }}"
+          releaseBody: "Native installers for Linux, macOS, and Windows. macOS/Windows update in place; on Linux install the .deb/.rpm."
+          releaseDraft: true
           prerelease: false
-          body: "Native installers for Linux, macOS, and Windows. Unsigned — see the README for installing past Gatekeeper/SmartScreen."
-          files: dist-artifacts/*
+          args: ${{ matrix.args }}

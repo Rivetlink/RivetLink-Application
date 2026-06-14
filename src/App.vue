@@ -13,7 +13,7 @@ import {
     loadSettings, store, isHost, isClient,
 } from "./store";
 import {
-    updateState, checkForUpdates, openReleasesPage,
+    updateState, checkForUpdates, installUpdate,
 } from "./updates";
 import Onboarding from "./views/Onboarding.vue";
 
@@ -158,10 +158,11 @@ const currentTitle = computed(() => {
                         v-if="updateState.status === 'available'"
                         color="primary"
                         variant="text"
-                        prepend-icon="mdi-open-in-new"
-                        @click="openReleasesPage"
+                        :loading="updateState.installing"
+                        :prepend-icon="updateState.canAutoInstall ? 'mdi-download' : 'mdi-open-in-new'"
+                        @click="installUpdate"
                     >
-                        {{ t("updates.download") }}
+                        {{ updateState.canAutoInstall ? t("updates.install") : t("updates.download") }}
                     </v-btn>
                     <v-spacer />
                     <v-btn variant="text" @click="updateState.dialog = false">

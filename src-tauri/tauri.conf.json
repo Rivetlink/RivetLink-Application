@@ -26,6 +26,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["deb", "rpm", "app", "dmg", "nsis", "msi"],
     "icon": [
       "icons/32x32.png",
@@ -34,5 +35,16 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI1MzhGNDUxMzkyMjNDRgpSV1RQSTVJVFJZOVRDemtyeE9zVmlPdWQ1QmFibDlWOEs2UzQxQ0d4c3lFMHQxMnQ4enBzTmhVLwo=",
+      "endpoints": [
+        "https://github.com/Rivetlink/RivetLink-Application/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
   }
 }

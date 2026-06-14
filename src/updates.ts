@@ -1,26 +1,40 @@
-// "Check for updates" logic. Compares this build's version against the latest
-// published GitHub release and reports the result in a dialog. (A full
-// auto-updater that downloads + installs is a later milestone; this is the
-// lightweight check.)
+// "Check for Updates" logic.
+//
+// macOS + Windows: the Tauri updater plugin checks a signed manifest, then
+// downloads and installs in place (then relaunches).
+// Linux: Tauri's updater can't install a .deb/.rpm, so we only *notify* — fetch
+// the latest GitHub release, compare versions, and offer a Download link.
 
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
 import { openUrl } from "@tauri-apps/plugin-opener";
+import {
+    check, type Update,
+} from "@tauri-apps/plugin-updater";
+import { relaunch } from "@tauri-apps/plugin-process";
 
 const REPO = "Rivetlink/RivetLink-Application";
 const RELEASES_URL = `https://github.com/${REPO}/releases`;
+
+// Tauri's updater can't replace a system package; Linux falls back to notify.
+const isLinux = navigator.userAgent.includes("Linux")
+    && !navigator.userAgent.includes("Android");
 
 export type UpdateStatus = "idle" | "uptodate" | "available" | "error";
 
 export const updateState = reactive({
     dialog: false,
     checking: false,
+    installing: false,
     current: "",
     latest: "",
     status: "idle" as UpdateStatus,
+    canAutoInstall: !isLinux,
 });
 
-/** Semver-ish compare: returns 1 if a > b, -1 if a < b, 0 if equal. */
+let pending: Update | null = null;
+
+/** Semver-ish compare: 1 if a > b, -1 if a < b, 0 if equal. */
 function compareVersions(a: string, b: string): number {
     const pa = a.split(".").map((n) => parseInt(n, 10) || 0);
     const pb = b.split(".").map((n) => parseInt(n, 10) || 0);
@@ -32,23 +46,43 @@ function compareVersions(a: string, b: string): number {
     return 0;
 }
 
+async function checkDesktop(): Promise<void> {
+    const update = await check();
+    if (update) {
+        pending = update;
+        updateState.latest = update.version;
+        updateState.status = "available";
+    } else {
+        updateState.status = "uptodate";
+    }
+}
+
+async function checkLinux(): Promise<void> {
+    const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
+        headers: { Accept: "application/vnd.github+json" },
+    });
+    if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    const tag = String(data.tag_name ?? "").replace(/^v/, "");
+    updateState.latest = tag;
+    updateState.status = compareVersions(tag, updateState.current) > 0 ? "available" : "uptodate";
+}
+
 export async function checkForUpdates(): Promise<void> {
     updateState.dialog = true;
     updateState.checking = true;
     updateState.status = "idle";
     updateState.latest = "";
+    pending = null;
     try {
         updateState.current = await invoke<string>("app_version");
-        const res = await fetch(`https://api.github.com/repos/${REPO}/releases/latest`, {
-            headers: { Accept: "application/vnd.github+json" },
-        });
-        if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`);
+        if (isLinux) {
+            await checkLinux();
+        } else {
+            await checkDesktop();
         }
-        const data = await res.json();
-        const tag = String(data.tag_name ?? "").replace(/^v/, "");
-        updateState.latest = tag;
-        updateState.status = compareVersions(tag, updateState.current) > 0 ? "available" : "uptodate";
     } catch {
         updateState.status = "error";
     } finally {
@@ -56,6 +90,18 @@ export async function checkForUpdates(): Promise<void> {
     }
 }
 
-export async function openReleasesPage(): Promise<void> {
-    await openUrl(RELEASES_URL);
+/** Install (desktop) or open the download page (Linux). */
+export async function installUpdate(): Promise<void> {
+    if (isLinux || !pending) {
+        await openUrl(RELEASES_URL);
+        return;
+    }
+    updateState.installing = true;
+    try {
+        await pending.downloadAndInstall();
+        await relaunch();
+    } catch {
+        updateState.status = "error";
+        updateState.installing = false;
+    }
 }
