@@ -109,6 +109,8 @@ jobs:
           mkdir -p dist-artifacts
           # artifactPaths is a JSON array of file paths produced by the bundler.
           echo "$ARTIFACTS_JSON" | jq -r '.[]' | while IFS= read -r src; do
+            # Tauri emits Windows paths with backslashes; Git-bash needs slashes.
+            src="${src//\\//}"
             [ -f "$src" ] || continue
             base="$(basename "$src")"
             ext="${base##*.}"
