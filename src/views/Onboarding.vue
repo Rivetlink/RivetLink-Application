@@ -195,8 +195,8 @@
 				await addRelay(relayName.value, relayUrl.value);
 			}
 			const roles: string[] = [];
-			if (roleHost.value) roles.push("host");
-			if (roleClient.value) roles.push("client");
+			if (roleHost.value) {roles.push("host");}
+			if (roleClient.value) {roles.push("client");}
 			await completeSetup(deviceName.value.trim() || t("onboarding.defaultDeviceName"), roles);
 			emit("done");
 		} catch (e) {

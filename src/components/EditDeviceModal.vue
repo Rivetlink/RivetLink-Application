@@ -76,12 +76,12 @@
 	});
 
 	async function save() {
-		if (!host.value && !client.value) return;
+		if (!host.value && !client.value) {return;}
 		saving.value = true;
 		try {
 			const roles: string[] = [];
-			if (host.value) roles.push("host");
-			if (client.value) roles.push("client");
+			if (host.value) {roles.push("host");}
+			if (client.value) {roles.push("client");}
 			await updateDevice(name.value.trim() || t("onboarding.defaultDeviceName"), roles);
 			open.value = false;
 		} finally {

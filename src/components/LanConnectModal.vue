@@ -44,7 +44,7 @@
 
 	// Reset the field each time the dialog opens.
 	watch(open, (visible) => {
-		if (visible) pin.value = "";
+		if (visible) {pin.value = "";}
 	});
 
 	function submit() {

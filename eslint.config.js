@@ -84,6 +84,9 @@ export default tseslint.config(
       "@stylistic/space-before-blocks": "error",
       "@stylistic/keyword-spacing": "error",
 
+      // Always brace control statements, even single-line bodies.
+      "curly": ["error", "all"],
+
       // ---- Correctness / hygiene -----------------------------------------
       "@typescript-eslint/no-unused-vars": [
         "error",

@@ -418,7 +418,7 @@
 	}
 
 	async function capture() {
-		if (!selected.value) return;
+		if (!selected.value) {return;}
 		error.value = null;
 		screenshot.value = null;
 		busyMsg.value = t("connect.requestingSession");
@@ -469,7 +469,7 @@
 
 	async function onLanConnect(pin: string) {
 		const target = connectTarget.value;
-		if (!target) return;
+		if (!target) {return;}
 		error.value = null;
 		busyMsg.value = t("connect.lanConnecting");
 		try {

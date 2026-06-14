@@ -46,7 +46,7 @@ function compareVersions(a: string, b: string): number {
 	const len = Math.max(pa.length, pb.length);
 	for (let i = 0; i < len; i++) {
 		const diff = (pa[i] || 0) - (pb[i] || 0);
-		if (diff !== 0) return diff > 0 ? 1 : -1;
+		if (diff !== 0) {return diff > 0 ? 1 : -1;}
 	}
 	return 0;
 }

@@ -187,12 +187,14 @@ export async function lanConnect(
 	pin: string | null,
 ): Promise<void> {
 	await invoke("lan_connect", {
-		name: device.name,
-		address: device.address,
-		port: device.port,
-		deviceId: device.id,
+		target: {
+			name: device.name,
+			address: device.address,
+			port: device.port,
+			deviceId: device.id,
+			publicKey: device.public_key,
+		},
 		pin,
-		hostPublicKey: device.public_key,
 	});
 }
 

@@ -117,8 +117,8 @@
 			.filter((r) => r.meta && r.meta.titleKey)
 			.filter((r) => {
 				const role = r.meta?.role;
-				if (role === "client") return isClient();
-				if (role === "host") return isHost();
+				if (role === "client") {return isClient();}
+				if (role === "host") {return isHost();}
 				return true;
 			})
 			.map((r) => ({

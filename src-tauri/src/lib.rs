@@ -21,13 +21,6 @@ use rivetlink_sdk::{ClientConfig, Device, Identity, RivetClient};
 
 use settings::{AppSettings, Relay};
 
-/// A running live-stream session: the task pumping frames, plus which saved
-/// LAN device it belongs to (for the "connected" badge).
-struct StreamSession {
-    task: tokio::task::JoinHandle<()>,
-    device_id: String,
-}
-
 /// Shared app state.
 struct AppState {
     /// Where settings + identity live (the OS app-data dir).
@@ -36,8 +29,19 @@ struct AppState {
     settings: Mutex<AppSettings>,
     /// The connected client (after `connect`).
     client: Arc<Mutex<Option<RivetClient>>>,
-    /// The active LAN live-stream session, if any.
-    stream: Mutex<Option<StreamSession>>,
+    /// The task pumping frames for the active LAN live-stream, if any.
+    stream: Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+/// A saved LAN device the frontend asks to connect to.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LanTarget {
+    name: String,
+    address: String,
+    port: u16,
+    device_id: String,
+    public_key: Option<String>,
 }
 
 impl AppState {
@@ -309,12 +313,26 @@ async fn capture_screenshot(
 
 // ---- Direct-LAN: discover, remember, connect -------------------------------
 
-/// Browse the local network for RivetLink hosts (~3s).
+/// Browse the local network for RivetLink hosts (~3s), excluding this device's
+/// own advertisement (matched by identity public key).
 #[tauri::command]
-async fn discover_lan() -> Result<Vec<rivetlink_sdk::LanDevice>, String> {
-    rivetlink_sdk::lan::discover(std::time::Duration::from_secs(3))
+async fn discover_lan(
+    state: State<'_, AppState>,
+) -> Result<Vec<rivetlink_sdk::LanDevice>, String> {
+    let own_key = Identity::load_or_create(&state.identity_path())
+        .map(|id| id.public_key_b64())
+        .ok();
+
+    let mut found = rivetlink_sdk::lan::discover(std::time::Duration::from_secs(3))
         .await
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+
+    // Drop our own host advert so we never list ourselves.
+    found.retain(|d| match (&d.public_key, &own_key) {
+        (Some(pk), Some(own)) => pk != own,
+        _ => true,
+    });
+    Ok(found)
 }
 
 /// Remember a discovered LAN host so it shows up without re-scanning.
@@ -415,18 +433,14 @@ fn open_viewer(app: &tauri::AppHandle, title: &str) -> Result<(), String> {
 async fn lan_connect(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
-    name: String,
-    address: String,
-    port: u16,
-    device_id: String,
+    target: LanTarget,
     pin: Option<String>,
-    host_public_key: Option<String>,
 ) -> Result<(), String> {
     use base64::engine::general_purpose::STANDARD as B64;
 
-    let addr: std::net::SocketAddr = format!("{address}:{port}")
+    let addr: std::net::SocketAddr = format!("{}:{}", target.address, target.port)
         .parse()
-        .map_err(|_| format!("bad address: {address}:{port}"))?;
+        .map_err(|_| format!("bad address: {}:{}", target.address, target.port))?;
 
     // Establish the encrypted channel (PIN/PAKE, or key/TOFU with host pinning).
     let (mut stream, channel) = match pin {
@@ -438,7 +452,7 @@ async fn lan_connect(
         _ => {
             let identity =
                 Identity::load_or_create(&state.identity_path()).map_err(|e| e.to_string())?;
-            rivetlink_sdk::lan::connect_key_pinned(addr, &identity, host_public_key.as_deref())
+            rivetlink_sdk::lan::connect_key_pinned(addr, &identity, target.public_key.as_deref())
                 .await
                 .map_err(|e| e.to_string())?
         },
@@ -446,7 +460,7 @@ async fn lan_connect(
 
     // Stop any previous session before starting a new one.
     stop_stream(&state).await;
-    open_viewer(&app, &format!("RivetLink — {name}"))?;
+    open_viewer(&app, &format!("RivetLink — {}", target.name))?;
 
     let app_for_task = app.clone();
     let task = tokio::spawn(async move {
@@ -462,18 +476,15 @@ async fn lan_connect(
         let _ = app_for_task.emit("lan://disconnected", ());
     });
 
-    *state.stream.lock().await = Some(StreamSession {
-        task,
-        device_id: device_id.clone(),
-    });
-    let _ = app.emit("lan://connected", device_id);
+    *state.stream.lock().await = Some(task);
+    let _ = app.emit("lan://connected", target.device_id);
     Ok(())
 }
 
 /// Stop the active stream (if any) and abort its task.
 async fn stop_stream(state: &AppState) {
-    if let Some(session) = state.stream.lock().await.take() {
-        session.task.abort();
+    if let Some(task) = state.stream.lock().await.take() {
+        task.abort();
     }
 }
 
