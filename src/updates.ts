@@ -20,7 +20,12 @@ const RELEASES_URL = `https://github.com/${REPO}/releases`;
 const isLinux = navigator.userAgent.includes("Linux")
     && !navigator.userAgent.includes("Android");
 
-export type UpdateStatus = "idle" | "uptodate" | "available" | "error";
+export enum UpdateStatus {
+	Idle = "idle",
+	UpToDate = "uptodate",
+	Available = "available",
+	Error = "error",
+}
 
 export const updateState = reactive({
 	dialog: false,
@@ -28,7 +33,7 @@ export const updateState = reactive({
 	installing: false,
 	current: "",
 	latest: "",
-	status: "idle" as UpdateStatus,
+	status: UpdateStatus.Idle,
 	canAutoInstall: !isLinux,
 });
 
@@ -51,9 +56,9 @@ async function checkDesktop(): Promise<void> {
 	if (update) {
 		pending = update;
 		updateState.latest = update.version;
-		updateState.status = "available";
+		updateState.status = UpdateStatus.Available;
 	} else {
-		updateState.status = "uptodate";
+		updateState.status = UpdateStatus.UpToDate;
 	}
 }
 
@@ -67,13 +72,15 @@ async function checkLinux(): Promise<void> {
 	const data = await res.json();
 	const tag = String(data.tag_name ?? "").replace(/^v/, "");
 	updateState.latest = tag;
-	updateState.status = compareVersions(tag, updateState.current) > 0 ? "available" : "uptodate";
+	updateState.status = compareVersions(tag, updateState.current) > 0
+		? UpdateStatus.Available
+		: UpdateStatus.UpToDate;
 }
 
 export async function checkForUpdates(): Promise<void> {
 	updateState.dialog = true;
 	updateState.checking = true;
-	updateState.status = "idle";
+	updateState.status = UpdateStatus.Idle;
 	updateState.latest = "";
 	pending = null;
 	try {
@@ -84,7 +91,7 @@ export async function checkForUpdates(): Promise<void> {
 			await checkDesktop();
 		}
 	} catch {
-		updateState.status = "error";
+		updateState.status = UpdateStatus.Error;
 	} finally {
 		updateState.checking = false;
 	}
@@ -101,7 +108,7 @@ export async function installUpdate(): Promise<void> {
 		await pending.downloadAndInstall();
 		await relaunch();
 	} catch {
-		updateState.status = "error";
+		updateState.status = UpdateStatus.Error;
 		updateState.installing = false;
 	}
 }

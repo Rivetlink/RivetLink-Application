@@ -298,6 +298,86 @@ async fn capture_screenshot(
     Ok(format!("data:image/png;base64,{b64}"))
 }
 
+// ---- Direct-LAN: discover, remember, connect -------------------------------
+
+/// Browse the local network for RivetLink hosts (~3s).
+#[tauri::command]
+async fn discover_lan() -> Result<Vec<rivetlink_sdk::LanDevice>, String> {
+    rivetlink_sdk::lan::discover(std::time::Duration::from_secs(3))
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Remember a discovered LAN host so it shows up without re-scanning.
+#[tauri::command]
+async fn add_lan_device(
+    state: State<'_, AppState>,
+    name: String,
+    address: String,
+    port: u16,
+    public_key: Option<String>,
+) -> Result<AppSettings, String> {
+    let mut settings = state.settings.lock().await;
+    // De-duplicate on address:port; refresh the stored entry if it exists.
+    settings
+        .lan_devices
+        .retain(|d| !(d.address == address && d.port == port));
+    settings.lan_devices.push(settings::SavedLanDevice {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: name.trim().to_string(),
+        address,
+        port,
+        public_key,
+    });
+    settings.save(&state.data_dir)?;
+    Ok(settings.clone())
+}
+
+/// Forget a remembered LAN host.
+#[tauri::command]
+async fn remove_lan_device(state: State<'_, AppState>, id: String) -> Result<AppSettings, String> {
+    let mut settings = state.settings.lock().await;
+    settings.lan_devices.retain(|d| d.id != id);
+    settings.save(&state.data_dir)?;
+    Ok(settings.clone())
+}
+
+/// Connect to a LAN host and capture one screenshot, returned as a PNG data URL.
+///
+/// With a `pin`, authenticates via PAKE. Without one, uses this device's
+/// identity (TOFU); if the host's public key is known it is pinned to defeat a
+/// man-in-the-middle.
+#[tauri::command]
+async fn lan_screenshot(
+    state: State<'_, AppState>,
+    address: String,
+    port: u16,
+    pin: Option<String>,
+    host_public_key: Option<String>,
+) -> Result<String, String> {
+    let addr: std::net::SocketAddr = format!("{address}:{port}")
+        .parse()
+        .map_err(|_| format!("bad address: {address}:{port}"))?;
+
+    let png = match pin {
+        Some(pin) if !pin.trim().is_empty() => {
+            rivetlink_sdk::lan::screenshot_password(addr, pin.trim())
+                .await
+                .map_err(|e| e.to_string())?
+        },
+        _ => {
+            let identity =
+                Identity::load_or_create(&state.identity_path()).map_err(|e| e.to_string())?;
+            rivetlink_sdk::lan::screenshot_key_pinned(addr, &identity, host_public_key.as_deref())
+                .await
+                .map_err(|e| e.to_string())?
+        },
+    };
+
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
+    Ok(format!("data:image/png;base64,{b64}"))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -347,7 +427,11 @@ pub fn run() {
             connect,
             login,
             list_devices,
-            capture_screenshot
+            capture_screenshot,
+            discover_lan,
+            add_lan_device,
+            remove_lan_device,
+            lan_screenshot
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

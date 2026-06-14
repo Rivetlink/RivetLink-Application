@@ -12,12 +12,30 @@ export type Relay = {
 	ws_url: string;
 };
 
+export type SavedLanDevice = {
+	id: string;
+	name: string;
+	address: string;
+	port: number;
+	public_key: string | null;
+};
+
 export type AppSettings = {
 	setup_complete: boolean;
 	device_name: string;
 	roles: string[];
 	relays: Relay[];
 	active_relay_id: string | null;
+	lan_devices: SavedLanDevice[];
+};
+
+/// A host found on the local network (not yet remembered).
+export type LanDevice = {
+	name: string;
+	address: string;
+	port: number;
+	public_key: string | null;
+	protocol_version: number | null;
 };
 
 export type Device = {
@@ -33,6 +51,7 @@ const emptySettings: AppSettings = {
 	roles: [],
 	relays: [],
 	active_relay_id: null,
+	lan_devices: [],
 };
 
 export const store = reactive({
@@ -120,4 +139,42 @@ export async function listDevices(): Promise<Device[]> {
 
 export async function captureScreenshot(deviceId: string): Promise<string> {
 	return invoke<string>("capture_screenshot", { deviceId });
+}
+
+// ---- Direct-LAN ------------------------------------------------------------
+
+export async function discoverLan(): Promise<LanDevice[]> {
+	return invoke<LanDevice[]>("discover_lan");
+}
+
+export async function addLanDevice(
+	name: string,
+	address: string,
+	port: number,
+	publicKey: string | null,
+): Promise<void> {
+	store.settings = await invoke<AppSettings>("add_lan_device", {
+		name,
+		address,
+		port,
+		publicKey,
+	});
+}
+
+export async function removeLanDevice(id: string): Promise<void> {
+	store.settings = await invoke<AppSettings>("remove_lan_device", { id });
+}
+
+export async function lanScreenshot(
+	address: string,
+	port: number,
+	pin: string | null,
+	hostPublicKey: string | null,
+): Promise<string> {
+	return invoke<string>("lan_screenshot", {
+		address,
+		port,
+		pin,
+		hostPublicKey,
+	});
 }

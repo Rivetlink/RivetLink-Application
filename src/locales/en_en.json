@@ -68,7 +68,20 @@
         "requestingSession": "Requesting a session — the host may ask for approval…",
         "sessionCodeTitle": "Connect with a session code",
         "sessionCodeSubtitle": "Ad-hoc support without an account — the host shares a code.",
-        "sessionCodeNote": "This connection method is still being built (server + protocol)."
+        "sessionCodeNote": "This connection method is still being built (server + protocol).",
+        "tabLan": "Local network",
+        "lanTitle": "Computers on this network",
+        "lanSubtitle": "Connect directly to another computer nearby — no server needed.",
+        "lanScan": "Search this network",
+        "lanFound": "Found on the network",
+        "lanNoneFound": "No computers found yet. Make sure the other computer is sharing on this network, then search again.",
+        "lanSaved": "Saved computers",
+        "lanAdd": "Add",
+        "lanConnect": "Connect",
+        "lanConnecting": "Connecting over the local network…",
+        "lanConnectTitle": "Connect to {name}",
+        "lanPinLabel": "PIN (if the other computer shows one)",
+        "lanPinHint": "Leave empty to connect with this device's key instead."
     },
     "device": {
         "thisDevice": "This device",

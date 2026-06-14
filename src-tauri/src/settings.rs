@@ -15,6 +15,18 @@ pub struct Relay {
     pub ws_url: String,
 }
 
+/// A host discovered on the local network and remembered by the user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SavedLanDevice {
+    pub id: String,
+    pub name: String,
+    pub address: String,
+    pub port: u16,
+    /// Advertised host identity (base64), if known — lets us pin the host.
+    #[serde(default)]
+    pub public_key: Option<String>,
+}
+
 /// Everything the app remembers between launches.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -33,6 +45,9 @@ pub struct AppSettings {
     /// Which saved relay is currently selected.
     #[serde(default)]
     pub active_relay_id: Option<String>,
+    /// Hosts found on the local network and remembered by the user.
+    #[serde(default)]
+    pub lan_devices: Vec<SavedLanDevice>,
 }
 
 impl AppSettings {

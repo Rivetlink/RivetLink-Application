@@ -1,32 +1,3 @@
-<script setup lang="ts">
-import {
-	onMounted, ref,
-} from "vue";
-import { useI18n } from "vue-i18n";
-import {
-	loadPublicKey, store,
-} from "../store";
-
-const { t } = useI18n();
-const copied = ref(false);
-
-onMounted(async () => {
-	if (!store.publicKey) {
-		await loadPublicKey();
-	}
-});
-
-async function copyKey() {
-	try {
-		await navigator.clipboard.writeText(store.publicKey);
-		copied.value = true;
-		setTimeout(() => (copied.value = false), 1500);
-	} catch {
-		// Clipboard may be unavailable; the field is selectable as a fallback.
-	}
-}
-</script>
-
 <template>
 	<VContainer style="max-width: 880px">
 		<VCard variant="tonal" class="mb-4">
@@ -90,3 +61,32 @@ async function copyKey() {
 		</VCard>
 	</VContainer>
 </template>
+
+<script setup lang="ts">
+	import {
+		onMounted, ref,
+	} from "vue";
+	import { useI18n } from "vue-i18n";
+	import {
+		loadPublicKey, store,
+	} from "../store";
+
+	const { t } = useI18n();
+	const copied = ref(false);
+
+	onMounted(async () => {
+		if (!store.publicKey) {
+			await loadPublicKey();
+		}
+	});
+
+	async function copyKey() {
+		try {
+			await navigator.clipboard.writeText(store.publicKey);
+			copied.value = true;
+			setTimeout(() => (copied.value = false), 1500);
+		} catch {
+		// Clipboard may be unavailable; the field is selectable as a fallback.
+		}
+	}
+</script>

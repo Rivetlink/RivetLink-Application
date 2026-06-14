@@ -1,58 +1,3 @@
-<script setup lang="ts">
-import {
-	onMounted, ref,
-} from "vue";
-import { useI18n } from "vue-i18n";
-import {
-	isClient, isHost, loadPublicKey, store, updateDevice,
-} from "../store";
-import {
-	SUPPORTED, setLocale,
-} from "../i18n";
-
-const {
-	t, locale,
-} = useI18n();
-
-onMounted(async () => {
-	if (!store.publicKey) {
-		await loadPublicKey();
-	}
-});
-
-function onLocaleChange(code: string) {
-	setLocale(code);
-}
-
-// --- Edit this device (name + roles) ---
-const editOpen = ref(false);
-const editName = ref("");
-const editHost = ref(false);
-const editClient = ref(false);
-const saving = ref(false);
-
-function openEdit() {
-	editName.value = store.settings.device_name;
-	editHost.value = isHost();
-	editClient.value = isClient();
-	editOpen.value = true;
-}
-
-async function saveEdit() {
-	if (!editHost.value && !editClient.value) return;
-	saving.value = true;
-	try {
-		const roles: string[] = [];
-		if (editHost.value) roles.push("host");
-		if (editClient.value) roles.push("client");
-		await updateDevice(editName.value.trim() || t("onboarding.defaultDeviceName"), roles);
-		editOpen.value = false;
-	} finally {
-		saving.value = false;
-	}
-}
-</script>
-
 <template>
 	<VContainer style="max-width: 880px">
 		<VCard variant="tonal" class="mb-4">
@@ -63,7 +8,7 @@ async function saveEdit() {
 					variant="text"
 					size="small"
 					prepend-icon="mdi-pencil"
-					@click="openEdit"
+					@click="editOpen = true"
 				>
 					{{ t("common.edit") }}
 				</VBtn>
@@ -130,54 +75,36 @@ async function saveEdit() {
 			</VList>
 		</VCard>
 
-		<VDialog v-model="editOpen" max-width="480">
-			<VCard>
-				<VCardTitle>{{ t("settings.editDevice") }}</VCardTitle>
-				<VCardText>
-					<VTextField
-						v-model="editName"
-						:label="t('onboarding.deviceLabel')"
-						:placeholder="t('onboarding.devicePlaceholder')"
-						persistent-placeholder
-						density="comfortable"
-						autofocus
-						@keyup.enter="saveEdit"
-					/>
-					<div class="text-subtitle-2 mt-2 mb-1">
-						{{ t("settings.roles") }}
-					</div>
-					<VCheckbox
-						v-model="editHost"
-						:label="t('onboarding.hostTitle')"
-						hide-details
-						density="comfortable"
-					/>
-					<VCheckbox
-						v-model="editClient"
-						:label="t('onboarding.clientTitle')"
-						hide-details
-						density="comfortable"
-					/>
-					<p v-if="!editHost && !editClient" class="text-caption text-error mt-2">
-						{{ t("settings.rolesRequired") }}
-					</p>
-				</VCardText>
-				<VCardActions>
-					<VSpacer />
-					<VBtn variant="text" @click="editOpen = false">
-						{{ t("common.cancel") }}
-					</VBtn>
-					<VBtn
-						color="primary"
-						variant="flat"
-						:loading="saving"
-						:disabled="!editHost && !editClient"
-						@click="saveEdit"
-					>
-						{{ t("common.save") }}
-					</VBtn>
-				</VCardActions>
-			</VCard>
-		</VDialog>
+		<EditDeviceModal v-model="editOpen" />
 	</VContainer>
 </template>
+
+<script setup lang="ts">
+	import {
+		onMounted, ref,
+	} from "vue";
+	import { useI18n } from "vue-i18n";
+	import {
+		isClient, isHost, loadPublicKey, store,
+	} from "../store";
+	import {
+		SUPPORTED, setLocale,
+	} from "../i18n";
+	import EditDeviceModal from "../components/EditDeviceModal.vue";
+
+	const {
+		t, locale,
+	} = useI18n();
+
+	const editOpen = ref(false);
+
+	onMounted(async () => {
+		if (!store.publicKey) {
+			await loadPublicKey();
+		}
+	});
+
+	function onLocaleChange(code: string) {
+		setLocale(code);
+	}
+</script>

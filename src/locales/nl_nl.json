@@ -68,7 +68,20 @@
         "requestingSession": "Sessie aanvragen — de host kan om goedkeuring vragen…",
         "sessionCodeTitle": "Verbinden met een sessie-code",
         "sessionCodeSubtitle": "Ad-hoc support zonder account — de host deelt een code.",
-        "sessionCodeNote": "Dit verbindingsmodel wordt nog gebouwd (server + protocol)."
+        "sessionCodeNote": "Dit verbindingsmodel wordt nog gebouwd (server + protocol).",
+        "tabLan": "Lokaal netwerk",
+        "lanTitle": "Computers op dit netwerk",
+        "lanSubtitle": "Verbind direct met een andere computer in de buurt — zonder server.",
+        "lanScan": "Zoek op dit netwerk",
+        "lanFound": "Gevonden op het netwerk",
+        "lanNoneFound": "Nog geen computers gevonden. Zorg dat de andere computer deelt op dit netwerk en zoek opnieuw.",
+        "lanSaved": "Opgeslagen computers",
+        "lanAdd": "Toevoegen",
+        "lanConnect": "Verbinden",
+        "lanConnecting": "Verbinden via het lokale netwerk…",
+        "lanConnectTitle": "Verbinden met {name}",
+        "lanPinLabel": "PIN (als de andere computer er een toont)",
+        "lanPinHint": "Laat leeg om in plaats daarvan met de sleutel van dit apparaat te verbinden."
     },
     "device": {
         "thisDevice": "Dit apparaat",

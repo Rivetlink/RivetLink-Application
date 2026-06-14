@@ -1,58 +1,3 @@
-<script setup lang="ts">
-import {
-	computed, ref,
-} from "vue";
-import { useI18n } from "vue-i18n";
-import {
-	addRelay, removeRelay, setActiveRelay, store,
-} from "../store";
-
-const { t } = useI18n();
-
-const showAdd = ref(false);
-const name = ref("");
-const http = ref("");
-const busy = ref(false);
-const error = ref<string | null>(null);
-
-const valid = computed(
-	() => name.value.trim().length > 0 && http.value.trim().startsWith("http"),
-);
-
-async function add() {
-	error.value = null;
-	busy.value = true;
-	try {
-		await addRelay(name.value, http.value);
-		showAdd.value = false;
-		name.value = "";
-		http.value = "";
-	} catch (e) {
-		error.value = typeof e === "string" ? e : String(e);
-	} finally {
-		busy.value = false;
-	}
-}
-
-async function makeActive(id: string) {
-	error.value = null;
-	try {
-		await setActiveRelay(id);
-	} catch (e) {
-		error.value = typeof e === "string" ? e : String(e);
-	}
-}
-
-async function remove(id: string) {
-	error.value = null;
-	try {
-		await removeRelay(id);
-	} catch (e) {
-		error.value = typeof e === "string" ? e : String(e);
-	}
-}
-</script>
-
 <template>
 	<VContainer style="max-width: 880px">
 		<div class="d-flex align-center mb-4">
@@ -167,3 +112,58 @@ async function remove(id: string) {
 		</VSnackbar>
 	</VContainer>
 </template>
+
+<script setup lang="ts">
+	import {
+		computed, ref,
+	} from "vue";
+	import { useI18n } from "vue-i18n";
+	import {
+		addRelay, removeRelay, setActiveRelay, store,
+	} from "../store";
+
+	const { t } = useI18n();
+
+	const showAdd = ref(false);
+	const name = ref("");
+	const http = ref("");
+	const busy = ref(false);
+	const error = ref<string | null>(null);
+
+	const valid = computed(
+		() => name.value.trim().length > 0 && http.value.trim().startsWith("http"),
+	);
+
+	async function add() {
+		error.value = null;
+		busy.value = true;
+		try {
+			await addRelay(name.value, http.value);
+			showAdd.value = false;
+			name.value = "";
+			http.value = "";
+		} catch (e) {
+			error.value = typeof e === "string" ? e : String(e);
+		} finally {
+			busy.value = false;
+		}
+	}
+
+	async function makeActive(id: string) {
+		error.value = null;
+		try {
+			await setActiveRelay(id);
+		} catch (e) {
+			error.value = typeof e === "string" ? e : String(e);
+		}
+	}
+
+	async function remove(id: string) {
+		error.value = null;
+		try {
+			await removeRelay(id);
+		} catch (e) {
+			error.value = typeof e === "string" ? e : String(e);
+		}
+	}
+</script>

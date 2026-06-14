@@ -1,59 +1,3 @@
-<script setup lang="ts">
-import {
-	computed, ref,
-} from "vue";
-import { useI18n } from "vue-i18n";
-import {
-	addRelay, completeSetup,
-} from "../store";
-
-const emit = defineEmits<{ done: [] }>();
-const { t } = useI18n();
-
-const step = ref(1);
-
-// Step 1 — roles
-const roleHost = ref(true);
-const roleClient = ref(true);
-const rolesValid = computed(() => roleHost.value || roleClient.value);
-
-// Step 2 — server (optional; only the HTTP address, the app derives the rest)
-const relayName = ref(t("onboarding.defaultServerName"));
-const relayUrl = ref("");
-// Empty is allowed (skip); if filled it must look like an http(s) URL.
-const relayOk = computed(() => {
-	const url = relayUrl.value.trim();
-	return url === "" || url.startsWith("http");
-});
-
-// Step 3 — device name
-const deviceName = ref("");
-
-const error = ref<string | null>(null);
-const busy = ref(false);
-
-async function finish() {
-	error.value = null;
-	busy.value = true;
-	try {
-		// The server is optional — only save one if an address was entered.
-		if (relayUrl.value.trim()) {
-			await addRelay(relayName.value, relayUrl.value);
-		}
-		const roles: string[] = [];
-		if (roleHost.value) roles.push("host");
-		if (roleClient.value) roles.push("client");
-		await completeSetup(deviceName.value.trim() || t("onboarding.defaultDeviceName"), roles);
-		emit("done");
-	} catch (e) {
-		error.value = typeof e === "string" ? e : String(e);
-		step.value = 2; // most failures are the server address
-	} finally {
-		busy.value = false;
-	}
-}
-</script>
-
 <template>
 	<VContainer class="fill-height" style="max-width: 720px">
 		<VCard class="w-100" variant="flat" color="transparent">
@@ -207,3 +151,59 @@ async function finish() {
 		</VCard>
 	</VContainer>
 </template>
+
+<script setup lang="ts">
+	import {
+		computed, ref,
+	} from "vue";
+	import { useI18n } from "vue-i18n";
+	import {
+		addRelay, completeSetup,
+	} from "../store";
+
+	const emit = defineEmits<{ done: [] }>();
+	const { t } = useI18n();
+
+	const step = ref(1);
+
+	// Step 1 — roles
+	const roleHost = ref(true);
+	const roleClient = ref(true);
+	const rolesValid = computed(() => roleHost.value || roleClient.value);
+
+	// Step 2 — server (optional; only the HTTP address, the app derives the rest)
+	const relayName = ref(t("onboarding.defaultServerName"));
+	const relayUrl = ref("");
+	// Empty is allowed (skip); if filled it must look like an http(s) URL.
+	const relayOk = computed(() => {
+		const url = relayUrl.value.trim();
+		return url === "" || url.startsWith("http");
+	});
+
+	// Step 3 — device name
+	const deviceName = ref("");
+
+	const error = ref<string | null>(null);
+	const busy = ref(false);
+
+	async function finish() {
+		error.value = null;
+		busy.value = true;
+		try {
+			// The server is optional — only save one if an address was entered.
+			if (relayUrl.value.trim()) {
+				await addRelay(relayName.value, relayUrl.value);
+			}
+			const roles: string[] = [];
+			if (roleHost.value) roles.push("host");
+			if (roleClient.value) roles.push("client");
+			await completeSetup(deviceName.value.trim() || t("onboarding.defaultDeviceName"), roles);
+			emit("done");
+		} catch (e) {
+			error.value = typeof e === "string" ? e : String(e);
+			step.value = 2; // most failures are the server address
+		} finally {
+			busy.value = false;
+		}
+	}
+</script>

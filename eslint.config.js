@@ -97,6 +97,13 @@ export default tseslint.config(
       // ---- Vue ------------------------------------------------------------
       // <script setup> components don't need a multi-word name.
       "vue/multi-word-component-names": "off",
+      // SFC block order: markup first, then logic, then styles.
+      "vue/block-order": [
+        "error",
+        {
+          order: ["template", "script", "style"],
+        },
+      ],
       // Write components PascalCase in templates: <VCard>, not <v-card>.
       // registeredComponentsOnly:false so it also covers Vuetify's globally
       // registered v-* components (and RouterView/RouterLink).
@@ -109,11 +116,13 @@ export default tseslint.config(
       ],
       // Tab indentation in both template and <script> blocks.
       "vue/html-indent": ["error", "tab"],
+      // baseIndent: 1 — content inside <script> starts one tab in, not at
+      // column 0, so the block body sits under the opening tag.
       "vue/script-indent": [
         "error",
         "tab",
         {
-          baseIndent: 0,
+          baseIndent: 1,
           switchCase: 1,
         },
       ],

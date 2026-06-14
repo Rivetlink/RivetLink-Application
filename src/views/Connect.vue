@@ -1,154 +1,54 @@
-<script setup lang="ts">
-import {
-	onMounted, ref,
-} from "vue";
-import { useI18n } from "vue-i18n";
-import {
-	activeRelay,
-	captureScreenshot,
-	connect,
-	listDevices,
-	login,
-	store,
-	type Device,
-} from "../store";
-
-const { t } = useI18n();
-
-const tab = ref("devices");
-
-const email = ref("");
-const password = ref("");
-
-const devices = ref<Device[]>([]);
-const selected = ref<string | null>(null);
-const screenshot = ref<string | null>(null);
-
-const busy = ref(false);
-const busyMsg = ref<string | null>(null);
-const error = ref<string | null>(null);
-
-const sessionCode = ref("");
-
-function fail(e: unknown) {
-	error.value = typeof e === "string" ? e : String(e);
-}
-
-function deviceMeta(d: Device): string {
-	return t("connect.deviceMeta", {
-		platform: d.platform || t("connect.unknown"),
-		seen: d.last_seen || t("connect.never"),
-	});
-}
-
-onMounted(() => {
-	if (activeRelay() && !store.connected) {
-		doConnect();
-	}
-});
-
-async function doConnect() {
-	error.value = null;
-	busy.value = true;
-	try {
-		await connect();
-	} catch (e) {
-		fail(e);
-	} finally {
-		busy.value = false;
-	}
-}
-
-async function doLogin() {
-	error.value = null;
-	busy.value = true;
-	try {
-		await login(email.value, password.value);
-		await refresh();
-	} catch (e) {
-		fail(e);
-	} finally {
-		busy.value = false;
-	}
-}
-
-async function refresh() {
-	error.value = null;
-	busy.value = true;
-	try {
-		devices.value = await listDevices();
-	} catch (e) {
-		fail(e);
-	} finally {
-		busy.value = false;
-	}
-}
-
-async function capture() {
-	if (!selected.value) return;
-	error.value = null;
-	screenshot.value = null;
-	busyMsg.value = t("connect.requestingSession");
-	try {
-		screenshot.value = await captureScreenshot(selected.value);
-	} catch (e) {
-		fail(e);
-	} finally {
-		busyMsg.value = null;
-	}
-}
-</script>
-
 <template>
 	<VContainer style="max-width: 880px">
-		<!-- No relay yet -->
-		<VAlert
-			v-if="!activeRelay()"
-			type="info"
-			variant="tonal"
-			class="mb-4"
-		>
-			{{ t("connect.noRelayBefore") }}
-			<RouterLink to="/relays">
-				{{ t("connect.noRelayLink") }}
-			</RouterLink>{{ t("connect.noRelayAfter") }}
-		</VAlert>
+		<VTabs v-model="tab" class="mb-4">
+			<VTab value="devices" prepend-icon="mdi-server-network">
+				{{ t("connect.tabDevices") }}
+			</VTab>
+			<VTab value="lan" prepend-icon="mdi-lan">
+				{{ t("connect.tabLan") }}
+			</VTab>
+			<VTab value="code" prepend-icon="mdi-numeric">
+				{{ t("connect.tabCode") }}
+			</VTab>
+		</VTabs>
 
-		<template v-else>
-			<VCard variant="tonal" class="mb-4">
-				<VCardText class="d-flex align-center">
-					<VIcon icon="mdi-server-network" class="mr-2" />
-					<div>
-						<div class="text-body-1">
-							{{ activeRelay()?.name }}
-						</div>
-						<div class="text-caption text-medium-emphasis">
-							{{ activeRelay()?.http_url }}
-						</div>
-					</div>
-					<VSpacer />
-					<VChip
-						:color="store.connected ? 'green' : 'grey'"
-						size="small"
-						variant="flat"
-					>
-						{{ store.connected ? t("connect.connected") : t("connect.notConnected") }}
-					</VChip>
-				</VCardText>
-			</VCard>
+		<VWindow v-model="tab">
+			<!-- Managed devices (via a relay) -->
+			<VWindowItem value="devices">
+				<VAlert
+					v-if="!activeRelay()"
+					type="info"
+					variant="tonal"
+				>
+					{{ t("connect.noRelayBefore") }}
+					<RouterLink to="/relays">
+						{{ t("connect.noRelayLink") }}
+					</RouterLink>{{ t("connect.noRelayAfter") }}
+				</VAlert>
 
-			<VTabs v-model="tab" class="mb-4">
-				<VTab value="devices" prepend-icon="mdi-monitor">
-					{{ t("connect.tabDevices") }}
-				</VTab>
-				<VTab value="code" prepend-icon="mdi-numeric">
-					{{ t("connect.tabCode") }}
-				</VTab>
-			</VTabs>
+				<template v-else>
+					<VCard variant="tonal" class="mb-4">
+						<VCardText class="d-flex align-center">
+							<VIcon icon="mdi-server-network" class="mr-2" />
+							<div>
+								<div class="text-body-1">
+									{{ activeRelay()?.name }}
+								</div>
+								<div class="text-caption text-medium-emphasis">
+									{{ activeRelay()?.http_url }}
+								</div>
+							</div>
+							<VSpacer />
+							<VChip
+								:color="store.connected ? 'green' : 'grey'"
+								size="small"
+								variant="flat"
+							>
+								{{ store.connected ? t("connect.connected") : t("connect.notConnected") }}
+							</VChip>
+						</VCardText>
+					</VCard>
 
-			<VWindow v-model="tab">
-				<!-- Managed devices -->
-				<VWindowItem value="devices">
 					<!-- Sign in -->
 					<VCard v-if="!store.loggedIn" variant="tonal">
 						<VCardTitle>{{ t("connect.signInTitle") }}</VCardTitle>
@@ -249,28 +149,131 @@ async function capture() {
 							<VImg :src="screenshot" />
 						</VCard>
 					</template>
-				</VWindowItem>
+				</template>
+			</VWindowItem>
 
-				<!-- Session code (planned) -->
-				<VWindowItem value="code">
-					<VCard variant="tonal">
-						<VCardTitle class="d-flex align-center">
-							{{ t("connect.sessionCodeTitle") }}
-							<VChip class="ml-2" size="x-small" color="amber">
-								{{ t("common.soon") }}
-							</VChip>
-						</VCardTitle>
-						<VCardSubtitle>{{ t("connect.sessionCodeSubtitle") }}</VCardSubtitle>
-						<VCardText>
-							<VOtpInput v-model="sessionCode" length="9" disabled />
-							<p class="text-caption text-medium-emphasis">
-								{{ t("connect.sessionCodeNote") }}
-							</p>
-						</VCardText>
-					</VCard>
-				</VWindowItem>
-			</VWindow>
-		</template>
+			<!-- Local network (direct, no relay) -->
+			<VWindowItem value="lan">
+				<VCard variant="tonal" class="mb-4">
+					<VCardText class="d-flex align-center">
+						<VIcon icon="mdi-lan" class="mr-3" />
+						<div>
+							<div class="text-body-1">
+								{{ t("connect.lanTitle") }}
+							</div>
+							<div class="text-caption text-medium-emphasis">
+								{{ t("connect.lanSubtitle") }}
+							</div>
+						</div>
+						<VSpacer />
+						<VBtn
+							color="primary"
+							variant="flat"
+							prepend-icon="mdi-magnify"
+							:loading="scanning"
+							@click="scan"
+						>
+							{{ t("connect.lanScan") }}
+						</VBtn>
+					</VCardText>
+				</VCard>
+
+				<!-- Newly found, not yet remembered -->
+				<VCard v-if="lanUnsaved.length > 0" variant="tonal" class="mb-4">
+					<VCardTitle>{{ t("connect.lanFound") }}</VCardTitle>
+					<VList class="bg-transparent" lines="two" density="comfortable">
+						<VListItem v-for="d in lanUnsaved" :key="`${d.address}:${d.port}`">
+							<template #prepend>
+								<VIcon icon="mdi-monitor-share" />
+							</template>
+							<VListItemTitle>{{ d.name }}</VListItemTitle>
+							<VListItemSubtitle>{{ d.address }}:{{ d.port }}</VListItemSubtitle>
+							<template #append>
+								<VBtn
+									size="small"
+									variant="tonal"
+									prepend-icon="mdi-plus"
+									@click="remember(d)"
+								>
+									{{ t("connect.lanAdd") }}
+								</VBtn>
+							</template>
+						</VListItem>
+					</VList>
+				</VCard>
+
+				<VAlert
+					v-else-if="!scanning && lanFound.length === 0 && store.settings.lan_devices.length === 0"
+					type="info"
+					variant="tonal"
+					class="mb-4"
+				>
+					{{ t("connect.lanNoneFound") }}
+				</VAlert>
+
+				<!-- Remembered hosts -->
+				<VCard v-if="store.settings.lan_devices.length > 0" variant="tonal">
+					<VCardTitle>{{ t("connect.lanSaved") }}</VCardTitle>
+					<VList class="bg-transparent" lines="two" density="comfortable">
+						<VListItem v-for="d in store.settings.lan_devices" :key="d.id">
+							<template #prepend>
+								<VIcon icon="mdi-monitor" />
+							</template>
+							<VListItemTitle>{{ d.name }}</VListItemTitle>
+							<VListItemSubtitle>{{ d.address }}:{{ d.port }}</VListItemSubtitle>
+							<template #append>
+								<VBtn
+									size="small"
+									color="primary"
+									variant="flat"
+									prepend-icon="mdi-connection"
+									class="mr-2"
+									@click="openConnect(d)"
+								>
+									{{ t("connect.lanConnect") }}
+								</VBtn>
+								<VBtn
+									size="small"
+									variant="text"
+									icon="mdi-delete-outline"
+									@click="forget(d.id)"
+								/>
+							</template>
+						</VListItem>
+					</VList>
+				</VCard>
+
+				<VCard v-if="lanShot" class="mt-4">
+					<VCardTitle>{{ t("connect.screenshot") }}</VCardTitle>
+					<VImg :src="lanShot" />
+				</VCard>
+			</VWindowItem>
+
+			<!-- Session code (planned) -->
+			<VWindowItem value="code">
+				<VCard variant="tonal">
+					<VCardTitle class="d-flex align-center">
+						{{ t("connect.sessionCodeTitle") }}
+						<VChip class="ml-2" size="x-small" color="amber">
+							{{ t("common.soon") }}
+						</VChip>
+					</VCardTitle>
+					<VCardSubtitle>{{ t("connect.sessionCodeSubtitle") }}</VCardSubtitle>
+					<VCardText>
+						<VOtpInput v-model="sessionCode" length="9" disabled />
+						<p class="text-caption text-medium-emphasis">
+							{{ t("connect.sessionCodeNote") }}
+						</p>
+					</VCardText>
+				</VCard>
+			</VWindowItem>
+		</VWindow>
+
+		<LanConnectModal
+			v-model="connectOpen"
+			:target="connectTarget"
+			@connect="onLanConnect"
+		/>
 
 		<!-- Feedback -->
 		<VSnackbar :model-value="!!busyMsg" color="grey-darken-3" timeout="-1">
@@ -286,3 +289,184 @@ async function capture() {
 		</VSnackbar>
 	</VContainer>
 </template>
+
+<script setup lang="ts">
+	import {
+		computed, onMounted, ref,
+	} from "vue";
+	import { useI18n } from "vue-i18n";
+	import {
+		activeRelay,
+		addLanDevice,
+		captureScreenshot,
+		connect,
+		discoverLan,
+		type Device,
+		type LanDevice,
+		lanScreenshot,
+		listDevices,
+		login,
+		removeLanDevice,
+		type SavedLanDevice,
+		store,
+	} from "../store";
+	import LanConnectModal from "../components/LanConnectModal.vue";
+
+	const { t } = useI18n();
+
+	const tab = ref("devices");
+
+	const email = ref("");
+	const password = ref("");
+
+	const devices = ref<Device[]>([]);
+	const selected = ref<string | null>(null);
+	const screenshot = ref<string | null>(null);
+
+	const busy = ref(false);
+	const busyMsg = ref<string | null>(null);
+	const error = ref<string | null>(null);
+
+	const sessionCode = ref("");
+
+	// --- LAN state ---
+	const scanning = ref(false);
+	const lanFound = ref<LanDevice[]>([]);
+	const lanShot = ref<string | null>(null);
+	const connectOpen = ref(false);
+	const connectTarget = ref<SavedLanDevice | null>(null);
+
+	// Hosts found by a scan that aren't already remembered.
+	const lanUnsaved = computed(() =>
+		lanFound.value.filter(
+			(f) => !store.settings.lan_devices.some(
+				(s) => s.address === f.address && s.port === f.port,
+			),
+		),
+	);
+
+	function fail(e: unknown) {
+		error.value = typeof e === "string" ? e : String(e);
+	}
+
+	function deviceMeta(d: Device): string {
+		return t("connect.deviceMeta", {
+			platform: d.platform || t("connect.unknown"),
+			seen: d.last_seen || t("connect.never"),
+		});
+	}
+
+	onMounted(() => {
+		if (activeRelay() && !store.connected) {
+			doConnect();
+		}
+	});
+
+	async function doConnect() {
+		error.value = null;
+		busy.value = true;
+		try {
+			await connect();
+		} catch (e) {
+			fail(e);
+		} finally {
+			busy.value = false;
+		}
+	}
+
+	async function doLogin() {
+		error.value = null;
+		busy.value = true;
+		try {
+			await login(email.value, password.value);
+			await refresh();
+		} catch (e) {
+			fail(e);
+		} finally {
+			busy.value = false;
+		}
+	}
+
+	async function refresh() {
+		error.value = null;
+		busy.value = true;
+		try {
+			devices.value = await listDevices();
+		} catch (e) {
+			fail(e);
+		} finally {
+			busy.value = false;
+		}
+	}
+
+	async function capture() {
+		if (!selected.value) return;
+		error.value = null;
+		screenshot.value = null;
+		busyMsg.value = t("connect.requestingSession");
+		try {
+			screenshot.value = await captureScreenshot(selected.value);
+		} catch (e) {
+			fail(e);
+		} finally {
+			busyMsg.value = null;
+		}
+	}
+
+	// --- LAN actions ---
+	async function scan() {
+		error.value = null;
+		scanning.value = true;
+		try {
+			lanFound.value = await discoverLan();
+		} catch (e) {
+			fail(e);
+		} finally {
+			scanning.value = false;
+		}
+	}
+
+	async function remember(d: LanDevice) {
+		error.value = null;
+		try {
+			await addLanDevice(d.name, d.address, d.port, d.public_key);
+		} catch (e) {
+			fail(e);
+		}
+	}
+
+	async function forget(id: string) {
+		error.value = null;
+		try {
+			await removeLanDevice(id);
+		} catch (e) {
+			fail(e);
+		}
+	}
+
+	function openConnect(d: SavedLanDevice) {
+		connectTarget.value = d;
+		lanShot.value = null;
+		connectOpen.value = true;
+	}
+
+	async function onLanConnect(pin: string) {
+		const target = connectTarget.value;
+		if (!target) return;
+		error.value = null;
+		lanShot.value = null;
+		busyMsg.value = t("connect.lanConnecting");
+		try {
+			lanShot.value = await lanScreenshot(
+				target.address,
+				target.port,
+				pin || null,
+				target.public_key,
+			);
+		} catch (e) {
+			fail(e);
+		} finally {
+			busyMsg.value = null;
+		}
+	}
+</script>
