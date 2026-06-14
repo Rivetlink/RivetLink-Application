@@ -252,6 +252,15 @@ pub fn run() {
                 settings: Mutex::new(settings),
                 client: Arc::new(Mutex::new(None)),
             });
+
+            // Open the web inspector from the Rust side when RIVETLINK_DEVTOOLS
+            // is set. This works even if the frontend never mounts (white
+            // screen), unlike the in-app keyboard shortcut.
+            if std::env::var("RIVETLINK_DEVTOOLS").is_ok() {
+                if let Some(window) = app.get_webview_window("main") {
+                    window.open_devtools();
+                }
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

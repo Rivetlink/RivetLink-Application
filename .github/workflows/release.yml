@@ -30,12 +30,15 @@ jobs:
         include:
           - os: ubuntu-latest
             label: linux
+            arch: amd64
             args: ""
           - os: macos-latest
             label: macos
+            arch: universal
             args: "--target universal-apple-darwin"
           - os: windows-latest
             label: windows
+            arch: x64
             args: ""
     runs-on: ${{ matrix.os }}
     steps:
@@ -97,6 +100,7 @@ jobs:
         shell: bash
         env:
           OS_LABEL: ${{ matrix.label }}
+          OS_ARCH: ${{ matrix.arch }}
           REF_NAME: ${{ github.ref_name }}
           ARTIFACTS_JSON: ${{ steps.tauri.outputs.artifactPaths }}
         run: |
@@ -113,10 +117,10 @@ jobs:
               *.app.tar.gz) ext="app.tar.gz" ;;
               *.tar.gz)     ext="tar.gz" ;;
             esac
-            dest="dist-artifacts/RivetLink_${version}_${OS_LABEL}.${ext}"
+            dest="dist-artifacts/RivetLink_${version}_${OS_LABEL}_${OS_ARCH}.${ext}"
             # If two bundles share an extension, suffix to avoid clobbering.
             if [ -e "$dest" ]; then
-              dest="dist-artifacts/RivetLink_${version}_${OS_LABEL}_$(echo "$base" | tr -cd '[:alnum:]' | tail -c 6).${ext}"
+              dest="dist-artifacts/RivetLink_${version}_${OS_LABEL}_${OS_ARCH}_$(echo "$base" | tr -cd '[:alnum:]' | tail -c 6).${ext}"
             fi
             cp "$src" "$dest"
             echo "renamed: $base -> $(basename "$dest")"
