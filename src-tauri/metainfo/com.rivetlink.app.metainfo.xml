@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AppStream metadata so GNOME Software / Ubuntu App Center can list and
+     uninstall the package. The <launchable> ties this component to the
+     desktop file Tauri ships (RivetLink.desktop). -->
+<component type="desktop-application">
+  <id>com.rivetlink.app</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>LicenseRef-proprietary</project_license>
+
+  <name>RivetLink</name>
+  <summary>Zero-trust remote control</summary>
+
+  <description>
+    <p>
+      RivetLink lets you securely view and control another device. All session
+      content is end-to-end encrypted; the relay server only ever sees
+      ciphertext. Run it as a host to share your screen, or as a client to
+      connect to a device you have been granted access to.
+    </p>
+  </description>
+
+  <launchable type="desktop-id">RivetLink.desktop</launchable>
+
+  <categories>
+    <category>Network</category>
+    <category>Utility</category>
+  </categories>
+
+  <url type="homepage">https://github.com/Rivetlink/RivetLink-Application</url>
+  <url type="bugtracker">https://github.com/Rivetlink/RivetLink-Application/issues</url>
+
+  <developer id="com.rivetlink">
+    <name>RivetLink</name>
+  </developer>
+
+  <provides>
+    <binary>rivetlink-app</binary>
+  </provides>
+
+  <content_rating type="oars-1.1" />
+
+  <releases>
+    <release version="0.1.4" date="2026-06-14" />
+  </releases>
+</component>
