@@ -30,8 +30,13 @@ rand = "0.8"
 
 # Local path deps while all crates sit side by side. For distribution these
 # switch to a git dep or a crates.io release.
-# - sdk: client-side LAN discovery/connect + crypto.
+# - sdk: client-side LAN discovery/connect + crypto (all platforms).
+rivetlink-sdk = { path = "../../RivetLink/crates/rivetlink-sdk" }
+
 # - agent: host side (advertise + capture + serve) reused for in-app "receive
 #   help". Pulls the native capture stack (scap/PipeWire) into the app build.
-rivetlink-sdk = { path = "../../RivetLink/crates/rivetlink-sdk" }
+#   Linux + macOS only — scap 0.0.8's Windows backend doesn't build against
+#   current windows-capture, and host streaming is Linux-focused anyway, so on
+#   Windows the app stays client/viewer and start_host returns "not supported".
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 rivetlink-agent = { path = "../../RivetLink/crates/rivetlink-agent" }

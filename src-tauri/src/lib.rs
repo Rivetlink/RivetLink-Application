@@ -17,6 +17,7 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
 
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 use rivetlink_agent::lan::{serve_with_events, HostEvent, LanAuth};
 use rivetlink_sdk::{ClientConfig, Device, Identity, RivetClient};
 
@@ -552,6 +553,16 @@ async fn lan_disconnect(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
 ///
 /// Session lifecycle is emitted to the frontend: `host://connected` (with the
 /// peer label) and `host://disconnected`. Hosting runs until [`stop_host`].
+///
+/// Windows has no host backend yet (scap's Windows capture doesn't build), so
+/// there it returns an error and the app stays client/viewer only.
+#[cfg(target_os = "windows")]
+#[tauri::command]
+async fn start_host(_app: tauri::AppHandle, _state: State<'_, AppState>) -> Result<String, String> {
+    Err("Sharing this screen isn't supported on Windows yet.".to_string())
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
 #[tauri::command]
 async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     // A 6-digit PIN. SPAKE2 makes a wrong PIN fail the handshake, and resists
