@@ -164,6 +164,12 @@
 							<div class="text-caption text-medium-emphasis">
 								{{ t("connect.lanSubtitle") }}
 							</div>
+							<div v-if="net" class="text-caption text-medium-emphasis mt-1">
+								<VIcon :icon="net.ssid ? 'mdi-wifi' : 'mdi-ethernet'" size="x-small" class="mr-1" />
+								<span v-if="net.ssid">{{ t("connect.lanNetworkWifi", { ssid: net.ssid }) }}</span>
+								<span v-else>{{ t("connect.lanNetworkWired") }}</span>
+								<span v-if="net.ip"> · {{ t("connect.lanNetworkIp", { ip: net.ip }) }}</span>
+							</div>
 						</div>
 						<VSpacer />
 						<VBtn
@@ -325,6 +331,8 @@
 		lanDisconnect,
 		listDevices,
 		login,
+		type NetworkInfo,
+		networkInfo,
 		removeLanDevice,
 		type SavedLanDevice,
 		store,
@@ -353,6 +361,7 @@
 	const lanFound = ref<LanDevice[]>([]);
 	const connectOpen = ref(false);
 	const connectTarget = ref<SavedLanDevice | null>(null);
+	const net = ref<NetworkInfo | null>(null);
 
 	// Hosts found by a scan that aren't already remembered.
 	const lanUnsaved = computed(() =>
@@ -374,9 +383,14 @@
 		});
 	}
 
-	onMounted(() => {
+	onMounted(async () => {
 		if (activeRelay() && !store.connected) {
 			doConnect();
+		}
+		try {
+			net.value = await networkInfo();
+		} catch {
+			// Network info is best-effort; the tab works without it.
 		}
 	});
 

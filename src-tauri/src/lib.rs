@@ -17,6 +17,7 @@ use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
 
+use rivetlink_agent::lan::{serve_with_events, HostEvent, LanAuth};
 use rivetlink_sdk::{ClientConfig, Device, Identity, RivetClient};
 
 use settings::{AppSettings, Relay};
@@ -32,6 +33,25 @@ struct AppState {
     /// The task pumping frames for the active LAN live-stream, if any. A sync
     /// mutex so the viewer window's close handler can stop it without awaiting.
     stream: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// The active "receive help" host session (advertise + serve), if any.
+    host: std::sync::Mutex<Option<HostSession>>,
+}
+
+/// A running host session: the accept-loop task and the task forwarding its
+/// lifecycle events to the frontend. Aborting both stops hosting and (by
+/// dropping the listener) unregisters the mDNS advertisement.
+struct HostSession {
+    serve: tokio::task::JoinHandle<()>,
+    forward: tokio::task::JoinHandle<()>,
+    /// The PIN the helper must enter; shown on the host's screen.
+    pin: String,
+}
+
+impl HostSession {
+    fn stop(self) {
+        self.serve.abort();
+        self.forward.abort();
+    }
 }
 
 /// A saved LAN device the frontend asks to connect to.
@@ -524,6 +544,170 @@ async fn lan_disconnect(app: tauri::AppHandle, state: State<'_, AppState>) -> Re
     Ok(())
 }
 
+// ---- Receive help (host mode) ----------------------------------------------
+
+/// Start hosting on the local network so a helper can connect and view this
+/// screen. Advertises over mDNS and serves an encrypted session guarded by a
+/// freshly generated PIN, which is returned and shown to the user to read out.
+///
+/// Session lifecycle is emitted to the frontend: `host://connected` (with the
+/// peer label) and `host://disconnected`. Hosting runs until [`stop_host`].
+#[tauri::command]
+async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    // A 6-digit PIN. SPAKE2 makes a wrong PIN fail the handshake, and resists
+    // offline guessing, so 6 digits is enough for a short-lived LAN session.
+    let pin = format!("{:06}", rand::Rng::gen_range(&mut rand::thread_rng(), 0..1_000_000));
+
+    let device_name = {
+        let s = state.settings.lock().await;
+        let name = s.device_name.trim();
+        if name.is_empty() {
+            "RivetLink".to_string()
+        } else {
+            name.to_string()
+        }
+    };
+
+    let signing_key = Identity::load_or_create(&state.identity_path())
+        .map_err(|e| e.to_string())?
+        .signing_key()
+        .clone();
+
+    // Replace any previous session.
+    stop_host_inner(&state);
+
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<HostEvent>(8);
+
+    let app_for_serve = app.clone();
+    let serve_pin = pin.clone();
+    let serve = tokio::spawn(async move {
+        let auth = LanAuth::Password(serve_pin);
+        if let Err(e) = serve_with_events(signing_key, device_name, 0, auth, Some(tx)).await {
+            let _ = app_for_serve.emit("host://error", e.to_string());
+        }
+    });
+
+    let app_for_fwd = app.clone();
+    let forward = tokio::spawn(async move {
+        while let Some(event) = rx.recv().await {
+            match event {
+                HostEvent::ClientConnected(label) => {
+                    let _ = app_for_fwd.emit("host://connected", label);
+                },
+                HostEvent::ClientDisconnected => {
+                    let _ = app_for_fwd.emit("host://disconnected", ());
+                },
+            }
+        }
+    });
+
+    if let Ok(mut guard) = state.host.lock() {
+        *guard = Some(HostSession {
+            serve,
+            forward,
+            pin: pin.clone(),
+        });
+    }
+    Ok(pin)
+}
+
+/// Abort the active host session (if any). Sync helper so it can run from a
+/// window/close handler.
+fn stop_host_inner(state: &AppState) {
+    if let Ok(mut guard) = state.host.lock() {
+        if let Some(session) = guard.take() {
+            session.stop();
+        }
+    }
+}
+
+/// Stop hosting: tear down the session and stop advertising.
+#[tauri::command]
+async fn stop_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    stop_host_inner(&state);
+    let _ = app.emit("host://stopped", ());
+    Ok(())
+}
+
+/// The active host PIN, if currently hosting — lets the UI restore its state
+/// (e.g. after navigating away and back).
+#[tauri::command]
+async fn host_active(state: State<'_, AppState>) -> Result<Option<String>, String> {
+    Ok(state
+        .host
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().map(|s| s.pin.clone())))
+}
+
+// ---- Network info ----------------------------------------------------------
+
+/// The current Wi-Fi SSID (if on Wi-Fi) and this machine's LAN IP. Shown in the
+/// LAN tab so the user can confirm both devices share a network/subnet — mDNS
+/// discovery only works within one broadcast domain.
+#[derive(Serialize)]
+struct NetworkInfo {
+    ssid: Option<String>,
+    ip: Option<String>,
+}
+
+#[tauri::command]
+async fn network_info() -> Result<NetworkInfo, String> {
+    tokio::task::spawn_blocking(|| NetworkInfo {
+        ssid: current_ssid(),
+        ip: local_ip(),
+    })
+    .await
+    .map_err(|e| e.to_string())
+}
+
+/// This machine's LAN IP, found by asking the OS which local address would
+/// route to a public host. No packet is sent (UDP connect only sets the route).
+fn local_ip() -> Option<String> {
+    let sock = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    sock.connect("8.8.8.8:80").ok()?;
+    sock.local_addr().ok().map(|a| a.ip().to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn current_ssid() -> Option<String> {
+    // nmcli ships with NetworkManager (Ubuntu/GNOME default). `-t` gives a
+    // terse "active:ssid" per known Wi-Fi; the connected one has active=yes.
+    let out = std::process::Command::new("nmcli")
+        .args(["-t", "-f", "active,ssid", "dev", "wifi"])
+        .output()
+        .ok()?;
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|line| line.strip_prefix("yes:").map(str::trim))
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+#[cfg(target_os = "macos")]
+fn current_ssid() -> Option<String> {
+    // The Wi-Fi interface is usually en0 (en1 on some Macs). The tool prints
+    // "Current Wi-Fi Network: <ssid>" or "You are not associated...".
+    ["en0", "en1"].iter().find_map(|dev| {
+        let out = std::process::Command::new("networksetup")
+            .args(["-getairportnetwork", dev])
+            .output()
+            .ok()?;
+        let text = String::from_utf8_lossy(&out.stdout);
+        if text.contains("not associated") {
+            return None;
+        }
+        text.split_once(": ")
+            .map(|(_, ssid)| ssid.trim().to_string())
+            .filter(|s| !s.is_empty())
+    })
+}
+
+#[cfg(not(any(target_os = "linux", target_os = "macos")))]
+fn current_ssid() -> Option<String> {
+    None
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -540,6 +724,7 @@ pub fn run() {
                 settings: Mutex::new(settings),
                 client: Arc::new(Mutex::new(None)),
                 stream: std::sync::Mutex::new(None),
+                host: std::sync::Mutex::new(None),
             });
 
             // Native menu bar (RivetLink + Edit). The "Check for Updates" item
@@ -581,7 +766,11 @@ pub fn run() {
             remove_lan_device,
             lan_screenshot,
             lan_connect,
-            lan_disconnect
+            lan_disconnect,
+            start_host,
+            stop_host,
+            host_active,
+            network_info
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -45,6 +45,12 @@ export type Device = {
 	last_seen: string | null;
 };
 
+/// The machine's current network, for confirming both devices share a subnet.
+export type NetworkInfo = {
+	ssid: string | null;
+	ip: string | null;
+};
+
 const emptySettings: AppSettings = {
 	setup_complete: false,
 	device_name: "",
@@ -62,6 +68,11 @@ export const store = reactive({
 	publicKey: "",
 	/// Saved LAN device id of the active live session, or null.
 	connectedLanId: null as string | null,
+	/// Receive-help (host) state: whether we're advertising, the PIN to read
+	/// out, and the label of the connected helper (null while waiting).
+	hosting: false,
+	hostPin: "",
+	hostPeer: null as string | null,
 });
 
 export function isHost(): boolean {
@@ -201,4 +212,39 @@ export async function lanConnect(
 /// Stop the active live stream and close the viewer window.
 export async function lanDisconnect(): Promise<void> {
 	await invoke("lan_disconnect");
+}
+
+// ---- Receive help (host mode) ----------------------------------------------
+
+/// Start advertising + serving this screen; returns the PIN to read out to the
+/// helper. The connected/disconnected state arrives via `host://` events.
+export async function startHost(): Promise<string> {
+	const pin = await invoke<string>("start_host");
+	store.hosting = true;
+	store.hostPin = pin;
+	store.hostPeer = null;
+	return pin;
+}
+
+/// Stop hosting (stop advertising + drop any session).
+export async function stopHost(): Promise<void> {
+	await invoke("stop_host");
+	store.hosting = false;
+	store.hostPin = "";
+	store.hostPeer = null;
+}
+
+/// Re-sync host state from the backend (e.g. after navigating back).
+export async function refreshHostState(): Promise<void> {
+	const pin = await invoke<string | null>("host_active");
+	store.hosting = pin !== null;
+	store.hostPin = pin ?? "";
+	if (!store.hosting) {
+		store.hostPeer = null;
+	}
+}
+
+/// This machine's current Wi-Fi name (if any) and LAN IP.
+export async function networkInfo(): Promise<NetworkInfo> {
+	return invoke<NetworkInfo>("network_info");
 }

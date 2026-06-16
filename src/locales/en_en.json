@@ -16,7 +16,7 @@
     },
     "nav": {
         "connect": "Connect",
-        "device": "This device",
+        "device": "Receive help",
         "relays": "Servers",
         "settings": "Settings"
     },
@@ -83,21 +83,30 @@
         "lanPinLabel": "PIN (if the other computer shows one)",
         "lanPinHint": "Leave empty to connect with this device's key instead.",
         "lanConnected": "Connected",
-        "lanDisconnect": "Disconnect"
+        "lanDisconnect": "Disconnect",
+        "lanNetworkWifi": "Wi-Fi: {ssid}",
+        "lanNetworkWired": "Wired network",
+        "lanNetworkIp": "This computer: {ip}"
     },
     "device": {
         "thisDevice": "This device",
-        "offline": "offline",
+        "statusIdle": "not sharing",
+        "statusWaiting": "waiting for helper",
+        "statusConnected": "helper connected",
         "identityTitle": "Identity",
         "identitySubtitle": "Give this key to a support client so they can trust it in advance (TOFU).",
         "publicKey": "Public key",
         "copied": "Copied!",
-        "hostAgentTitle": "Host agent",
-        "hostAgentIntro": "To make this PC truly controllable, a host agent will run that:",
-        "hostConsent": "Asks for approval on every connection (consent dialog)",
-        "hostTrusted": "Manages trusted clients (add / revoke)",
-        "hostScreen": "Shares the screen and receives input",
-        "hostAgentNote": "This integration (rivetlink-agent) is the next milestone."
+        "receiveHelpTitle": "Receive help",
+        "receiveHelpIntro": "Let someone see this screen over the local network — no server needed. Start sharing, then read out your computer name and code.",
+        "startHosting": "Start sharing",
+        "stopHosting": "Stop sharing",
+        "code": "Code",
+        "waitingTitle": "Waiting for a helper to connect…",
+        "waitingHint": "Tell the helper your computer name and this code. They pick you under “Local network” and enter the code.",
+        "connectedTitle": "A helper is connected",
+        "connectedHint": "Someone is viewing this screen now. Stop sharing to end it.",
+        "pickScreenNote": "When a helper connects, your system asks which screen to share."
     },
     "relays": {
         "title": "Saved servers",

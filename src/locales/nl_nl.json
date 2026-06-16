@@ -16,7 +16,7 @@
     },
     "nav": {
         "connect": "Verbinden",
-        "device": "Dit apparaat",
+        "device": "Hulp ontvangen",
         "relays": "Servers",
         "settings": "Instellingen"
     },
@@ -83,21 +83,30 @@
         "lanPinLabel": "PIN (als de andere computer er een toont)",
         "lanPinHint": "Laat leeg om in plaats daarvan met de sleutel van dit apparaat te verbinden.",
         "lanConnected": "Verbonden",
-        "lanDisconnect": "Verbreken"
+        "lanDisconnect": "Verbreken",
+        "lanNetworkWifi": "Wifi: {ssid}",
+        "lanNetworkWired": "Bekabeld netwerk",
+        "lanNetworkIp": "Deze computer: {ip}"
     },
     "device": {
         "thisDevice": "Dit apparaat",
-        "offline": "offline",
+        "statusIdle": "deelt niet",
+        "statusWaiting": "wacht op helper",
+        "statusConnected": "helper verbonden",
         "identityTitle": "Identiteit",
         "identitySubtitle": "Geef deze sleutel aan een support-client om die vooraf te vertrouwen (TOFU).",
         "publicKey": "Publieke sleutel",
         "copied": "Gekopieerd!",
-        "hostAgentTitle": "Host-agent",
-        "hostAgentIntro": "Om deze pc echt bedienbaar te maken draait er straks een host-agent die:",
-        "hostConsent": "Toestemming vraagt bij elke verbinding (consent-dialog)",
-        "hostTrusted": "Vertrouwde clients beheert (toevoegen / intrekken)",
-        "hostScreen": "Scherm deelt en input ontvangt",
-        "hostAgentNote": "Deze integratie (rivetlink-agent) is de volgende milestone."
+        "receiveHelpTitle": "Hulp ontvangen",
+        "receiveHelpIntro": "Laat iemand dit scherm zien via het lokale netwerk — geen server nodig. Start het delen en geef je computernaam en code door.",
+        "startHosting": "Delen starten",
+        "stopHosting": "Delen stoppen",
+        "code": "Code",
+        "waitingTitle": "Wachten tot een helper verbindt…",
+        "waitingHint": "Geef de helper je computernaam en deze code. Die kiest jou onder “Lokaal netwerk” en voert de code in.",
+        "connectedTitle": "Er is een helper verbonden",
+        "connectedHint": "Iemand bekijkt nu dit scherm. Stop het delen om te beëindigen.",
+        "pickScreenNote": "Als een helper verbindt, vraagt je systeem welk scherm je wilt delen."
     },
     "relays": {
         "title": "Opgeslagen servers",

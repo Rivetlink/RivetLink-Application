@@ -1,6 +1,6 @@
 [package]
 name = "rivetlink-app"
-version = "0.1.6"
+version = "0.1.7"
 description = "RivetLink desktop app"
 authors = ["RivetLink"]
 edition = "2021"
@@ -23,10 +23,15 @@ tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["sync"] }
+tokio = { version = "1", features = ["sync", "rt", "net"] }
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
+rand = "0.8"
 
-# Local path dep on the SDK while both repos sit side by side. For distribution
-# this switches to a git dep or a crates.io release.
+# Local path deps while all crates sit side by side. For distribution these
+# switch to a git dep or a crates.io release.
+# - sdk: client-side LAN discovery/connect + crypto.
+# - agent: host side (advertise + capture + serve) reused for in-app "receive
+#   help". Pulls the native capture stack (scap/PipeWire) into the app build.
 rivetlink-sdk = { path = "../../RivetLink/crates/rivetlink-sdk" }
+rivetlink-agent = { path = "../../RivetLink/crates/rivetlink-agent" }
