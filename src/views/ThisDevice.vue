@@ -133,6 +133,15 @@
 	let unlistenConnected: UnlistenFn | null = null;
 	let unlistenDisconnected: UnlistenFn | null = null;
 	let unlistenStopped: UnlistenFn | null = null;
+	let netTimer: ReturnType<typeof setInterval> | undefined;
+
+	async function refreshNet() {
+		try {
+			net.value = await networkInfo();
+		} catch {
+			// Best-effort; the page works without it.
+		}
+	}
 
 	const statusKey = computed(() => {
 		if (!store.hosting) {
@@ -152,11 +161,9 @@
 		if (!store.publicKey) {
 			await loadPublicKey();
 		}
-		try {
-			net.value = await networkInfo();
-		} catch {
-			// Best-effort; the page works without it.
-		}
+		await refreshNet();
+		// Re-check periodically so the shown network follows Wi-Fi switches.
+		netTimer = setInterval(refreshNet, 5000);
 		await refreshHostState();
 		unlistenConnected = await listen<string>("host://connected", (e) => {
 			store.hostPeer = e.payload;
@@ -175,6 +182,9 @@
 		unlistenConnected?.();
 		unlistenDisconnected?.();
 		unlistenStopped?.();
+		if (netTimer) {
+			clearInterval(netTimer);
+		}
 	});
 
 	async function onStart() {

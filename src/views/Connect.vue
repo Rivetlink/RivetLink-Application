@@ -315,7 +315,7 @@
 
 <script setup lang="ts">
 	import {
-		computed, onMounted, ref,
+		computed, onMounted, onUnmounted, ref,
 	} from "vue";
 	import { useI18n } from "vue-i18n";
 	import {
@@ -405,14 +405,28 @@
 		});
 	}
 
-	onMounted(async () => {
-		if (activeRelay() && !store.connected) {
-			doConnect();
-		}
+	let netTimer: ReturnType<typeof setInterval> | undefined;
+
+	async function refreshNet() {
 		try {
 			net.value = await networkInfo();
 		} catch {
 			// Network info is best-effort; the tab works without it.
+		}
+	}
+
+	onMounted(async () => {
+		if (activeRelay() && !store.connected) {
+			doConnect();
+		}
+		await refreshNet();
+		// Re-check periodically so the shown network follows Wi-Fi switches.
+		netTimer = setInterval(refreshNet, 5000);
+	});
+
+	onUnmounted(() => {
+		if (netTimer) {
+			clearInterval(netTimer);
 		}
 	});
 

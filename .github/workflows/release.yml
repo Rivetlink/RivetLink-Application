@@ -30,8 +30,15 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            args: ""
+          # .deb/.rpm on the oldest supported base so they install broadly.
+          - os: ubuntu-24.04
+            args: "--bundles deb,rpm"
+          # AppImage on 26.04: an AppImage built on an older base bundles older
+          # glib/Mesa that abort (EGL_BAD_PARAMETER) on Ubuntu 26.04, so build it
+          # on 26.04 instead. This AppImage targets 26.04+ only; older users take
+          # the .deb (notify-update).
+          - os: ubuntu-26.04
+            args: "--bundles appimage"
           - os: macos-latest
             args: "--target universal-apple-darwin"
           - os: windows-latest
@@ -71,7 +78,7 @@ jobs:
           cache-all-crates: "true"
 
       - name: Install Linux dependencies
-        if: matrix.os == 'ubuntu-latest'
+        if: startsWith(matrix.os, 'ubuntu')
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -88,7 +95,7 @@ jobs:
       # The AppStream <releases> entry should always match the tag being built.
       # Stamp it here so it never needs manual editing per version.
       - name: Stamp metainfo release
-        if: matrix.os == 'ubuntu-latest'
+        if: startsWith(matrix.os, 'ubuntu')
         working-directory: RivetLink-Application/src-tauri/metainfo
         env:
           TAG: ${{ github.ref_name }}
@@ -171,6 +178,18 @@ jobs:
             -e "s#RivetLink_${V}_x64-setup.exe#RivetLink_${V}_windows_x64-setup.exe#g" \
             -e "s#RivetLink_universal.app.tar.gz#RivetLink_${V}_macos_universal.app.tar.gz#g" \
             latest.json
+          # The .deb and .AppImage are built in separate jobs (different Ubuntu
+          # bases), so the merged manifest's primary "linux-x86_64" key can race
+          # to the .deb. Force it to the AppImage — the only self-updatable Linux
+          # format — so updates install in place instead of opening a download.
+          python3 - <<'PY'
+          import json
+          m = json.load(open("latest.json"))
+          p = m["platforms"]
+          if "linux-x86_64-appimage" in p:
+              p["linux-x86_64"] = p["linux-x86_64-appimage"]
+          json.dump(m, open("latest.json", "w"), indent=2)
+          PY
           gh release upload "$TAG" latest.json --repo "$REPO" --clobber
 
           # Publish the draft so `releases/latest/download/latest.json` resolves
