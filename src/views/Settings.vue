@@ -71,7 +71,7 @@
 			<VCardTitle>{{ t("settings.about") }}</VCardTitle>
 			<VList class="bg-transparent">
 				<VListItem title="RivetLink" :subtitle="t('settings.tagline')" />
-				<VListItem :title="t('settings.version')" subtitle="0.1.5" />
+				<VListItem :title="t('settings.version')" :subtitle="version || '—'" />
 			</VList>
 		</VCard>
 
@@ -83,6 +83,7 @@
 	import {
 		onMounted, ref,
 	} from "vue";
+	import { invoke } from "@tauri-apps/api/core";
 	import { useI18n } from "vue-i18n";
 	import {
 		isClient, isHost, loadPublicKey, store,
@@ -97,8 +98,10 @@
 	} = useI18n();
 
 	const editOpen = ref(false);
+	const version = ref("");
 
 	onMounted(async () => {
+		version.value = await invoke<string>("app_version");
 		if (!store.publicKey) {
 			await loadPublicKey();
 		}

@@ -1,9 +1,10 @@
 // "Check for Updates" logic.
 //
-// macOS + Windows: the Tauri updater plugin checks a signed manifest, then
-// downloads and installs in place (then relaunches).
-// Linux: Tauri's updater can't install a .deb/.rpm, so we only *notify* — fetch
-// the latest GitHub release, compare versions, and offer a Download link.
+// macOS + Windows + Linux AppImage: the Tauri updater plugin checks a signed
+// manifest, then downloads and installs in place (then relaunches).
+// Linux .deb/.rpm: the updater can't replace a root-owned system package, so we
+// only *notify* — fetch the latest GitHub release, compare versions, and offer
+// a Download link.
 
 import { reactive } from "vue";
 import { invoke } from "@tauri-apps/api/core";
@@ -16,9 +17,14 @@ import { relaunch } from "@tauri-apps/plugin-process";
 const REPO = "Rivetlink/RivetLink-Application";
 const RELEASES_URL = `https://github.com/${REPO}/releases`;
 
-// Tauri's updater can't replace a system package; Linux falls back to notify.
+// Tauri's updater can't replace a system package; deb/rpm Linux falls back to
+// notify. An AppImage install *can* self-update, detected at runtime (Rust).
 const isLinux = navigator.userAgent.includes("Linux")
     && !navigator.userAgent.includes("Android");
+
+// True only for a .deb/.rpm install (notify-only). Resolved on first check via
+// the `is_appimage` command; AppImage and non-Linux can install in place.
+let notifyOnly = isLinux;
 
 export enum UpdateStatus {
 	Idle = "idle",
@@ -34,7 +40,7 @@ export const updateState = reactive({
 	current: "",
 	latest: "",
 	status: UpdateStatus.Idle,
-	canAutoInstall: !isLinux,
+	canAutoInstall: !notifyOnly,
 });
 
 let pending: Update | null = null;
@@ -86,6 +92,11 @@ export async function checkForUpdates(): Promise<void> {
 	try {
 		updateState.current = await invoke<string>("app_version");
 		if (isLinux) {
+			// A .deb/.rpm install is notify-only; an AppImage can self-update.
+			notifyOnly = !(await invoke<boolean>("is_appimage"));
+		}
+		updateState.canAutoInstall = !notifyOnly;
+		if (notifyOnly) {
 			await checkLinux();
 		} else {
 			await checkDesktop();
@@ -97,9 +108,9 @@ export async function checkForUpdates(): Promise<void> {
 	}
 }
 
-/** Install (desktop) or open the download page (Linux). */
+/** Install in place (desktop/AppImage) or open the download page (deb/rpm). */
 export async function installUpdate(): Promise<void> {
-	if (isLinux || !pending) {
+	if (notifyOnly || !pending) {
 		await openUrl(RELEASES_URL);
 		return;
 	}

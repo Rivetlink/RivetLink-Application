@@ -132,6 +132,15 @@ fn app_version(app: tauri::AppHandle) -> String {
     app.package_info().version.to_string()
 }
 
+/// Whether the app is running from an AppImage bundle. The AppImage runtime
+/// sets `$APPIMAGE` to the bundle path; the updater can replace that file in
+/// place. A `.deb`/`.rpm` install lives in `/usr` (root-owned) and can't, so
+/// the frontend falls back to notify-only there. Always false off Linux.
+#[tauri::command]
+fn is_appimage() -> bool {
+    cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_some()
+}
+
 /// Build the native menu bar: a "RivetLink" menu (version + check for updates +
 /// quit) and a standard "Edit" menu so clipboard shortcuts work everywhere.
 fn install_menu(app: &tauri::App) -> tauri::Result<()> {
@@ -558,6 +567,7 @@ pub fn run() {
             update_device,
             public_key,
             app_version,
+            is_appimage,
             toggle_devtools,
             add_relay,
             remove_relay,

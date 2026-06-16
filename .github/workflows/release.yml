@@ -140,6 +140,8 @@ jobs:
               *_amd64.deb.sig)            new="RivetLink_${V}_linux_amd64.deb.sig" ;;
               *.x86_64.rpm)               new="RivetLink_${V}_linux_x86_64.rpm" ;;
               *.x86_64.rpm.sig)           new="RivetLink_${V}_linux_x86_64.rpm.sig" ;;
+              *_amd64.AppImage)           new="RivetLink_${V}_linux_amd64.AppImage" ;;
+              *_amd64.AppImage.sig)       new="RivetLink_${V}_linux_amd64.AppImage.sig" ;;
               *_universal.dmg)            new="RivetLink_${V}_macos_universal.dmg" ;;
               *_universal.app.tar.gz)     new="RivetLink_${V}_macos_universal.app.tar.gz" ;;
               *_universal.app.tar.gz.sig) new="RivetLink_${V}_macos_universal.app.tar.gz.sig" ;;
@@ -161,6 +163,7 @@ jobs:
           sed -i \
             -e "s#RivetLink_${V}_amd64.deb#RivetLink_${V}_linux_amd64.deb#g" \
             -e "s#RivetLink-${V}-1.x86_64.rpm#RivetLink_${V}_linux_x86_64.rpm#g" \
+            -e "s#RivetLink_${V}_amd64.AppImage#RivetLink_${V}_linux_amd64.AppImage#g" \
             -e "s#RivetLink_${V}_x64_en-US.msi#RivetLink_${V}_windows_x64_en-US.msi#g" \
             -e "s#RivetLink_${V}_x64-setup.exe#RivetLink_${V}_windows_x64-setup.exe#g" \
             -e "s#RivetLink_universal.app.tar.gz#RivetLink_${V}_macos_universal.app.tar.gz#g" \
