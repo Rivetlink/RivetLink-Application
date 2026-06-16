@@ -1,7 +1,9 @@
 name: Release
 
 # Builds native installers for Linux, macOS, and Windows, signs the updater
-# artifacts, and publishes them + a `latest.json` to a draft GitHub Release.
+# artifacts, and publishes them + a `latest.json`. tauri-action uploads to a
+# draft release; the rename-assets job renames the assets and publishes it so
+# the `releases/latest/download/latest.json` updater endpoint resolves.
 # Triggered by pushing a version tag (v1.2.3) or manually.
 #
 # Bundles: deb/rpm (Linux), dmg/app (macOS, universal), nsis/msi (Windows).
@@ -164,3 +166,7 @@ jobs:
             -e "s#RivetLink_universal.app.tar.gz#RivetLink_${V}_macos_universal.app.tar.gz#g" \
             latest.json
           gh release upload "$TAG" latest.json --repo "$REPO" --clobber
+
+          # Publish the draft so `releases/latest/download/latest.json` resolves
+          # for the auto-updater. tauri-action leaves the release as a draft.
+          gh release edit "$TAG" --repo "$REPO" --draft=false
