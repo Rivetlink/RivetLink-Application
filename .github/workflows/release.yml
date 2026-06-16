@@ -30,15 +30,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # .deb/.rpm on the oldest supported base so they install broadly.
+          # Linux ships .deb/.rpm only (built on 24.04, runs broadly incl. 26.04).
+          # AppImage is dropped: a 24.04-built one aborts (EGL/glib) on Ubuntu
+          # 26.04, and a 26.04-built one won't compile (libspa vs newer PipeWire
+          # headers). Flatpak is the planned cross-distro self-update path.
           - os: ubuntu-24.04
             args: "--bundles deb,rpm"
-          # AppImage on 26.04: an AppImage built on an older base bundles older
-          # glib/Mesa that abort (EGL_BAD_PARAMETER) on Ubuntu 26.04, so build it
-          # on 26.04 instead. This AppImage targets 26.04+ only; older users take
-          # the .deb (notify-update).
-          - os: ubuntu-26.04
-            args: "--bundles appimage"
           - os: macos-latest
             args: "--target universal-apple-darwin"
           - os: windows-latest
