@@ -36,6 +36,10 @@ struct AppState {
     stream: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
     /// The active "receive help" host session (advertise + serve), if any.
     host: std::sync::Mutex<Option<HostSession>>,
+    /// Trusted client identity keys (base64), shared live with the running host
+    /// so add/remove takes effect without restarting it. Mirrors
+    /// `settings.trusted_keys`.
+    trusted_keys: Arc<std::sync::Mutex<Vec<String>>>,
 }
 
 /// A running host session: the accept-loop task and the task forwarding its
@@ -583,6 +587,7 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
         .map_err(|e| e.to_string())?
         .signing_key()
         .clone();
+    let trusted_keys = Arc::clone(&state.trusted_keys);
 
     // Replace any previous session.
     stop_host_inner(&state);
@@ -592,7 +597,12 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     let app_for_serve = app.clone();
     let serve_pin = pin.clone();
     let serve = tokio::spawn(async move {
-        let auth = LanAuth::Password(serve_pin);
+        // Accept either the session PIN or a trusted client's key (empty PIN).
+        let auth = LanAuth::PinOrKey {
+            pin: serve_pin,
+            trusted_keys,
+            auto_accept: false,
+        };
         let port = rivetlink_sdk::lan::DEFAULT_LAN_PORT;
         if let Err(e) = serve_with_events(signing_key, device_name, port, auth, Some(tx)).await {
             let _ = app_for_serve.emit("host://error", e.to_string());
@@ -791,7 +801,16 @@ async fn add_trusted_key(
         public_key: key,
     });
     settings.save(&state.data_dir)?;
+    sync_trusted_live(&state, &settings);
     Ok(settings.clone())
+}
+
+/// Mirror the persisted trusted keys into the live allow-list the running host
+/// reads, so an add/remove applies without restarting the host.
+fn sync_trusted_live(state: &AppState, settings: &AppSettings) {
+    if let Ok(mut live) = state.trusted_keys.lock() {
+        *live = settings.trusted_keys.iter().map(|k| k.public_key.clone()).collect();
+    }
 }
 
 /// Remove a trusted client, after the owner confirms with their OS password.
@@ -807,6 +826,7 @@ async fn remove_trusted_key(
     let mut settings = state.settings.lock().await;
     settings.trusted_keys.retain(|k| k.id != id);
     settings.save(&state.data_dir)?;
+    sync_trusted_live(&state, &settings);
     Ok(settings.clone())
 }
 
@@ -821,12 +841,15 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let settings = AppSettings::load(&data_dir);
+            let trusted: Vec<String> =
+                settings.trusted_keys.iter().map(|k| k.public_key.clone()).collect();
             app.manage(AppState {
                 data_dir,
                 settings: Mutex::new(settings),
                 client: Arc::new(Mutex::new(None)),
                 stream: std::sync::Mutex::new(None),
                 host: std::sync::Mutex::new(None),
+                trusted_keys: Arc::new(std::sync::Mutex::new(trusted)),
             });
 
             // Native menu bar (RivetLink + Edit). The "Check for Updates" item

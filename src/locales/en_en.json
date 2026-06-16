@@ -91,7 +91,8 @@
         "lanOffline": "Offline",
         "errUnreachable": "Can't reach that computer. It's probably not sharing anymore, or it's switched off.",
         "errTimeout": "The connection timed out. Is the other computer still sharing on this network?",
-        "errAuth": "The connection was refused. Is the code correct?"
+        "errAuth": "The connection was refused. Is the code correct?",
+        "errNotTrusted": "This device isn't allowed yet. Enter the code, or ask the other computer to allow it under Access."
     },
     "device": {
         "thisDevice": "This device",

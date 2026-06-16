@@ -66,9 +66,10 @@
 	import {
 		listen, type UnlistenFn,
 	} from "@tauri-apps/api/event";
+	import { getCurrentWindow } from "@tauri-apps/api/window";
 	import { router } from "./router";
 	import {
-		isClient, isHost, loadSettings, store,
+		isClient, isHost, loadSettings, refreshHostState, startHost, store,
 	} from "./store";
 	import { checkForUpdates } from "./updates";
 	import Onboarding from "./views/Onboarding.vue";
@@ -102,6 +103,19 @@
 			store.connectedLanId = null;
 		});
 		await loadSettings();
+		// Host role: behave like a daemon — start advertising + serving as soon
+		// as the app is open (main window only) so a client can always connect,
+		// no "start sharing" needed. A trusted client skips the code entirely.
+		if (getCurrentWindow().label === "main" && store.settings.setup_complete && isHost()) {
+			await refreshHostState();
+			if (!store.hosting) {
+				try {
+					await startHost();
+				} catch {
+					// Host backend unavailable (e.g. Windows) — ignore.
+				}
+			}
+		}
 	});
 
 	onUnmounted(() => {

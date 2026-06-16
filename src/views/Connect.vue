@@ -395,6 +395,9 @@
 		if (m.includes("unreachable") || m.includes("no route") || m.includes("os error 65") || m.includes("os error 113")) {
 			return t("connect.errUnreachable");
 		}
+		if (m.includes("not trusted") || m.includes("trust")) {
+			return t("connect.errNotTrusted");
+		}
 		if (
 			m.includes("handshake") || m.includes("decrypt") || m.includes("password")
 			|| m.includes("pin") || m.includes("spake") || m.includes("signature")

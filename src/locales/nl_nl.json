@@ -91,7 +91,8 @@
         "lanOffline": "Offline",
         "errUnreachable": "Kan die computer niet bereiken. Die deelt waarschijnlijk niet meer, of staat uit.",
         "errTimeout": "De verbinding duurde te lang. Deelt de andere computer nog op dit netwerk?",
-        "errAuth": "De verbinding werd geweigerd. Klopt de code?"
+        "errAuth": "De verbinding werd geweigerd. Klopt de code?",
+        "errNotTrusted": "Dit apparaat is nog niet toegelaten. Voer de code in, of laat de andere computer het toelaten bij Toegang."
     },
     "device": {
         "thisDevice": "Dit apparaat",
