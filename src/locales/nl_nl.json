@@ -138,6 +138,28 @@
         "editDevice": "Dit apparaat wijzigen",
         "rolesRequired": "Kies er minstens één."
     },
+    "access": {
+        "title": "Toegang tot dit apparaat",
+        "subtitle": "Apparaten die mogen verbinden en dit scherm mogen zien zonder de sessiecode.",
+        "empty": "Nog geen apparaten toegelaten.",
+        "addBtn": "Apparaat toelaten",
+        "addTitle": "Apparaat toelaten",
+        "removeTitle": "Toegang intrekken",
+        "removeConfirm": "“{name}” intrekken? Het moet opnieuw toegelaten worden voordat het kan verbinden.",
+        "nameLabel": "Naam (bijv. “Jan's laptop”)",
+        "keyLabel": "Identiteitssleutel",
+        "keyHint": "Het andere apparaat toont deze onder Instellingen → Identiteit.",
+        "osPasswordLabel": "Het inlogwachtwoord van je computer",
+        "osPasswordHint": "Bevestigt dat jij het bent die wijzigt wie toegang heeft tot dit apparaat.",
+        "add": "Toelaten",
+        "removeBtn": "Intrekken",
+        "err": {
+            "wrong-os-password": "Dat inlogwachtwoord klopt niet.",
+            "duplicate-key": "Dat apparaat is al toegelaten.",
+            "empty-key": "Voer de identiteitssleutel van het apparaat in.",
+            "generic": "Kon de wijziging niet opslaan."
+        }
+    },
     "updates": {
         "title": "Updates",
         "checking": "Controleren op updates…",

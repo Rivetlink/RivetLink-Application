@@ -40,3 +40,9 @@ rivetlink-sdk = { path = "../../RivetLink/crates/rivetlink-sdk" }
 #   Windows the app stays client/viewer and start_host returns "not supported".
 [target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
 rivetlink-agent = { path = "../../RivetLink/crates/rivetlink-agent" }
+
+# PAM, to verify the machine owner's OS login password before changing who may
+# remotely access this device. Linux only for now (macOS/Windows use their own
+# auth mechanisms when they become hosts). Needs libpam at build + runtime.
+[target.'cfg(target_os = "linux")'.dependencies]
+pam = "0.8"

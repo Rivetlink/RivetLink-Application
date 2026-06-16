@@ -21,7 +21,7 @@ use tokio::sync::Mutex;
 use rivetlink_agent::lan::{serve_with_events, HostEvent, LanAuth};
 use rivetlink_sdk::{ClientConfig, Device, Identity, RivetClient};
 
-use settings::{AppSettings, Relay};
+use settings::{AppSettings, Relay, TrustedKey};
 
 /// Shared app state.
 struct AppState {
@@ -735,6 +735,81 @@ fn current_ssid() -> Option<String> {
     None
 }
 
+// ---- Access control (trusted clients) --------------------------------------
+
+/// Verify the machine owner's OS login password (Linux: PAM, service
+/// `rivetlink`). Gates changes to who may remotely access this device — only
+/// someone who can log in to the machine may edit the allow-list. The password
+/// is handed straight to PAM and never logged or stored. Other platforms have
+/// no host-side trust editing yet, so this returns false there.
+#[cfg(target_os = "linux")]
+fn os_password_ok(password: &str) -> bool {
+    let user = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_default();
+    if user.is_empty() {
+        return false;
+    }
+    match pam::Client::with_password("rivetlink") {
+        Ok(mut client) => {
+            client.conversation_mut().set_credentials(user, password);
+            client.authenticate().is_ok()
+        },
+        Err(_) => false,
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+fn os_password_ok(_password: &str) -> bool {
+    false
+}
+
+/// Add a trusted client (its identity key + a name) after the owner confirms
+/// with their OS login password. Trusted clients may later connect without the
+/// session code. Returns the updated settings.
+#[tauri::command]
+async fn add_trusted_key(
+    state: State<'_, AppState>,
+    name: String,
+    public_key: String,
+    os_password: String,
+) -> Result<AppSettings, String> {
+    if !os_password_ok(&os_password) {
+        return Err("wrong-os-password".to_string());
+    }
+    let key = public_key.trim().to_string();
+    if key.is_empty() {
+        return Err("empty-key".to_string());
+    }
+    let mut settings = state.settings.lock().await;
+    if settings.trusted_keys.iter().any(|k| k.public_key == key) {
+        return Err("duplicate-key".to_string());
+    }
+    settings.trusted_keys.push(TrustedKey {
+        id: uuid::Uuid::new_v4().to_string(),
+        name: name.trim().to_string(),
+        public_key: key,
+    });
+    settings.save(&state.data_dir)?;
+    Ok(settings.clone())
+}
+
+/// Remove a trusted client, after the owner confirms with their OS password.
+#[tauri::command]
+async fn remove_trusted_key(
+    state: State<'_, AppState>,
+    id: String,
+    os_password: String,
+) -> Result<AppSettings, String> {
+    if !os_password_ok(&os_password) {
+        return Err("wrong-os-password".to_string());
+    }
+    let mut settings = state.settings.lock().await;
+    settings.trusted_keys.retain(|k| k.id != id);
+    settings.save(&state.data_dir)?;
+    Ok(settings.clone())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -798,7 +873,9 @@ pub fn run() {
             stop_host,
             host_active,
             network_info,
-            lan_ping
+            lan_ping,
+            add_trusted_key,
+            remove_trusted_key
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -67,6 +67,51 @@
 			</VCardText>
 		</VCard>
 
+		<VCard v-if="isHost()" variant="tonal" class="mb-4">
+			<VCardTitle class="d-flex align-center">
+				{{ t("access.title") }}
+				<VSpacer />
+				<VBtn
+					variant="text"
+					size="small"
+					prepend-icon="mdi-plus"
+					@click="openAdd"
+				>
+					{{ t("access.addBtn") }}
+				</VBtn>
+			</VCardTitle>
+			<VCardSubtitle class="text-wrap">
+				{{ t("access.subtitle") }}
+			</VCardSubtitle>
+			<VCardText>
+				<p
+					v-if="store.settings.trusted_keys.length === 0"
+					class="text-body-2 text-medium-emphasis mb-0"
+				>
+					{{ t("access.empty") }}
+				</p>
+				<VList v-else class="bg-transparent">
+					<VListItem v-for="k in store.settings.trusted_keys" :key="k.id">
+						<template #prepend>
+							<VIcon icon="mdi-key-chain" />
+						</template>
+						<VListItemTitle>{{ k.name || "—" }}</VListItemTitle>
+						<VListItemSubtitle class="text-truncate">
+							{{ k.public_key }}
+						</VListItemSubtitle>
+						<template #append>
+							<VBtn
+								size="small"
+								variant="text"
+								icon="mdi-delete-outline"
+								@click="openRemove(k)"
+							/>
+						</template>
+					</VListItem>
+				</VList>
+			</VCardText>
+		</VCard>
+
 		<VCard variant="tonal">
 			<VCardTitle>{{ t("settings.about") }}</VCardTitle>
 			<VList class="bg-transparent">
@@ -76,6 +121,7 @@
 		</VCard>
 
 		<EditDeviceModal v-model="editOpen" />
+		<TrustedKeyModal v-model="accessOpen" :target="accessTarget" />
 	</VContainer>
 </template>
 
@@ -86,12 +132,13 @@
 	import { invoke } from "@tauri-apps/api/core";
 	import { useI18n } from "vue-i18n";
 	import {
-		isClient, isHost, loadPublicKey, store,
+		isClient, isHost, loadPublicKey, store, type TrustedKey,
 	} from "../store";
 	import {
 		SUPPORTED, setLocale,
 	} from "../i18n";
 	import EditDeviceModal from "../components/EditDeviceModal.vue";
+	import TrustedKeyModal from "../components/TrustedKeyModal.vue";
 
 	const {
 		t, locale,
@@ -99,6 +146,18 @@
 
 	const editOpen = ref(false);
 	const version = ref("");
+	const accessOpen = ref(false);
+	const accessTarget = ref<TrustedKey | null>(null);
+
+	function openAdd() {
+		accessTarget.value = null;
+		accessOpen.value = true;
+	}
+
+	function openRemove(key: TrustedKey) {
+		accessTarget.value = key;
+		accessOpen.value = true;
+	}
 
 	onMounted(async () => {
 		version.value = await invoke<string>("app_version");

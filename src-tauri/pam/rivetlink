@@ -1,0 +1,6 @@
+# PAM service for RivetLink: verify the machine owner's own login password
+# before changing who may remotely access this device. Delegates to the
+# system's standard auth stack (Debian/Ubuntu). Installed to /etc/pam.d/rivetlink
+# by the .deb — no manual setup. unix_chkpwd lets this work without root.
+@include common-auth
+@include common-account

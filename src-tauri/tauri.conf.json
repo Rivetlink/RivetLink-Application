@@ -38,15 +38,17 @@
     ],
     "linux": {
       "deb": {
-        "depends": ["libpipewire-0.3-0"],
+        "depends": ["libpipewire-0.3-0", "libpam0g"],
         "files": {
-          "/usr/share/metainfo/com.rivetlink.app.metainfo.xml": "metainfo/com.rivetlink.app.metainfo.xml"
+          "/usr/share/metainfo/com.rivetlink.app.metainfo.xml": "metainfo/com.rivetlink.app.metainfo.xml",
+          "/etc/pam.d/rivetlink": "pam/rivetlink"
         }
       },
       "rpm": {
-        "depends": ["pipewire-libs"],
+        "depends": ["pipewire-libs", "pam"],
         "files": {
-          "/usr/share/metainfo/com.rivetlink.app.metainfo.xml": "metainfo/com.rivetlink.app.metainfo.xml"
+          "/usr/share/metainfo/com.rivetlink.app.metainfo.xml": "metainfo/com.rivetlink.app.metainfo.xml",
+          "/etc/pam.d/rivetlink": "pam/rivetlink.rpm"
         }
       }
     }

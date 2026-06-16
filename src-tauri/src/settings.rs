@@ -27,6 +27,16 @@ pub struct SavedLanDevice {
     pub public_key: Option<String>,
 }
 
+/// A client this host trusts: its identity public key plus a name the owner
+/// gave it. A trusted client may connect without the session code.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrustedKey {
+    pub id: String,
+    pub name: String,
+    /// The client's Ed25519 identity public key (base64).
+    pub public_key: String,
+}
+
 /// Everything the app remembers between launches.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -48,6 +58,9 @@ pub struct AppSettings {
     /// Hosts found on the local network and remembered by the user.
     #[serde(default)]
     pub lan_devices: Vec<SavedLanDevice>,
+    /// Clients allowed to connect to this host without the session code.
+    #[serde(default)]
+    pub trusted_keys: Vec<TrustedKey>,
 }
 
 impl AppSettings {

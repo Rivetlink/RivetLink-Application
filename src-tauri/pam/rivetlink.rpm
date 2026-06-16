@@ -1,0 +1,4 @@
+# PAM service for RivetLink (RPM/Fedora variant): verify the owner's login
+# password before changing remote-access trust. Delegates to system-auth.
+auth    include system-auth
+account include system-auth

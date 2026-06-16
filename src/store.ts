@@ -20,6 +20,13 @@ export type SavedLanDevice = {
 	public_key: string | null;
 };
 
+/// A client this host trusts (its identity key + a name the owner gave it).
+export type TrustedKey = {
+	id: string;
+	name: string;
+	public_key: string;
+};
+
 export type AppSettings = {
 	setup_complete: boolean;
 	device_name: string;
@@ -27,6 +34,7 @@ export type AppSettings = {
 	relays: Relay[];
 	active_relay_id: string | null;
 	lan_devices: SavedLanDevice[];
+	trusted_keys: TrustedKey[];
 };
 
 /// A host found on the local network (not yet remembered).
@@ -58,6 +66,7 @@ const emptySettings: AppSettings = {
 	relays: [],
 	active_relay_id: null,
 	lan_devices: [],
+	trusted_keys: [],
 };
 
 export const store = reactive({
@@ -247,6 +256,30 @@ export async function refreshHostState(): Promise<void> {
 /// This machine's current Wi-Fi name (if any) and LAN IP.
 export async function networkInfo(): Promise<NetworkInfo> {
 	return invoke<NetworkInfo>("network_info");
+}
+
+// ---- Access control (trusted clients) --------------------------------------
+
+/// Add a trusted client key (gated by the OS login password). Throws with a
+/// short code ("wrong-os-password" | "empty-key" | "duplicate-key") on failure.
+export async function addTrustedKey(
+	name: string,
+	publicKey: string,
+	osPassword: string,
+): Promise<void> {
+	store.settings = await invoke<AppSettings>("add_trusted_key", {
+		name,
+		publicKey,
+		osPassword,
+	});
+}
+
+/// Remove a trusted client key (gated by the OS login password).
+export async function removeTrustedKey(id: string, osPassword: string): Promise<void> {
+	store.settings = await invoke<AppSettings>("remove_trusted_key", {
+		id,
+		osPassword,
+	});
 }
 
 /// Whether a saved host is reachable right now (its listener accepts a TCP

@@ -138,6 +138,28 @@
         "editDevice": "Edit this device",
         "rolesRequired": "Choose at least one."
     },
+    "access": {
+        "title": "Access to this device",
+        "subtitle": "Devices allowed to connect and view this screen without the session code.",
+        "empty": "No devices are allowed yet.",
+        "addBtn": "Allow a device",
+        "addTitle": "Allow a device",
+        "removeTitle": "Remove access",
+        "removeConfirm": "Remove “{name}”? It will need to be allowed again before it can connect.",
+        "nameLabel": "Name (e.g. “Jan's laptop”)",
+        "keyLabel": "Identity key",
+        "keyHint": "The other device shows this under Settings → Identity.",
+        "osPasswordLabel": "Your computer's login password",
+        "osPasswordHint": "Confirms it's really you changing who can access this device.",
+        "add": "Allow",
+        "removeBtn": "Remove",
+        "err": {
+            "wrong-os-password": "That login password is incorrect.",
+            "duplicate-key": "That device is already allowed.",
+            "empty-key": "Enter the device's identity key.",
+            "generic": "Couldn't save the change."
+        }
+    },
     "updates": {
         "title": "Updates",
         "checking": "Checking for updates…",
