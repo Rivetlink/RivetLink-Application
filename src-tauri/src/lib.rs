@@ -593,7 +593,8 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     let serve_pin = pin.clone();
     let serve = tokio::spawn(async move {
         let auth = LanAuth::Password(serve_pin);
-        if let Err(e) = serve_with_events(signing_key, device_name, 0, auth, Some(tx)).await {
+        let port = rivetlink_sdk::lan::DEFAULT_LAN_PORT;
+        if let Err(e) = serve_with_events(signing_key, device_name, port, auth, Some(tx)).await {
             let _ = app_for_serve.emit("host://error", e.to_string());
         }
     });

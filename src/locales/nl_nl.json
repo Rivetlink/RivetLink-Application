@@ -86,7 +86,10 @@
         "lanDisconnect": "Verbreken",
         "lanNetworkWifi": "Wifi: {ssid}",
         "lanNetworkWired": "Bekabeld netwerk",
-        "lanNetworkIp": "Deze computer: {ip}"
+        "lanNetworkIp": "Deze computer: {ip}",
+        "errUnreachable": "Kan die computer niet bereiken. Die deelt waarschijnlijk niet meer, of staat uit.",
+        "errTimeout": "De verbinding duurde te lang. Deelt de andere computer nog op dit netwerk?",
+        "errAuth": "De verbinding werd geweigerd. Klopt de code?"
     },
     "device": {
         "thisDevice": "Dit apparaat",

@@ -372,8 +372,31 @@
 		),
 	);
 
+	// Map a raw backend error string to a friendly, translated message. Unknown
+	// errors fall through unchanged so nothing is silently swallowed.
+	function friendlyError(raw: string): string {
+		const m = raw.toLowerCase();
+		if (m.includes("refused") || m.includes("os error 61") || m.includes("os error 111")) {
+			return t("connect.errUnreachable");
+		}
+		if (m.includes("timed out") || m.includes("timeout") || m.includes("deadline")) {
+			return t("connect.errTimeout");
+		}
+		if (m.includes("unreachable") || m.includes("no route") || m.includes("os error 65") || m.includes("os error 113")) {
+			return t("connect.errUnreachable");
+		}
+		if (
+			m.includes("handshake") || m.includes("decrypt") || m.includes("password")
+			|| m.includes("pin") || m.includes("spake") || m.includes("signature")
+			|| m.includes("reject")
+		) {
+			return t("connect.errAuth");
+		}
+		return raw;
+	}
+
 	function fail(e: unknown) {
-		error.value = typeof e === "string" ? e : String(e);
+		error.value = friendlyError(typeof e === "string" ? e : String(e));
 	}
 
 	function deviceMeta(d: Device): string {
