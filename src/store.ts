@@ -248,3 +248,12 @@ export async function refreshHostState(): Promise<void> {
 export async function networkInfo(): Promise<NetworkInfo> {
 	return invoke<NetworkInfo>("network_info");
 }
+
+/// Whether a saved host is reachable right now (its listener accepts a TCP
+/// connection). Used to show a live online/offline dot per device.
+export async function lanPing(address: string, port: number): Promise<boolean> {
+	return invoke<boolean>("lan_ping", {
+		address,
+		port,
+	});
+}

@@ -87,6 +87,8 @@
         "lanNetworkWifi": "Wi-Fi: {ssid}",
         "lanNetworkWired": "Wired network",
         "lanNetworkIp": "This computer: {ip}",
+        "lanOnline": "Online",
+        "lanOffline": "Offline",
         "errUnreachable": "Can't reach that computer. It's probably not sharing anymore, or it's switched off.",
         "errTimeout": "The connection timed out. Is the other computer still sharing on this network?",
         "errAuth": "The connection was refused. Is the code correct?"
@@ -147,6 +149,7 @@
     },
     "viewer": {
         "connecting": "Connecting — pick a screen to share on the other computer…",
-        "ended": "The connection has ended."
+        "ended": "The connection has ended.",
+        "poor": "Poor connection"
     }
 }

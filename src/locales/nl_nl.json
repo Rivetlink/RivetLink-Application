@@ -87,6 +87,8 @@
         "lanNetworkWifi": "Wifi: {ssid}",
         "lanNetworkWired": "Bekabeld netwerk",
         "lanNetworkIp": "Deze computer: {ip}",
+        "lanOnline": "Online",
+        "lanOffline": "Offline",
         "errUnreachable": "Kan die computer niet bereiken. Die deelt waarschijnlijk niet meer, of staat uit.",
         "errTimeout": "De verbinding duurde te lang. Deelt de andere computer nog op dit netwerk?",
         "errAuth": "De verbinding werd geweigerd. Klopt de code?"
@@ -147,6 +149,7 @@
     },
     "viewer": {
         "connecting": "Verbinden — kies een scherm om te delen op de andere computer…",
-        "ended": "De verbinding is beëindigd."
+        "ended": "De verbinding is beëindigd.",
+        "poor": "Slechte verbinding"
     }
 }

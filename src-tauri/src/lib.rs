@@ -673,6 +673,21 @@ async fn network_info() -> Result<NetworkInfo, String> {
     .map_err(|e| e.to_string())
 }
 
+/// Reachability check for a saved LAN host: can we open a TCP connection to its
+/// listener? `true` = online/connectable. A short timeout keeps the per-device
+/// status snappy and never blocks the UI.
+#[tauri::command]
+async fn lan_ping(address: String, port: u16) -> Result<bool, String> {
+    let Ok(addr) = format!("{address}:{port}").parse::<std::net::SocketAddr>() else {
+        return Ok(false);
+    };
+    let connect = tokio::net::TcpStream::connect(addr);
+    Ok(matches!(
+        tokio::time::timeout(std::time::Duration::from_millis(1500), connect).await,
+        Ok(Ok(_))
+    ))
+}
+
 /// This machine's LAN IP, found by asking the OS which local address would
 /// route to a public host. No packet is sent (UDP connect only sets the route).
 fn local_ip() -> Option<String> {
@@ -782,7 +797,8 @@ pub fn run() {
             start_host,
             stop_host,
             host_active,
-            network_info
+            network_info,
+            lan_ping
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

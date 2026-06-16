@@ -236,7 +236,15 @@
 									{{ t("connect.lanConnected") }}
 								</VChip>
 							</VListItemTitle>
-							<VListItemSubtitle>{{ d.address }}:{{ d.port }}</VListItemSubtitle>
+							<VListItemSubtitle>
+								<VIcon
+									icon="mdi-circle"
+									:color="online[d.id] ? 'green' : 'grey'"
+									size="8"
+									class="mr-1"
+								/>
+								<span>{{ online[d.id] ? t("connect.lanOnline") : t("connect.lanOffline") }} · {{ d.address }}:{{ d.port }}</span>
+							</VListItemSubtitle>
 							<template #append>
 								<VBtn
 									v-if="store.connectedLanId === d.id"
@@ -328,6 +336,7 @@
 		type LanDevice,
 		lanConnect,
 		lanDisconnect,
+		lanPing,
 		listDevices,
 		login,
 		type NetworkInfo,
@@ -361,6 +370,8 @@
 	const connectOpen = ref(false);
 	const connectTarget = ref<SavedLanDevice | null>(null);
 	const net = ref<NetworkInfo | null>(null);
+	// Per-saved-device reachability (id -> online), refreshed on a timer.
+	const online = ref<Record<string, boolean>>({});
 
 	// Hosts found by a scan that aren't already remembered.
 	const lanUnsaved = computed(() =>
@@ -415,13 +426,25 @@
 		}
 	}
 
+	async function pingDevices() {
+		const devices = store.settings.lan_devices;
+		const results = await Promise.all(
+			devices.map(async (d) => [d.id, await lanPing(d.address, d.port)] as const),
+		);
+		online.value = Object.fromEntries(results);
+	}
+
 	onMounted(async () => {
 		if (activeRelay() && !store.connected) {
 			doConnect();
 		}
 		await refreshNet();
-		// Re-check periodically so the shown network follows Wi-Fi switches.
-		netTimer = setInterval(refreshNet, 5000);
+		await pingDevices();
+		// Re-check periodically so the network + device status stay current.
+		netTimer = setInterval(() => {
+			refreshNet();
+			pingDevices();
+		}, 5000);
 	});
 
 	onUnmounted(() => {

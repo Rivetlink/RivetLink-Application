@@ -10,6 +10,16 @@
 			/>
 			<p>{{ ended ? t("viewer.ended") : t("viewer.connecting") }}</p>
 		</div>
+		<VChip
+			v-if="slow && hasFrame"
+			class="poor"
+			color="warning"
+			size="small"
+			variant="flat"
+			prepend-icon="mdi-wifi-alert"
+		>
+			{{ t("viewer.poor") }}
+		</VChip>
 	</div>
 </template>
 
@@ -39,11 +49,17 @@
 	const canvasEl = ref<HTMLCanvasElement | null>(null);
 	const hasFrame = ref(false);
 	const ended = ref(false);
+	const slow = ref(false);
 
 	let ctx: CanvasRenderingContext2D | null = null;
 	let pending: Promise<void> = Promise.resolve();
 	let unlistenFrame: UnlistenFn | null = null;
 	let unlistenEnd: UnlistenFn | null = null;
+	// The host sends a heartbeat frame ~every second; if nothing arrives for a
+	// while the link is slow/stalled rather than just a static screen.
+	let lastFrameAt = 0;
+	let slowTimer: ReturnType<typeof setInterval> | undefined;
+	const SLOW_AFTER_MS = 2000;
 
 	function base64ToBytes(b64: string): Uint8Array {
 		const bin = atob(b64);
@@ -83,6 +99,15 @@
 
 		hasFrame.value = true;
 		ended.value = false;
+		lastFrameAt = performance.now();
+		slow.value = false;
+	}
+
+	function clearCanvas(): void {
+		const canvas = canvasEl.value;
+		if (canvas && ctx) {
+			ctx.clearRect(0, 0, canvas.width, canvas.height);
+		}
 	}
 
 	onMounted(async () => {
@@ -93,17 +118,29 @@
 		unlistenEnd = await listen("lan://disconnected", () => {
 			ended.value = true;
 			hasFrame.value = false;
+			slow.value = false;
+			clearCanvas(); // drop the last frame instead of leaving it frozen
 		});
+		// Flag a slow link when no frame (not even a heartbeat) arrives in time.
+		slowTimer = setInterval(() => {
+			if (hasFrame.value && !ended.value) {
+				slow.value = performance.now() - lastFrameAt > SLOW_AFTER_MS;
+			}
+		}, 500);
 	});
 
 	onUnmounted(() => {
 		unlistenFrame?.();
 		unlistenEnd?.();
+		if (slowTimer) {
+			clearInterval(slowTimer);
+		}
 	});
 </script>
 
 <style scoped>
 	.viewer {
+		position: relative;
 		width: 100vw;
 		height: 100vh;
 		background: #000;
@@ -111,6 +148,12 @@
 		align-items: center;
 		justify-content: center;
 		overflow: hidden;
+	}
+
+	.poor {
+		position: absolute;
+		right: 12px;
+		bottom: 12px;
 	}
 
 	.screen {
