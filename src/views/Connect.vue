@@ -164,11 +164,10 @@
 							<div class="text-caption text-medium-emphasis">
 								{{ t("connect.lanSubtitle") }}
 							</div>
-							<div v-if="net" class="text-caption text-medium-emphasis mt-1">
-								<VIcon :icon="net.ssid ? 'mdi-wifi' : 'mdi-ethernet'" size="x-small" class="mr-1" />
-								<span v-if="net.ssid">{{ t("connect.lanNetworkWifi", { ssid: net.ssid }) }}</span>
-								<span v-else>{{ t("connect.lanNetworkWired") }}</span>
-								<span v-if="net.ip"> · {{ t("connect.lanNetworkIp", { ip: net.ip }) }}</span>
+							<div v-if="net && (net.ssid || net.ip)" class="text-caption text-medium-emphasis mt-1">
+								<VIcon :icon="net.ssid ? 'mdi-wifi' : 'mdi-lan'" size="x-small" class="mr-1" />
+								<span v-if="net.ssid">{{ t("connect.lanNetworkWifi", { ssid: net.ssid }) }} · </span>
+								<span v-if="net.ip">{{ t("connect.lanNetworkIp", { ip: net.ip }) }}</span>
 							</div>
 						</div>
 						<VSpacer />
