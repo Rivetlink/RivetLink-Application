@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!--
+	  macOS 14+ blocks mDNS / local-network access unless the app both explains
+	  why it needs it (this prompt string, shown once) AND declares the Bonjour
+	  service types it browses/advertises. Without NSBonjourServices the LAN scan
+	  silently returns nothing even on the same subnet. Tauri merges this file
+	  into the bundled Info.plist on macOS builds.
+	-->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>RivetLink finds and connects to computers on your local network to share and view screens directly, without a server.</string>
+	<key>NSBonjourServices</key>
+	<array>
+		<string>_rivetlink._tcp</string>
+	</array>
+</dict>
+</plist>

@@ -10,6 +10,12 @@
 					<div class="text-caption text-medium-emphasis">
 						{{ t("device.thisDevice") }}
 					</div>
+					<div v-if="net" class="text-caption text-medium-emphasis mt-1">
+						<VIcon :icon="net.ssid ? 'mdi-wifi' : 'mdi-ethernet'" size="x-small" class="mr-1" />
+						<span v-if="net.ssid">{{ t("connect.lanNetworkWifi", { ssid: net.ssid }) }}</span>
+						<span v-else>{{ t("connect.lanNetworkWired") }}</span>
+						<span v-if="net.ip"> · {{ t("connect.lanNetworkIp", { ip: net.ip }) }}</span>
+					</div>
 				</div>
 				<VSpacer />
 				<VChip :color="statusColor" size="small" variant="flat">
@@ -117,12 +123,13 @@
 		listen, type UnlistenFn,
 	} from "@tauri-apps/api/event";
 	import {
-		loadPublicKey, refreshHostState, startHost, stopHost, store,
+		loadPublicKey, type NetworkInfo, networkInfo, refreshHostState, startHost, stopHost, store,
 	} from "../store";
 
 	const { t } = useI18n();
 	const copied = ref(false);
 	const busy = ref(false);
+	const net = ref<NetworkInfo | null>(null);
 
 	let unlistenConnected: UnlistenFn | null = null;
 	let unlistenDisconnected: UnlistenFn | null = null;
@@ -145,6 +152,11 @@
 	onMounted(async () => {
 		if (!store.publicKey) {
 			await loadPublicKey();
+		}
+		try {
+			net.value = await networkInfo();
+		} catch {
+			// Best-effort; the page works without it.
 		}
 		await refreshHostState();
 		unlistenConnected = await listen<string>("host://connected", (e) => {
