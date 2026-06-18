@@ -103,16 +103,23 @@
 			store.connectedLanId = null;
 		});
 		await loadSettings();
-		// Host role: behave like a daemon — start advertising + serving as soon
-		// as the app is open (main window only) so a client can always connect,
-		// no "start sharing" needed. A trusted client skips the code entirely.
-		if (getCurrentWindow().label === "main" && store.settings.setup_complete && isHost()) {
-			await refreshHostState();
-			if (!store.hosting) {
-				try {
-					await startHost();
-				} catch {
-					// Host backend unavailable (e.g. Windows) — ignore.
+		if (getCurrentWindow().label === "main" && store.settings.setup_complete) {
+			// A host-only device has no use for the client "Connect" page — open
+			// the host page instead of the default /connect landing.
+			if (isHost() && !isClient() && route.path === "/connect") {
+				await router.replace("/device");
+			}
+			// Host role: behave like a daemon — start advertising + serving as
+			// soon as the app is open so a client can always connect, no "start
+			// sharing" needed. A trusted client skips the code entirely.
+			if (isHost()) {
+				await refreshHostState();
+				if (!store.hosting) {
+					try {
+						await startHost();
+					} catch {
+						// Host backend unavailable (e.g. Windows) — ignore.
+					}
 				}
 			}
 		}

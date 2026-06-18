@@ -104,14 +104,14 @@
         "publicKey": "Public key",
         "copied": "Copied!",
         "receiveHelpTitle": "Receive help",
-        "receiveHelpIntro": "Let someone see this screen over the local network — no server needed. Start sharing, then read out your computer name and code.",
-        "startHosting": "Start sharing",
-        "stopHosting": "Stop sharing",
+        "receiveHelpIntro": "This screen is reachable on the local network whenever the app is open — no server needed. Read out your computer name and code to let someone connect.",
+        "unavailable": "Sharing isn't available on this device yet.",
+        "retry": "Try again",
         "code": "Code",
         "waitingTitle": "Waiting for a helper to connect…",
         "waitingHint": "Tell the helper your computer name and this code. They pick you under “Local network” and enter the code.",
         "connectedTitle": "A helper is connected",
-        "connectedHint": "Someone is viewing this screen now. Stop sharing to end it.",
+        "connectedHint": "Someone is viewing this screen now.",
         "pickScreenNote": "When a helper connects, your system asks which screen to share."
     },
     "relays": {
@@ -136,6 +136,9 @@
         "tagline": "Zero-trust remote control",
         "version": "Version",
         "language": "Language",
+        "startupTitle": "Startup",
+        "startupToggle": "Start RivetLink when I log in",
+        "startupHint": "Recommended for a device that should always be reachable, like a computer at home you connect back to.",
         "editDevice": "Edit this device",
         "rolesRequired": "Choose at least one."
     },

@@ -52,6 +52,24 @@
 		</VCard>
 
 		<VCard variant="tonal" class="mb-4">
+			<VCardTitle>{{ t("settings.startupTitle") }}</VCardTitle>
+			<VCardText>
+				<VSwitch
+					:model-value="autostart"
+					:label="t('settings.startupToggle')"
+					color="primary"
+					density="comfortable"
+					hide-details
+					:loading="autostartBusy"
+					@update:model-value="onAutostartChange"
+				/>
+				<p class="text-caption text-medium-emphasis mt-1 mb-0">
+					{{ t("settings.startupHint") }}
+				</p>
+			</VCardText>
+		</VCard>
+
+		<VCard variant="tonal" class="mb-4">
 			<VCardTitle>{{ t("settings.identityTitle") }}</VCardTitle>
 			<VCardText>
 				<VTextField
@@ -130,6 +148,9 @@
 		onMounted, ref,
 	} from "vue";
 	import { invoke } from "@tauri-apps/api/core";
+	import {
+		disable, enable, isEnabled,
+	} from "@tauri-apps/plugin-autostart";
 	import { useI18n } from "vue-i18n";
 	import {
 		isClient, isHost, loadPublicKey, store, type TrustedKey,
@@ -148,6 +169,27 @@
 	const version = ref("");
 	const accessOpen = ref(false);
 	const accessTarget = ref<TrustedKey | null>(null);
+	const autostart = ref(false);
+	const autostartBusy = ref(false);
+
+	async function onAutostartChange(value: boolean | null) {
+		autostartBusy.value = true;
+		try {
+			if (value) {
+				await enable();
+			} else {
+				await disable();
+			}
+		} catch {
+			// Ignore; we re-read the real state below.
+		}
+		try {
+			autostart.value = await isEnabled();
+		} catch {
+			// Keep the previous value if the platform can't report it.
+		}
+		autostartBusy.value = false;
+	}
 
 	function openAdd() {
 		accessTarget.value = null;
@@ -163,6 +205,11 @@
 		version.value = await invoke<string>("app_version");
 		if (!store.publicKey) {
 			await loadPublicKey();
+		}
+		try {
+			autostart.value = await isEnabled();
+		} catch {
+			// Autostart unsupported on this platform — leave the toggle off.
 		}
 	});
 

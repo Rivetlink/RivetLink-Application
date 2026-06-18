@@ -21,6 +21,9 @@ tauri = { version = "2", features = ["devtools"] }
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# Start the app on OS login (Linux .desktop autostart / macOS LaunchAgent /
+# Windows Run key) so an always-on host comes back up after a reboot.
+tauri-plugin-autostart = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "rt", "net", "time"] }

@@ -30,17 +30,7 @@
 					{{ t("device.receiveHelpIntro") }}
 				</p>
 
-				<VBtn
-					v-if="!store.hosting"
-					color="primary"
-					prepend-icon="mdi-monitor-share"
-					:loading="busy"
-					@click="onStart"
-				>
-					{{ t("device.startHosting") }}
-				</VBtn>
-
-				<template v-else>
+				<template v-if="store.hosting">
 					<div class="d-flex align-center ga-4 mb-4">
 						<div>
 							<div class="text-overline text-medium-emphasis">
@@ -67,7 +57,7 @@
 						:type="store.hostPeer ? 'success' : 'info'"
 						variant="tonal"
 						density="comfortable"
-						class="mb-4"
+						class="mb-0"
 					>
 						<div class="text-subtitle-2">
 							{{ store.hostPeer ? t("device.connectedTitle") : t("device.waitingTitle") }}
@@ -76,15 +66,25 @@
 							{{ store.hostPeer ? t("device.connectedHint") : t("device.waitingHint") }}
 						</div>
 					</VAlert>
+				</template>
 
-					<VBtn
-						color="error"
+				<template v-else>
+					<VAlert
+						type="warning"
 						variant="tonal"
-						prepend-icon="mdi-stop"
-						:loading="busy"
-						@click="onStop"
+						density="comfortable"
+						class="mb-4"
 					>
-						{{ t("device.stopHosting") }}
+						{{ t("device.unavailable") }}
+					</VAlert>
+					<VBtn
+						color="primary"
+						variant="tonal"
+						prepend-icon="mdi-refresh"
+						:loading="busy"
+						@click="onStart"
+					>
+						{{ t("device.retry") }}
 					</VBtn>
 				</template>
 
@@ -122,7 +122,7 @@
 		listen, type UnlistenFn,
 	} from "@tauri-apps/api/event";
 	import {
-		loadPublicKey, type NetworkInfo, networkInfo, refreshHostState, startHost, stopHost, store,
+		loadPublicKey, type NetworkInfo, networkInfo, refreshHostState, startHost, store,
 	} from "../store";
 
 	const { t } = useI18n();
@@ -165,6 +165,15 @@
 		// Re-check periodically so the shown network follows Wi-Fi switches.
 		netTimer = setInterval(refreshNet, 5000);
 		await refreshHostState();
+		// The host runs as a daemon: if it isn't up yet (e.g. first open on this
+		// page), start it so the device is always reachable — no manual toggle.
+		if (!store.hosting) {
+			try {
+				await startHost();
+			} catch {
+				// Backend unavailable (e.g. Windows) — the page shows a retry.
+			}
+		}
 		unlistenConnected = await listen<string>("host://connected", (e) => {
 			store.hostPeer = e.payload;
 		});
@@ -191,15 +200,6 @@
 		busy.value = true;
 		try {
 			await startHost();
-		} finally {
-			busy.value = false;
-		}
-	}
-
-	async function onStop() {
-		busy.value = true;
-		try {
-			await stopHost();
 		} finally {
 			busy.value = false;
 		}
