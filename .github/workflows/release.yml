@@ -77,19 +77,23 @@ jobs:
       - name: Install Linux dependencies
         if: startsWith(matrix.os, 'ubuntu')
         run: |
-          # apt on the hosted runners occasionally stalls on a slow mirror for
-          # 10+ minutes. Bound each call with a timeout and retry so a stuck
-          # mirror is killed and retried instead of hanging the whole release.
+          # The hosted ubuntu runner's apt mirror sometimes crawls (~20s/package
+          # instead of <1s), which used to hang the whole job. Two guards:
+          #  - --no-install-recommends: skip docs/codecs/extras we don't need to
+          #    *build* (the bundled .deb declares its own runtime depends), so we
+          #    fetch far fewer packages and ride the slow mirror less.
+          #  - timeout + retry: kill a stalled fetch and resume from apt's cache
+          #    (already-downloaded .debs survive, so a retry continues, not restarts).
           apt_retry() {
-            for i in 1 2 3; do
-              if sudo timeout 240 "$@"; then return 0; fi
+            for i in 1 2 3 4; do
+              if sudo timeout 600 "$@"; then return 0; fi
               echo "::warning::apt timed out/failed (attempt $i): $*"
               sleep 10
             done
             return 1
           }
           apt_retry apt-get update
-          apt_retry apt-get install -y \
+          apt_retry apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev \
             libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev \
             libpipewire-0.3-dev clang libpam0g-dev
