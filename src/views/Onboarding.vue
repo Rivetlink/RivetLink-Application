@@ -56,7 +56,7 @@
 								color="primary"
 								variant="flat"
 								:disabled="!rolesValid"
-								@click="step = 2"
+								@click="step = hostOnly ? 3 : 2"
 							>
 								{{ t("common.next") }}
 							</VBtn>
@@ -132,7 +132,7 @@
 							</VAlert>
 						</VCardText>
 						<VCardActions>
-							<VBtn variant="text" @click="step = 2">
+							<VBtn variant="text" @click="step = hostOnly ? 1 : 2">
 								{{ t("common.back") }}
 							</VBtn>
 							<VSpacer />
@@ -170,6 +170,9 @@
 	const roleHost = ref(true);
 	const roleClient = ref(true);
 	const rolesValid = computed(() => roleHost.value || roleClient.value);
+	// Host-only devices just receive help on the LAN: no relay to configure, so
+	// skip the server step entirely (identity key, daemon, and mDNS are automatic).
+	const hostOnly = computed(() => roleHost.value && !roleClient.value);
 
 	// Step 2 — server (optional; only the HTTP address, the app derives the rest)
 	const relayName = ref(t("onboarding.defaultServerName"));
@@ -201,7 +204,9 @@
 			emit("done");
 		} catch (e) {
 			error.value = typeof e === "string" ? e : String(e);
-			step.value = 2; // most failures are the server address
+			// A client setup most often fails on the server address; a host-only
+			// setup has no server, so keep it on the device-name step.
+			step.value = hostOnly.value ? 3 : 2;
 		} finally {
 			busy.value = false;
 		}
