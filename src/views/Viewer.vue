@@ -31,6 +31,7 @@
 	import {
 		listen, type UnlistenFn,
 	} from "@tauri-apps/api/event";
+	import { getCurrentWindow } from "@tauri-apps/api/window";
 
 	type TilePatch = {
 		i: number;
@@ -120,6 +121,8 @@
 			hasFrame.value = false;
 			slow.value = false;
 			clearCanvas(); // drop the last frame instead of leaving it frozen
+			// The session is over — close this standalone viewer window.
+			getCurrentWindow().close().catch(() => { /* already gone */ });
 		});
 		// Flag a slow link when no frame (not even a heartbeat) arrives in time.
 		slowTimer = setInterval(() => {
