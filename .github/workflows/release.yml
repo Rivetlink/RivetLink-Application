@@ -79,6 +79,10 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: RivetLink-Application/src-tauri -> target
+          # Key on the exact runner image so a 24.04-built target/ (build scripts
+          # linked against glibc 2.39) is never restored into the 22.04 job —
+          # those cached binaries fail with "GLIBC_2.39 not found" on 22.04.
+          key: ${{ matrix.os }}
           cache-on-failure: "true"
           cache-all-crates: "true"
 

@@ -69,6 +69,12 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: RivetLink-Application/src-tauri -> target
+          # Key on the exact runner image. rust-cache's default key only sees
+          # runner.os ("Linux"), so a 24.04-built target/ (build scripts linked
+          # against glibc 2.39) would be restored into a 22.04 job and fail with
+          # "GLIBC_2.39 not found" when those cached binaries run. Separate the
+          # caches per OS version.
+          key: ${{ matrix.os }}
           # Cache even when the build fails (faster red-build iteration) and
           # keep every downloaded crate, not just the ones that made it in.
           cache-on-failure: "true"
