@@ -150,11 +150,115 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
+  # Broad-compat Linux AppImage, built on Ubuntu 22.04 so EVERYTHING it bundles
+  # (our binary + the webkit/gtk/glib/pipewire .so files pulled from apt) links
+  # glibc 2.35 and runs on hosts down to 22.04 — the deb/rpm above are built on
+  # 24.04 and their bundled libs need glibc 2.38/2.39 (24.04+ only). The one
+  # blocker on 22.04 is the capture crate: pipewire/libspa 0.8 needs PipeWire
+  # >= 0.3.65 headers and jammy ships 0.3.48, so we add the pipewire-upstream
+  # PPA (newer PipeWire built for jammy -> still glibc 2.35). This job uploads
+  # the .AppImage into the same draft release the `release` job created;
+  # rename-assets then renames it like the other assets.
+  appimage:
+    needs: release
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          path: RivetLink-Application
+
+      - name: Checkout RivetLink (SDK source, sibling for the path dep)
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: Rivetlink/RivetLink
+          path: RivetLink
+          token: ${{ secrets.SDK_REPO_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: RivetLink-Application/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: RivetLink-Application/src-tauri -> target
+          key: appimage-jammy
+          cache-on-failure: "true"
+          cache-all-crates: "true"
+
+      - name: Install Linux dependencies (+ pipewire-upstream PPA for libspa 0.8)
+        run: |
+          apt_retry() {
+            for i in 1 2 3 4; do
+              if sudo timeout 600 "$@"; then return 0; fi
+              echo "::warning::apt timed out/failed (attempt $i): $*"
+              sleep 10
+            done
+            return 1
+          }
+          # jammy ships PipeWire 0.3.48; pipewire/libspa 0.8 needs >= 0.3.65
+          # headers. This PPA backports recent PipeWire built for jammy, so the
+          # headers let libspa compile and the runtime lib still links glibc 2.35.
+          apt_retry add-apt-repository -y ppa:pipewire-debian/pipewire-upstream
+          apt_retry apt-get update
+          apt_retry apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev \
+            libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev \
+            libpipewire-0.3-dev clang libpam0g-dev file
+          echo "pipewire dev version: $(pkg-config --modversion libpipewire-0.3 || echo '?')"
+
+      - name: Install npm dependencies
+        working-directory: RivetLink-Application
+        run: npm ci
+
+      - name: Build AppImage
+        working-directory: RivetLink-Application
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: npm run tauri build -- --bundles appimage
+
+      - name: Verify no bundled lib needs glibc > 2.35
+        working-directory: RivetLink-Application/src-tauri/target/release/bundle/appimage
+        run: |
+          set -euo pipefail
+          AI=$(ls *.AppImage | head -1)
+          ./"$AI" --appimage-extract >/dev/null 2>&1 || true
+          bad=$(for so in $(find squashfs-root -name '*.so*' -type f); do
+            objdump -T "$so" 2>/dev/null | grep -oE 'GLIBC_[0-9.]+'
+          done | sort -V | uniq | grep -E 'GLIBC_2\.(3[6-9]|4[0-9])' || true)
+          if [ -n "$bad" ]; then
+            echo "::error::a bundled lib needs glibc newer than 2.35: $bad"
+            exit 1
+          fi
+          echo "OK: all bundled libs link glibc <= 2.35"
+
+      - name: Upload AppImage into the draft release
+        working-directory: RivetLink-Application
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          gh release upload "$TAG" \
+            src-tauri/target/release/bundle/appimage/*.AppImage* \
+            --repo "$REPO" --clobber
+
   # tauri-action names artifacts without the OS word (e.g. RivetLink_0.1.4_amd64.deb).
   # Rename every asset to RivetLink_<version>_<os>_<arch>.<ext> and patch the
   # matching URLs inside latest.json so the updater still resolves them.
   rename-assets:
-    needs: release
+    needs: [release, appimage]
     runs-on: ubuntu-latest
     steps:
       - name: Rename release assets + patch latest.json
