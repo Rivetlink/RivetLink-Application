@@ -30,12 +30,20 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux ships .deb/.rpm only (built on 24.04, runs broadly incl. 26.04).
-          # AppImage is dropped: a 24.04-built one aborts (EGL/glib) on Ubuntu
-          # 26.04, and a 26.04-built one won't compile (libspa vs newer PipeWire
-          # headers). Flatpak is the planned cross-distro self-update path.
-          - os: ubuntu-24.04
-            args: "--bundles deb,rpm"
+          # Linux ships .deb/.rpm/.AppImage, all built on 22.04 (glibc 2.35) so
+          # the binary runs on every still-supported Ubuntu/Debian and newer.
+          # glibc is forward-compatible: a binary linked on the OLDEST base runs
+          # on all newer hosts, but NOT vice versa — a 24.04 build links glibc
+          # 2.39 and dies on older hosts ("GLIBC_2.39 not found"). So we pin the
+          # floor at 22.04 and let it carry up to the newest release. That's also
+          # why a separate 24.04 AppImage is unnecessary: the 22.04 one already
+          # runs on 24.04 (the earlier abort was a 24.04 build hitting 26.04's
+          # newer Mesa/glib — the reverse direction).
+          # The AppImage is the only self-updatable Linux format; rename-assets
+          # points latest.json's linux-x86_64 at it. Flatpak is the planned
+          # fully-sandboxed cross-distro path.
+          - os: ubuntu-22.04
+            args: "--bundles deb,rpm,appimage"
           - os: macos-latest
             args: "--target universal-apple-darwin"
           - os: windows-latest
