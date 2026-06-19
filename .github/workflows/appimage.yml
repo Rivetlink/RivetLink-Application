@@ -1,0 +1,139 @@
+name: AppImage (zigbuild, glibc 2.35)
+
+# Experimental: build a Linux AppImage that runs on hosts down to Ubuntu 22.04
+# (glibc 2.35), which the normal 24.04-built .deb (glibc 2.39) can't reach.
+#
+# Why this is non-trivial: the capture crate pipewire/libspa 0.8 needs PipeWire
+# >= 0.3.65 headers, which only a recent base (24.04) has, but 24.04 links glibc
+# 2.39. We square that circle with zig: compile on 24.04 (good headers) while
+# using zig's bundled glibc-2.35 headers + stubs as CC/CXX/linker, so the C deps
+# never reference a glibc symbol newer than 2.35. The AppImage then bundles
+# libwebkit2gtk/libpipewire, so at runtime it only needs the host's glibc
+# (>= 2.35) + GL/X stack.
+#
+# Manual-only for now; uploads the .AppImage as a build artifact. Once it runs
+# on 22.04 + 24.04 + 26.04, fold this into release.yml.
+on:
+  workflow_dispatch:
+    inputs:
+      glibc:
+        description: "Target glibc version (e.g. 2.35 = Ubuntu 22.04)"
+        required: false
+        default: "2.35"
+
+permissions:
+  contents: read
+
+jobs:
+  appimage:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout app
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          path: RivetLink-Application
+
+      - name: Checkout RivetLink (SDK source, sibling for the path dep)
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: Rivetlink/RivetLink
+          path: RivetLink
+          token: ${{ secrets.SDK_REPO_TOKEN }}
+
+      - name: Setup Node
+        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: RivetLink-Application/package-lock.json
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
+        with:
+          toolchain: stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+        with:
+          workspaces: RivetLink-Application/src-tauri -> target
+          key: appimage-zig-${{ github.event.inputs.glibc }}
+          cache-on-failure: "true"
+          cache-all-crates: "true"
+
+      - name: Install Linux dependencies
+        run: |
+          apt_retry() {
+            for i in 1 2 3 4; do
+              if sudo timeout 600 "$@"; then return 0; fi
+              echo "::warning::apt timed out/failed (attempt $i): $*"
+              sleep 10
+            done
+            return 1
+          }
+          apt_retry apt-get update
+          apt_retry apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev \
+            libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev \
+            libpipewire-0.3-dev clang libpam0g-dev file
+
+      - name: Install zig + zig CC/CXX wrappers (target glibc ${{ github.event.inputs.glibc }})
+        env:
+          ZIG_VERSION: "0.13.0"
+          GLIBC: ${{ github.event.inputs.glibc }}
+        run: |
+          set -euo pipefail
+          # Validate the dispatch input before it reaches the wrapper script — it
+          # ends up inside a heredoc, so reject anything but a bare X.Y version.
+          if ! printf '%s' "$GLIBC" | grep -qE '^[0-9]+\.[0-9]+$'; then
+            echo "::error::invalid glibc input: $GLIBC (expected e.g. 2.35)"
+            exit 1
+          fi
+          curl -sSL "https://ziglang.org/download/${ZIG_VERSION}/zig-linux-x86_64-${ZIG_VERSION}.tar.xz" \
+            | sudo tar -xJ -C /opt
+          sudo ln -sf "/opt/zig-linux-x86_64-${ZIG_VERSION}/zig" /usr/local/bin/zig
+          zig version
+          # Pin the glibc the binary links against. zig brings its own headers +
+          # stubs for that version, so C deps never pull a newer glibc symbol.
+          sudo tee /usr/local/bin/zigcc >/dev/null <<EOF
+          #!/usr/bin/env bash
+          exec zig cc -target x86_64-linux-gnu.${GLIBC} "\$@"
+          EOF
+          sudo tee /usr/local/bin/zigcxx >/dev/null <<EOF
+          #!/usr/bin/env bash
+          exec zig c++ -target x86_64-linux-gnu.${GLIBC} "\$@"
+          EOF
+          sudo chmod +x /usr/local/bin/zigcc /usr/local/bin/zigcxx
+
+      - name: Install npm dependencies
+        working-directory: RivetLink-Application
+        run: npm ci
+
+      - name: Build AppImage (glibc ${{ github.event.inputs.glibc }} via zig)
+        working-directory: RivetLink-Application
+        env:
+          # zig as compiler AND linker for the linux-gnu target. CC/CXX so C deps
+          # (pipewire-sys, libspa-sys stubs) compile against zig's 2.35 headers;
+          # the LINKER var binds the older glibc symbol versions.
+          CC_x86_64_unknown_linux_gnu: /usr/local/bin/zigcc
+          CXX_x86_64_unknown_linux_gnu: /usr/local/bin/zigcxx
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_GNU_LINKER: /usr/local/bin/zigcc
+          # Sign the AppImage so the updater manifest can verify it.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # AppImage tooling can't use FUSE on the runner; extract-and-run instead.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: npm run tauri build -- --bundles appimage
+
+      - name: Show linked glibc requirement
+        working-directory: RivetLink-Application
+        run: |
+          BIN=$(find src-tauri/target -maxdepth 3 -type f -name rivetlink-app | head -1)
+          echo "binary: $BIN"
+          # Highest GLIBC_x.y version the binary asks for — must be <= the target.
+          objdump -T "$BIN" 2>/dev/null | grep -oE 'GLIBC_[0-9.]+' | sort -V | uniq | tail -5 || true
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: RivetLink-AppImage-glibc${{ github.event.inputs.glibc }}
+          path: RivetLink-Application/src-tauri/target/release/bundle/appimage/*.AppImage
+          if-no-files-found: error
