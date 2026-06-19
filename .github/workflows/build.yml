@@ -36,9 +36,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Linux on 22.04 (glibc 2.35) to match the release floor: a binary that
-        # links a newer glibc won't run on older hosts ("GLIBC_x.y not found").
-        os: [ubuntu-22.04, macos-latest, windows-latest]
+        # Linux on 24.04 to match the release base. A lower base (22.04) can't
+        # compile the pipewire/libspa 0.8 capture crate (needs PipeWire >= 0.3.65
+        # headers; 22.04 has 0.3.48). Reaching glibc < 2.39 needs zigbuild.
+        os: [ubuntu-24.04, macos-latest, windows-latest]
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout app
