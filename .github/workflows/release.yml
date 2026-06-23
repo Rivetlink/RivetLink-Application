@@ -234,15 +234,16 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: npm run tauri build -- --bundles appimage
 
-      - name: Strip bundled libwayland (EGL white-screen fix) + repack + re-sign
-        working-directory: RivetLink-Application
+      # Two steps on purpose: the repack downloads + runs appimagetool, so it must
+      # NOT have the updater signing key in its environment (a compromised tool
+      # could exfiltrate it). The key is only exposed to the next step, which runs
+      # nothing but the trusted tauri CLI from our npm deps.
+      - name: Strip bundled libwayland (EGL white-screen fix) + repack
+        working-directory: RivetLink-Application/src-tauri/target/release/bundle/appimage
         env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: |
           set -euo pipefail
-          cd src-tauri/target/release/bundle/appimage
           AI=$(ls *.AppImage | head -1)
           echo "repacking $AI"
           ./"$AI" --appimage-extract >/dev/null
@@ -253,17 +254,26 @@ jobs:
           # so dropping them is safe on 22.04/24.04/26.04 alike — and the standard
           # AppImage excludelist drops them for exactly this reason.
           rm -f squashfs-root/usr/lib/libwayland-*.so*
-          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool
+          # Pinned appimagetool 1.9.1 (NOT the mutable `continuous` tag), verified
+          # by SHA-256 before we execute it — supply-chain hardening.
+          wget -q https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage -O /tmp/appimagetool
+          echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  /tmp/appimagetool" | sha256sum -c -
           chmod +x /tmp/appimagetool
           rm -f "$AI"
           ARCH=x86_64 /tmp/appimagetool squashfs-root "$AI"
           rm -rf squashfs-root
-          cd "$GITHUB_WORKSPACE/RivetLink-Application"
+
+      - name: Re-sign repacked AppImage for the updater
+        working-directory: RivetLink-Application
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+        run: |
+          set -euo pipefail
+          AI=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
           # The repack invalidated tauri's updater signature; regenerate the .sig
           # so the auto-updater still verifies the AppImage.
-          npm run tauri -- signer sign \
-            --private-key "$TAURI_SIGNING_PRIVATE_KEY" --password "" \
-            "src-tauri/target/release/bundle/appimage/$AI"
+          npm run tauri -- signer sign --password "" "$AI"
 
       - name: Verify no bundled lib needs glibc > 2.35
         working-directory: RivetLink-Application/src-tauri/target/release/bundle/appimage
