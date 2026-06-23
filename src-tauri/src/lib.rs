@@ -44,6 +44,9 @@ struct AppState {
     /// so add/remove takes effect without restarting it. Mirrors
     /// `settings.trusted_keys`.
     trusted_keys: Arc<std::sync::Mutex<Vec<String>>>,
+    /// Reused `sysinfo` handle for the Resources page. Kept alive so each poll
+    /// measures CPU use since the previous one (a single refresh can't).
+    sys: std::sync::Mutex<sysinfo::System>,
 }
 
 /// A running host session: the accept-loop task and the task forwarding its
@@ -558,6 +561,44 @@ async fn lan_switch_display(state: State<'_, AppState>, display: u32) -> Result<
     Ok(())
 }
 
+/// The app's own CPU + memory use, for the Resources page.
+#[derive(serde::Serialize)]
+struct ResourceUsage {
+    /// CPU as a fraction of the whole machine (0–100). sysinfo reports per-core
+    /// usage, so we divide by the core count — a busy single thread on an
+    /// 8-core box reads ~12%, not 100%.
+    cpu_percent: f32,
+    /// Resident memory of the app process, in bytes.
+    mem_bytes: u64,
+    /// Total physical memory on the machine, in bytes.
+    total_mem_bytes: u64,
+    /// Logical CPU cores.
+    cores: usize,
+}
+
+/// Sample the app process's current CPU + memory. CPU is measured since the
+/// previous call (sysinfo needs two refreshes), so the first sample reads ~0.
+#[tauri::command]
+fn resource_usage(state: State<'_, AppState>) -> Result<ResourceUsage, String> {
+    let pid = sysinfo::get_current_pid().map_err(|e| e.to_string())?;
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+
+    let mut sys = state.sys.lock().map_err(|_| "resource lock poisoned".to_string())?;
+    sys.refresh_process(pid);
+    sys.refresh_memory();
+
+    let (raw_cpu, mem_bytes) = sys
+        .process(pid)
+        .map_or((0.0, 0), |p| (p.cpu_usage(), p.memory()));
+
+    Ok(ResourceUsage {
+        cpu_percent: raw_cpu / cores as f32,
+        mem_bytes,
+        total_mem_bytes: sys.total_memory(),
+        cores,
+    })
+}
+
 /// Stop the active stream (if any) and abort its task. Sync so it can run from
 /// a window-event handler.
 fn stop_stream(state: &AppState) {
@@ -889,6 +930,7 @@ pub fn run() {
                 switch_tx: std::sync::Mutex::new(None),
                 host: std::sync::Mutex::new(None),
                 trusted_keys: Arc::new(std::sync::Mutex::new(trusted)),
+                sys: std::sync::Mutex::new(sysinfo::System::new()),
             });
 
             // Native menu bar (RivetLink + Edit). The "Check for Updates" item
@@ -932,6 +974,7 @@ pub fn run() {
             lan_connect,
             lan_switch_display,
             lan_disconnect,
+            resource_usage,
             start_host,
             stop_host,
             host_active,

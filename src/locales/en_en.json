@@ -18,6 +18,7 @@
         "connect": "Connect",
         "device": "Receive help",
         "relays": "Servers",
+        "resources": "Resources",
         "settings": "Settings"
     },
     "onboarding": {
@@ -140,7 +141,21 @@
         "startupToggle": "Start RivetLink when I log in",
         "startupHint": "Recommended for a device that should always be reachable, like a computer at home you connect back to.",
         "editDevice": "Edit this device",
-        "rolesRequired": "Choose at least one."
+        "rolesRequired": "Choose at least one.",
+        "tabs": {
+            "general": "General",
+            "security": "Security",
+            "about": "About"
+        }
+    },
+    "resources": {
+        "title": "App resource usage",
+        "subtitle": "Live CPU and memory used by RivetLink on this device.",
+        "cpu": "CPU",
+        "memory": "Memory",
+        "ofTotal": "of {total} total",
+        "cores": "{count} CPU cores",
+        "unavailable": "Resource stats aren't available on this device."
     },
     "access": {
         "title": "Access to this device",

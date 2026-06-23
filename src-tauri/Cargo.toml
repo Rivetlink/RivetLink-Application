@@ -30,6 +30,9 @@ tokio = { version = "1", features = ["sync", "rt", "net", "time"] }
 base64 = "0.22"
 uuid = { version = "1", features = ["v4"] }
 rand = "0.8"
+# Self-monitoring: the app's own CPU + memory for the Resources page. Pinned to
+# 0.30 for its `refresh_process` API and byte-unit memory.
+sysinfo = "0.30"
 
 # Local path deps while all crates sit side by side. For distribution these
 # switch to a git dep or a crates.io release.

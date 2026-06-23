@@ -18,6 +18,7 @@
         "connect": "Verbinden",
         "device": "Hulp ontvangen",
         "relays": "Servers",
+        "resources": "Bronnen",
         "settings": "Instellingen"
     },
     "onboarding": {
@@ -140,7 +141,21 @@
         "startupToggle": "RivetLink starten als ik inlog",
         "startupHint": "Handig voor een apparaat dat altijd bereikbaar moet zijn, zoals een computer thuis waarmee je terugverbindt.",
         "editDevice": "Dit apparaat wijzigen",
-        "rolesRequired": "Kies er minstens één."
+        "rolesRequired": "Kies er minstens één.",
+        "tabs": {
+            "general": "Algemeen",
+            "security": "Beveiliging",
+            "about": "Over"
+        }
+    },
+    "resources": {
+        "title": "Bronnengebruik van de app",
+        "subtitle": "Live CPU- en geheugengebruik van RivetLink op dit apparaat.",
+        "cpu": "CPU",
+        "memory": "Geheugen",
+        "ofTotal": "van {total} totaal",
+        "cores": "{count} CPU-cores",
+        "unavailable": "Bronstatistieken zijn niet beschikbaar op dit apparaat."
     },
     "access": {
         "title": "Toegang tot dit apparaat",

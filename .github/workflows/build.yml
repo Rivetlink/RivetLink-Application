@@ -36,10 +36,21 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Linux on 24.04 to match the release base. A lower base (22.04) can't
-        # compile the pipewire/libspa 0.8 capture crate (needs PipeWire >= 0.3.65
-        # headers; 22.04 has 0.3.48). Reaching glibc < 2.39 needs zigbuild.
-        os: [ubuntu-24.04, macos-latest, windows-latest]
+        # Verify the compile across both supported Linux LTS bases:
+        #  - 24.04 matches the deb/rpm release base (native pipewire 1.0).
+        #  - 22.04 matches the broad-compat AppImage base; it needs the
+        #    pipewire-upstream PPA, since jammy's 0.3.48 is too old for
+        #    pipewire/libspa 0.8 (which wants >= 0.3.65 headers).
+        # 26.04 is intentionally absent: libspa 0.8 doesn't compile against its
+        # newer pipewire headers (the `spa_pod_builder` data/size fields were
+        # removed), so it can't be a build host — though the AppImage runs fine
+        # on a 26.04 *host*.
+        include:
+          - os: ubuntu-22.04
+            ppa: true
+          - os: ubuntu-24.04
+          - os: macos-latest
+          - os: windows-latest
     runs-on: ${{ matrix.os }}
     steps:
       - name: Checkout app
@@ -83,6 +94,9 @@ jobs:
 
       - name: Install Linux dependencies
         if: startsWith(matrix.os, 'ubuntu')
+        env:
+          # 22.04 needs the PPA for a recent-enough pipewire to compile libspa 0.8.
+          USE_PIPEWIRE_PPA: ${{ matrix.ppa && 'true' || 'false' }}
         run: |
           # The hosted ubuntu runner's apt mirror sometimes crawls (~20s/package
           # instead of <1s), which used to hang the whole job. Two guards:
@@ -98,6 +112,9 @@ jobs:
             done
             return 1
           }
+          if [ "$USE_PIPEWIRE_PPA" = "true" ]; then
+            apt_retry add-apt-repository -y ppa:pipewire-debian/pipewire-upstream
+          fi
           apt_retry apt-get update
           apt_retry apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev \

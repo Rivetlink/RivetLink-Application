@@ -4043,6 +4043,7 @@ dependencies = [
  "rivetlink-sdk",
  "serde",
  "serde_json",
+ "sysinfo",
  "tauri",
  "tauri-build",
  "tauri-plugin-autostart",
