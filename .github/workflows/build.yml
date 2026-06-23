@@ -85,8 +85,11 @@ jobs:
           # runner.os ("Linux"), so a 24.04-built target/ (build scripts linked
           # against glibc 2.39) would be restored into a 22.04 job and fail with
           # "GLIBC_2.39 not found" when those cached binaries run. Separate the
-          # caches per OS version.
-          key: ${{ matrix.os }}
+          # caches per OS version. The `-pw-ppa` suffix on the PPA build keeps it
+          # off the old (now poisoned) plain `ubuntu-22.04` cache, whose cached
+          # libspa-sys bindgen output predates the PPA's pipewire and lacks the
+          # `spa_video_info_raw.flags` field.
+          key: ${{ matrix.os }}${{ matrix.ppa && '-pw-ppa' || '' }}
           # Cache even when the build fails (faster red-build iteration) and
           # keep every downloaded crate, not just the ones that made it in.
           cache-on-failure: "true"
