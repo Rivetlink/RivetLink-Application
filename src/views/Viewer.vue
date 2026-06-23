@@ -1,6 +1,19 @@
 <template>
 	<div class="viewer">
 		<canvas ref="canvasEl" class="screen" :class="{ hidden: !hasFrame }" />
+		<VSelect
+			v-if="displays.length > 1 && hasFrame"
+			v-model="currentDisplay"
+			:items="displays"
+			item-title="name"
+			item-value="id"
+			density="compact"
+			variant="solo"
+			hide-details
+			prepend-inner-icon="mdi-monitor-multiple"
+			class="display-picker"
+			@update:model-value="switchDisplay"
+		/>
 		<div v-if="!hasFrame" class="waiting">
 			<VProgressCircular
 				indeterminate
@@ -31,11 +44,17 @@
 	import {
 		listen, type UnlistenFn,
 	} from "@tauri-apps/api/event";
+	import { invoke } from "@tauri-apps/api/core";
 	import { getCurrentWindow } from "@tauri-apps/api/window";
 
 	type TilePatch = {
 		i: number;
 		jpeg_b64: string;
+	};
+
+	type DisplayInfo = {
+		id: number;
+		name: string;
 	};
 
 	type FrameDelta = {
@@ -51,11 +70,16 @@
 	const hasFrame = ref(false);
 	const ended = ref(false);
 	const slow = ref(false);
+	// Screens the host offers. Empty/one on Linux hosts (the portal already
+	// picked a screen); two or more on macOS, where the picker can switch.
+	const displays = ref<DisplayInfo[]>([]);
+	const currentDisplay = ref<number | null>(null);
 
 	let ctx: CanvasRenderingContext2D | null = null;
 	let pending: Promise<void> = Promise.resolve();
 	let unlistenFrame: UnlistenFn | null = null;
 	let unlistenEnd: UnlistenFn | null = null;
+	let unlistenDisplays: UnlistenFn | null = null;
 	// The host sends a heartbeat frame ~every second; if nothing arrives for a
 	// while the link is slow/stalled rather than just a static screen.
 	let lastFrameAt = 0;
@@ -111,6 +135,13 @@
 		}
 	}
 
+	async function switchDisplay(id: number | null): Promise<void> {
+		if (id === null) {
+			return;
+		}
+		await invoke("lan_switch_display", { display: id }).catch(() => { /* stream gone */ });
+	}
+
 	onMounted(async () => {
 		unlistenFrame = await listen<FrameDelta>("lan://frame", (e) => {
 			// Serialise frames so tile draws never interleave out of order.
@@ -124,6 +155,13 @@
 			// The session is over — close this standalone viewer window.
 			getCurrentWindow().close().catch(() => { /* already gone */ });
 		});
+		unlistenDisplays = await listen<DisplayInfo[]>("lan://displays", (e) => {
+			displays.value = e.payload;
+			// The stream opens on the host's first screen, so reflect that.
+			if (e.payload.length > 0 && currentDisplay.value === null) {
+				currentDisplay.value = e.payload[0].id;
+			}
+		});
 		// Flag a slow link when no frame (not even a heartbeat) arrives in time.
 		slowTimer = setInterval(() => {
 			if (hasFrame.value && !ended.value) {
@@ -135,6 +173,7 @@
 	onUnmounted(() => {
 		unlistenFrame?.();
 		unlistenEnd?.();
+		unlistenDisplays?.();
 		if (slowTimer) {
 			clearInterval(slowTimer);
 		}
@@ -157,6 +196,16 @@
 		position: absolute;
 		right: 12px;
 		bottom: 12px;
+	}
+
+	.display-picker {
+		position: absolute;
+		top: 12px;
+		left: 50%;
+		transform: translateX(-50%);
+		width: 240px;
+		max-width: 70vw;
+		opacity: 0.85;
 	}
 
 	.screen {

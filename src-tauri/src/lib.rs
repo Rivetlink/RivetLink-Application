@@ -34,6 +34,10 @@ struct AppState {
     /// The task pumping frames for the active LAN live-stream, if any. A sync
     /// mutex so the viewer window's close handler can stop it without awaiting.
     stream: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Sends display-switch requests to the active live-stream task. Set while a
+    /// stream is running; the client uses it to switch which host screen it views
+    /// (honoured by macOS hosts).
+    switch_tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<u32>>>,
     /// The active "receive help" host session (advertise + serve), if any.
     host: std::sync::Mutex<Option<HostSession>>,
     /// Trusted client identity keys (base64), shared live with the running host
@@ -507,14 +511,28 @@ async fn lan_connect(
     stop_stream(&state);
     open_viewer(&app, &format!("RivetLink — {}", target.name))?;
 
+    // Ask the host which screens it can share (empty on Linux hosts, where the
+    // portal owns selection) and hand it to the viewer for a screen picker.
+    let displays = rivetlink_sdk::lan::list_displays(&mut stream, &channel)
+        .await
+        .unwrap_or_default();
+    let _ = app.emit("lan://displays", &displays);
+
+    // The viewer's screen picker pushes display ids here to switch mid-stream.
+    let (switch_tx, switch_rx) = tokio::sync::mpsc::channel::<u32>(4);
+    if let Ok(mut guard) = state.switch_tx.lock() {
+        *guard = Some(switch_tx);
+    }
+
     let app_for_task = app.clone();
     let task = tokio::spawn(async move {
-        let result = rivetlink_sdk::lan::stream_frames(&mut stream, &channel, 20, |delta| {
-            // Forward the delta frame to the viewer window. If emit fails the
-            // window is gone — stop the stream.
-            app_for_task.emit("lan://frame", delta).is_ok()
-        })
-        .await;
+        let result =
+            rivetlink_sdk::lan::stream_frames(stream, channel, 20, None, switch_rx, |delta| {
+                // Forward the delta frame to the viewer window. If emit fails the
+                // window is gone — stop the stream.
+                app_for_task.emit("lan://frame", delta).is_ok()
+            })
+            .await;
         if let Err(e) = result {
             let _ = app_for_task.emit("lan://error", e.to_string());
         }
@@ -528,6 +546,18 @@ async fn lan_connect(
     Ok(())
 }
 
+/// Switch the live stream to another of the host's displays (by id). No-op if
+/// nothing is streaming; honoured by macOS hosts (Linux can't switch).
+#[tauri::command]
+async fn lan_switch_display(state: State<'_, AppState>, display: u32) -> Result<(), String> {
+    // Clone the sender out and drop the (sync) lock before awaiting the send.
+    let sender = state.switch_tx.lock().ok().and_then(|g| g.as_ref().cloned());
+    if let Some(tx) = sender {
+        tx.send(display).await.map_err(|_| "stream is not running".to_string())?;
+    }
+    Ok(())
+}
+
 /// Stop the active stream (if any) and abort its task. Sync so it can run from
 /// a window-event handler.
 fn stop_stream(state: &AppState) {
@@ -535,6 +565,10 @@ fn stop_stream(state: &AppState) {
         if let Some(task) = guard.take() {
             task.abort();
         }
+    }
+    // Drop the switch sender so a stale picker can't talk to a dead stream.
+    if let Ok(mut guard) = state.switch_tx.lock() {
+        *guard = None;
     }
 }
 
@@ -852,6 +886,7 @@ pub fn run() {
                 settings: Mutex::new(settings),
                 client: Arc::new(Mutex::new(None)),
                 stream: std::sync::Mutex::new(None),
+                switch_tx: std::sync::Mutex::new(None),
                 host: std::sync::Mutex::new(None),
                 trusted_keys: Arc::new(std::sync::Mutex::new(trusted)),
             });
@@ -895,6 +930,7 @@ pub fn run() {
             remove_lan_device,
             lan_screenshot,
             lan_connect,
+            lan_switch_display,
             lan_disconnect,
             start_host,
             stop_host,
