@@ -94,7 +94,10 @@ jobs:
           # Key on the exact runner image so the two Linux bases never share a
           # target/: a 24.04-built target/ (build scripts linked against glibc
           # 2.39) restored into the 22.04 job fails with "GLIBC_2.39 not found".
-          key: ${{ matrix.os }}
+          # The `-pw-ppa` suffix on the AppImage (PPA) build keeps it off any
+          # stale plain `ubuntu-22.04` cache whose libspa-sys bindgen output
+          # predates the PPA's pipewire and lacks `spa_video_info_raw.flags`.
+          key: ${{ matrix.os }}${{ matrix.ppa && '-pw-ppa' || '' }}
           cache-on-failure: "true"
           cache-all-crates: "true"
 
