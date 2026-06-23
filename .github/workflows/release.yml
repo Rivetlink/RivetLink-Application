@@ -145,7 +145,14 @@ jobs:
           projectPath: RivetLink-Application
           tagName: ${{ github.ref_name }}
           releaseName: "RivetLink ${{ github.ref_name }}"
-          releaseBody: "Native installers for Linux, macOS, and Windows. macOS/Windows update in place; on Linux install the .deb/.rpm."
+          releaseBody: |
+            Native installers for Linux, macOS, and Windows. macOS/Windows update in place; on Linux install the .deb/.rpm or run the AppImage.
+
+            **Minimum OS versions:**
+            - **Linux — AppImage** (`*_linux_amd64.AppImage`): glibc ≥ 2.35 → Ubuntu/Kubuntu 22.04+, Debian 12+, Fedora 36+. No install needed: `chmod +x` and run.
+            - **Linux — .deb / .rpm**: glibc ≥ 2.39 → Ubuntu/Kubuntu 24.04+, Debian 13+, Fedora 39+. On older systems use the AppImage instead.
+            - **macOS**: 11 Big Sur or newer (universal: Apple Silicon + Intel).
+            - **Windows**: 10 (1809) or newer, 64-bit.
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
