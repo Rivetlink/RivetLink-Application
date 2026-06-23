@@ -1,6 +1,6 @@
 [package]
 name = "rivetlink-app"
-version = "0.1.18"
+version = "0.1.19"
 description = "RivetLink desktop app"
 authors = ["RivetLink"]
 edition = "2021"
@@ -33,6 +33,12 @@ rand = "0.8"
 # Self-monitoring: the app's own CPU + memory for the Resources page. Pinned to
 # 0.30 for its `refresh_process` API and byte-unit memory.
 sysinfo = "0.30"
+# Diagnostics: the SDK + agent log the LAN connect/handshake/capture path via
+# `tracing`; the app installs a subscriber that writes to stderr AND a log file
+# (app log dir) so a user can attach it when a connection misbehaves.
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+tracing-appender = "0.2"
 
 # Local path deps while all crates sit side by side. For distribution these
 # switch to a git dep or a crates.io release.

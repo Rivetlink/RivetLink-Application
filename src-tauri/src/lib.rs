@@ -374,6 +374,10 @@ async fn discover_lan(
         (Some(pk), Some(own)) => pk != own,
         _ => true,
     });
+    for d in &found {
+        tracing::info!(name = %d.name, address = %d.address, port = d.port, "discover_lan: host");
+    }
+    tracing::info!(count = found.len(), "discover_lan: done");
     Ok(found)
 }
 
@@ -497,6 +501,14 @@ async fn lan_connect(
         .parse()
         .map_err(|_| format!("bad address: {}", target.address))?;
     let addr = std::net::SocketAddr::new(ip, target.port);
+    let has_pin = pin.as_deref().map(|p| !p.trim().is_empty()).unwrap_or(false);
+    tracing::info!(
+        name = %target.name,
+        %addr,
+        has_pin,
+        pinned_host = target.public_key.is_some(),
+        "lan_connect: connecting"
+    );
 
     // Establish the encrypted channel (PIN/PAKE, or key/TOFU with host pinning),
     // bounded by a timeout so an unreachable host fails instead of hanging the
@@ -518,7 +530,12 @@ async fn lan_connect(
     let (mut stream, channel) =
         tokio::time::timeout(std::time::Duration::from_secs(15), connect)
             .await
-            .map_err(|_| "connection timed out".to_string())??;
+            .map_err(|_| {
+                tracing::warn!(%addr, "lan_connect: timed out after 15s");
+                "connection timed out".to_string()
+            })?
+            .inspect_err(|e| tracing::warn!(%addr, error = %e, "lan_connect: handshake failed"))?;
+    tracing::info!(%addr, "lan_connect: channel established, opening viewer");
 
     // Stop any previous session before starting a new one.
     stop_stream(&state);
@@ -563,6 +580,7 @@ async fn lan_connect(
         *guard = Some(task);
     }
     let _ = app.emit("lan://connected", target.device_id);
+    tracing::info!(displays = displays.len(), "lan_connect: streaming");
     Ok(())
 }
 
@@ -696,7 +714,9 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
             auto_accept: false,
         };
         let port = rivetlink_sdk::lan::DEFAULT_LAN_PORT;
+        tracing::info!(%device_name, port, "start_host: advertising + serving on LAN");
         if let Err(e) = serve_with_events(signing_key, device_name, port, auth, Some(tx)).await {
+            tracing::warn!(error = %e, "start_host: serve loop ended with error");
             let _ = app_for_serve.emit("host://error", e.to_string());
         }
     });
@@ -787,10 +807,12 @@ async fn lan_ping(address: String, port: u16) -> Result<bool, String> {
     };
     let addr = std::net::SocketAddr::new(ip, port);
     let connect = tokio::net::TcpStream::connect(addr);
-    Ok(matches!(
+    let ok = matches!(
         tokio::time::timeout(std::time::Duration::from_millis(1500), connect).await,
         Ok(Ok(_))
-    ))
+    );
+    tracing::debug!(%addr, ok, "lan_ping");
+    Ok(ok)
 }
 
 /// This machine's LAN IP, found by asking the OS which local address would
@@ -925,6 +947,44 @@ async fn remove_trusted_key(
     Ok(settings.clone())
 }
 
+/// Install a `tracing` subscriber that writes to **stderr** (visible when the
+/// app is launched from a terminal) and a **log file** in the app's log dir, so
+/// a user can attach it to a bug report. The SDK + agent log the whole LAN
+/// connect / handshake / capture path; the default filter keeps the SDK and app
+/// at `debug` (handshake detail) without the per-frame agent spam. `RUST_LOG`
+/// overrides it. Returns the log file path on success.
+fn init_logging(log_dir: &std::path::Path) -> Option<PathBuf> {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+
+    let _ = std::fs::create_dir_all(log_dir);
+    let log_path = log_dir.join("rivetlink.log");
+    // Truncate per launch so an attached log is just the current session, small.
+    let _ = std::fs::remove_file(&log_path);
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&log_path)
+        .ok()?;
+
+    let (writer, guard) = tracing_appender::non_blocking(file);
+    // Keep the appender's flush guard alive for the whole process.
+    Box::leak(Box::new(guard));
+
+    let filter = tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        tracing_subscriber::EnvFilter::new("info,rivetlink_sdk=debug,rivetlink_app_lib=debug")
+    });
+
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(writer))
+        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .try_init()
+        .ok()?;
+
+    Some(log_path)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -936,6 +996,17 @@ pub fn run() {
             None,
         ))
         .setup(|app| {
+            // Logging first, so startup + the LAN path are captured from the off.
+            if let Ok(log_dir) = app.path().app_log_dir() {
+                if let Some(path) = init_logging(&log_dir) {
+                    tracing::info!(
+                        version = env!("CARGO_PKG_VERSION"),
+                        log = %path.display(),
+                        "RivetLink starting — logging to file + stderr"
+                    );
+                }
+            }
+
             // Resolve the data dir, load settings, and seed the shared state.
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;

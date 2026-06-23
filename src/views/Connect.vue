@@ -399,11 +399,15 @@
 	// Per-saved-device reachability (id -> online), refreshed on a timer.
 	const online = ref<Record<string, boolean>>({});
 
-	// Hosts found by a scan that aren't already remembered.
+	// Hosts found by a scan that aren't already remembered. Match on identity
+	// key first (the same machine can resolve on a different address between
+	// scans — e.g. IPv4 one time, a routable IPv6 the next — and must not show
+	// twice), then fall back to address:port for hosts that advertise no key.
 	const lanUnsaved = computed(() =>
 		lanFound.value.filter(
 			(f) => !store.settings.lan_devices.some(
-				(s) => s.address === f.address && s.port === f.port,
+				(s) => (f.public_key && s.public_key && s.public_key === f.public_key)
+					|| (s.address === f.address && s.port === f.port),
 			),
 		),
 	);
