@@ -490,25 +490,35 @@ async fn lan_connect(
     target: LanTarget,
     pin: Option<String>,
 ) -> Result<(), String> {
-    let addr: std::net::SocketAddr = format!("{}:{}", target.address, target.port)
+    // Build the address from the parsed IP so IPv6 is handled correctly —
+    // `format!("{}:{}", v6, port)` produces an unbracketed, unparseable string.
+    let ip: std::net::IpAddr = target
+        .address
         .parse()
-        .map_err(|_| format!("bad address: {}:{}", target.address, target.port))?;
+        .map_err(|_| format!("bad address: {}", target.address))?;
+    let addr = std::net::SocketAddr::new(ip, target.port);
 
-    // Establish the encrypted channel (PIN/PAKE, or key/TOFU with host pinning).
-    let (mut stream, channel) = match pin {
-        Some(pin) if !pin.trim().is_empty() => {
-            rivetlink_sdk::lan::connect_password(addr, pin.trim())
+    // Establish the encrypted channel (PIN/PAKE, or key/TOFU with host pinning),
+    // bounded by a timeout so an unreachable host fails instead of hanging the
+    // UI on "Connecting…" forever.
+    let connect = async {
+        match &pin {
+            Some(p) if !p.trim().is_empty() => rivetlink_sdk::lan::connect_password(addr, p.trim())
                 .await
-                .map_err(|e| e.to_string())?
-        },
-        _ => {
-            let identity =
-                Identity::load_or_create(&state.identity_path()).map_err(|e| e.to_string())?;
-            rivetlink_sdk::lan::connect_key_pinned(addr, &identity, target.public_key.as_deref())
-                .await
-                .map_err(|e| e.to_string())?
-        },
+                .map_err(|e| e.to_string()),
+            _ => {
+                let identity =
+                    Identity::load_or_create(&state.identity_path()).map_err(|e| e.to_string())?;
+                rivetlink_sdk::lan::connect_key_pinned(addr, &identity, target.public_key.as_deref())
+                    .await
+                    .map_err(|e| e.to_string())
+            },
+        }
     };
+    let (mut stream, channel) =
+        tokio::time::timeout(std::time::Duration::from_secs(15), connect)
+            .await
+            .map_err(|_| "connection timed out".to_string())??;
 
     // Stop any previous session before starting a new one.
     stop_stream(&state);
@@ -516,9 +526,16 @@ async fn lan_connect(
 
     // Ask the host which screens it can share (empty on Linux hosts, where the
     // portal owns selection) and hand it to the viewer for a screen picker.
-    let displays = rivetlink_sdk::lan::list_displays(&mut stream, &channel)
-        .await
-        .unwrap_or_default();
+    // Bounded too: an unresponsive host shouldn't stall the stream from starting.
+    let displays = match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        rivetlink_sdk::lan::list_displays(&mut stream, &channel),
+    )
+    .await
+    {
+        Ok(Ok(d)) => d,
+        _ => Vec::new(),
+    };
     let _ = app.emit("lan://displays", &displays);
 
     // The viewer's screen picker pushes display ids here to switch mid-stream.
@@ -763,9 +780,12 @@ async fn network_info() -> Result<NetworkInfo, String> {
 /// status snappy and never blocks the UI.
 #[tauri::command]
 async fn lan_ping(address: String, port: u16) -> Result<bool, String> {
-    let Ok(addr) = format!("{address}:{port}").parse::<std::net::SocketAddr>() else {
+    // Parse the IP first so IPv6 builds a valid SocketAddr (a bare
+    // `format!("{v6}:{port}")` is unbracketed and won't parse).
+    let Ok(ip) = address.parse::<std::net::IpAddr>() else {
         return Ok(false);
     };
+    let addr = std::net::SocketAddr::new(ip, port);
     let connect = tokio::net::TcpStream::connect(addr);
     Ok(matches!(
         tokio::time::timeout(std::time::Duration::from_millis(1500), connect).await,

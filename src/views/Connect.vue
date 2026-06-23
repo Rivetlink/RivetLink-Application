@@ -246,8 +246,31 @@
 								<span>{{ online[d.id] ? t("connect.lanOnline") : t("connect.lanOffline") }} · {{ d.address }}:{{ d.port }}</span>
 							</VListItemSubtitle>
 							<template #append>
+								<!-- Setting up a connection: progress + a cancel -->
+								<template v-if="connectingId === d.id">
+									<VBtn
+										size="small"
+										color="primary"
+										variant="flat"
+										loading
+										disabled
+										class="mr-2"
+									>
+										{{ t("connect.lanConnecting") }}
+									</VBtn>
+									<VBtn
+										size="small"
+										color="error"
+										variant="tonal"
+										prepend-icon="mdi-close"
+										class="mr-2"
+										@click="onLanDisconnect"
+									>
+										{{ t("connect.lanDisconnect") }}
+									</VBtn>
+								</template>
 								<VBtn
-									v-if="store.connectedLanId === d.id"
+									v-else-if="store.connectedLanId === d.id"
 									size="small"
 									color="error"
 									variant="tonal"
@@ -369,6 +392,9 @@
 	const lanFound = ref<LanDevice[]>([]);
 	const connectOpen = ref(false);
 	const connectTarget = ref<SavedLanDevice | null>(null);
+	// Id of the saved device a connection is currently being set up for, so its
+	// row can show "Connecting…" and disable its button.
+	const connectingId = ref<string | null>(null);
 	const net = ref<NetworkInfo | null>(null);
 	// Per-saved-device reachability (id -> online), refreshed on a timer.
 	const online = ref<Record<string, boolean>>({});
@@ -547,18 +573,20 @@
 		const target = connectTarget.value;
 		if (!target) {return;}
 		error.value = null;
-		busyMsg.value = t("connect.lanConnecting");
+		connectingId.value = target.id;
 		try {
 			await lanConnect(target, pin || null);
 		} catch (e) {
 			fail(e);
 		} finally {
-			busyMsg.value = null;
+			connectingId.value = null;
 		}
 	}
 
 	async function onLanDisconnect() {
 		error.value = null;
+		// Also clears any in-progress "Connecting…" so the row resets at once.
+		connectingId.value = null;
 		try {
 			await lanDisconnect();
 		} catch (e) {
