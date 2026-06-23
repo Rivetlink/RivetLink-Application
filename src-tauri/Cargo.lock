@@ -4030,11 +4030,12 @@ dependencies = [
  "url",
  "uuid",
  "x25519-dalek",
+ "zbus 4.4.0",
 ]
 
 [[package]]
 name = "rivetlink-app"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "base64 0.22.1",
  "pam",
