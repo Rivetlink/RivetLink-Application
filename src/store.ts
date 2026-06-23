@@ -247,7 +247,10 @@ export async function stopHost(): Promise<void> {
 /// both the PIN and whether a client is currently connected, so the page never
 /// shows a stale "connected" badge after missing a live disconnect event.
 export async function refreshHostState(): Promise<void> {
-	const s = await invoke<{ pin: string | null; peer: string | null }>("host_active");
+	const s = await invoke<{
+		pin: string | null;
+		peer: string | null;
+	}>("host_active");
 	store.hosting = s.pin !== null;
 	store.hostPin = s.pin ?? "";
 	store.hostPeer = store.hosting ? s.peer : null;
