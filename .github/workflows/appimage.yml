@@ -90,6 +90,36 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: npm run tauri build -- --bundles appimage
 
+      - name: Strip bundled libwayland (EGL white-screen fix) + repack + re-sign
+        working-directory: RivetLink-Application
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+          APPIMAGE_EXTRACT_AND_RUN: "1"
+        run: |
+          set -euo pipefail
+          cd src-tauri/target/release/bundle/appimage
+          AI=$(ls *.AppImage | head -1)
+          echo "repacking $AI"
+          ./"$AI" --appimage-extract >/dev/null
+          # libwayland* MUST come from the host. The bundled jammy copies mix with
+          # the host's mesa libEGL on newer hosts (e.g. 26.04) and abort with
+          # "Could not create default EGL display: EGL_BAD_PARAMETER", leaving a
+          # white window. These libs are ABI-stable and present on every desktop,
+          # so dropping them is safe on 22.04/24.04/26.04 alike — and the standard
+          # AppImage excludelist drops them for exactly this reason.
+          rm -f squashfs-root/usr/lib/libwayland-*.so*
+          wget -q https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage -O /tmp/appimagetool
+          chmod +x /tmp/appimagetool
+          rm -f "$AI"
+          ARCH=x86_64 /tmp/appimagetool squashfs-root "$AI"
+          rm -rf squashfs-root
+          cd "$GITHUB_WORKSPACE/RivetLink-Application"
+          # The repack invalidated tauri's updater signature; regenerate the .sig.
+          npm run tauri -- signer sign \
+            --private-key "$TAURI_SIGNING_PRIVATE_KEY" --password "" \
+            "src-tauri/target/release/bundle/appimage/$AI"
+
       - name: Verify no bundled lib needs glibc > 2.35
         working-directory: RivetLink-Application/src-tauri/target/release/bundle/appimage
         run: |
