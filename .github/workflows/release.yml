@@ -6,10 +6,13 @@ name: Release
 # the `releases/latest/download/latest.json` updater endpoint resolves.
 # Triggered by pushing a version tag (v1.2.3) or manually.
 #
-# Bundles: deb/rpm (Linux), dmg/app (macOS, universal), nsis/msi (Windows).
-# Auto-update works on macOS + Windows (the app's updater fetches latest.json
-# and installs in place). Linux installs via the .deb/.rpm; the app only
-# notifies about new versions there.
+# Bundles: deb/rpm + AppImage (Linux), dmg/app (macOS, universal), nsis/msi
+# (Windows). Auto-update works on macOS + Windows + the Linux AppImage (the
+# updater fetches latest.json and installs in place). The .deb/.rpm install via
+# the package manager and the app only notifies about new versions there.
+#
+# All bundles are produced by ONE `release` matrix job — the two Linux entries
+# build on different Ubuntu bases on purpose (see the matrix comments).
 #
 # Requires repo secrets:
 #   SDK_REPO_TOKEN            — read access to the private Rivetlink/RivetLink.
@@ -30,19 +33,29 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Linux ships .deb/.rpm, built on 24.04. The binary links glibc 2.39,
-          # so it runs on hosts with glibc >= 2.39 (Ubuntu 24.04+, Debian 13+,
-          # Fedora 39+, recent Arch). We can NOT just build on an older base to
-          # lower that floor: the capture crate pipewire/libspa 0.8 (via scap)
-          # needs PipeWire >= 0.3.65 headers, and 22.04 ships 0.3.48 — its
-          # `spa_video_info_raw` has no `flags` field, so libspa won't compile.
-          # glibc floor (old base) and PipeWire floor (new base) conflict on a
-          # single native build, so reaching glibc < 2.39 needs cargo-zigbuild
-          # (compile on 24.04 headers, link an older glibc) — a separate path.
-          # AppImage is dropped here: a 24.04-built one aborts (EGL/glib) on
-          # Ubuntu 26.04. Flatpak / a zigbuild AppImage are the broad-compat paths.
+          # --- Linux: .deb / .rpm, built on 24.04 ----------------------------
+          # Links glibc 2.39, so it runs on hosts with glibc >= 2.39 (Ubuntu
+          # 24.04+, Debian 13+, Fedora 39+). These use the HOST's pipewire (not
+          # bundled), and 24.04 ships pipewire 1.0.x natively so libspa 0.8
+          # compiles and the .deb declares a clean `Depends:` on a normal
+          # pipewire. We must NOT build these on 22.04 (see the next entry).
           - os: ubuntu-24.04
             args: "--bundles deb,rpm"
+          # --- Linux: AppImage (broad-compat), built on 22.04 ----------------
+          # Built on 22.04 so EVERYTHING it bundles (our binary + webkit/gtk/
+          # glib/pipewire) links glibc <= 2.35 and runs on hosts down to 22.04 —
+          # the 24.04 deb/rpm above need glibc 2.38/2.39. The one 22.04 blocker
+          # is libspa 0.8 (needs PipeWire >= 0.3.65 headers; jammy ships 0.3.48),
+          # solved with the pipewire-upstream PPA (newer PipeWire built FOR jammy
+          # -> still glibc 2.35). The AppImage bundles libpipewire so it has no
+          # host pipewire dep. After tauri builds it we strip libwayland (EGL
+          # white-screen fix) and re-sign — see the `if: matrix.appimage` steps.
+          # NB: the deb can't take this PPA — dpkg-shlibdeps would stamp a
+          # `Depends: libpipewire-0.3-0 (>= 1.0)` that a stock 22.04 can't satisfy.
+          - os: ubuntu-22.04
+            args: "--bundles appimage"
+            ppa: true
+            appimage: true
           - os: macos-latest
             args: "--target universal-apple-darwin"
           - os: windows-latest
@@ -78,21 +91,23 @@ jobs:
         uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
         with:
           workspaces: RivetLink-Application/src-tauri -> target
-          # Key on the exact runner image so a 24.04-built target/ (build scripts
-          # linked against glibc 2.39) is never restored into the 22.04 job —
-          # those cached binaries fail with "GLIBC_2.39 not found" on 22.04.
+          # Key on the exact runner image so the two Linux bases never share a
+          # target/: a 24.04-built target/ (build scripts linked against glibc
+          # 2.39) restored into the 22.04 job fails with "GLIBC_2.39 not found".
           key: ${{ matrix.os }}
           cache-on-failure: "true"
           cache-all-crates: "true"
 
       - name: Install Linux dependencies
         if: startsWith(matrix.os, 'ubuntu')
+        env:
+          # Only the AppImage entry takes the pipewire PPA (see matrix comment).
+          USE_PIPEWIRE_PPA: ${{ matrix.ppa && 'true' || 'false' }}
         run: |
           # The hosted ubuntu runner's apt mirror sometimes crawls (~20s/package
           # instead of <1s), which used to hang the whole job. Two guards:
           #  - --no-install-recommends: skip docs/codecs/extras we don't need to
-          #    *build* (the bundled .deb declares its own runtime depends), so we
-          #    fetch far fewer packages and ride the slow mirror less.
+          #    *build*, so we fetch far fewer packages and ride the slow mirror less.
           #  - timeout + retry: kill a stalled fetch and resume from apt's cache
           #    (already-downloaded .debs survive, so a retry continues, not restarts).
           apt_retry() {
@@ -103,13 +118,22 @@ jobs:
             done
             return 1
           }
+          if [ "$USE_PIPEWIRE_PPA" = "true" ]; then
+            # jammy ships PipeWire 0.3.48; pipewire/libspa 0.8 needs >= 0.3.65
+            # headers. This PPA backports recent PipeWire built for jammy, so the
+            # headers let libspa compile and the runtime lib still links glibc 2.35.
+            apt_retry add-apt-repository -y ppa:pipewire-debian/pipewire-upstream
+          fi
           apt_retry apt-get update
           apt_retry apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev \
             libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev \
-            libpipewire-0.3-dev clang libpam0g-dev
-          # libpipewire + clang: the app now embeds the host capture stack
+            libpipewire-0.3-dev clang libpam0g-dev file
+          # libpipewire + clang: the app embeds the host capture stack
           # (scap -> PipeWire/ScreenCast portal; pipewire-sys uses bindgen).
+          if [ "$USE_PIPEWIRE_PPA" = "true" ]; then
+            echo "pipewire dev version: $(pkg-config --modversion libpipewire-0.3 || echo '?')"
+          fi
 
       - name: Install npm dependencies
         working-directory: RivetLink-Application
@@ -141,12 +165,15 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # The AppImage build invokes appimagetool, which can't use FUSE on the
+          # runner; extract-and-run instead. Harmless for the other entries.
+          APPIMAGE_EXTRACT_AND_RUN: "1"
         with:
           projectPath: RivetLink-Application
           tagName: ${{ github.ref_name }}
           releaseName: "RivetLink ${{ github.ref_name }}"
           releaseBody: |
-            Native installers for Linux, macOS, and Windows. macOS/Windows update in place; on Linux install the .deb/.rpm or run the AppImage.
+            Native installers for Linux, macOS, and Windows. macOS/Windows + the Linux AppImage update in place; the .deb/.rpm install via your package manager.
 
             **Minimum OS versions:**
             - **Linux — AppImage** (`*_linux_amd64.AppImage`): glibc ≥ 2.35 → Ubuntu/Kubuntu 22.04+, Debian 12+, Fedora 36+. No install needed: `chmod +x` and run.
@@ -157,88 +184,20 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
-  # Broad-compat Linux AppImage, built on Ubuntu 22.04 so EVERYTHING it bundles
-  # (our binary + the webkit/gtk/glib/pipewire .so files pulled from apt) links
-  # glibc 2.35 and runs on hosts down to 22.04 — the deb/rpm above are built on
-  # 24.04 and their bundled libs need glibc 2.38/2.39 (24.04+ only). The one
-  # blocker on 22.04 is the capture crate: pipewire/libspa 0.8 needs PipeWire
-  # >= 0.3.65 headers and jammy ships 0.3.48, so we add the pipewire-upstream
-  # PPA (newer PipeWire built for jammy -> still glibc 2.35). This job uploads
-  # the .AppImage into the same draft release the `release` job created;
-  # rename-assets then renames it like the other assets.
-  appimage:
-    needs: release
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout app
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          path: RivetLink-Application
-
-      - name: Checkout RivetLink (SDK source, sibling for the path dep)
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          repository: Rivetlink/RivetLink
-          path: RivetLink
-          token: ${{ secrets.SDK_REPO_TOKEN }}
-
-      - name: Setup Node
-        uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: RivetLink-Application/package-lock.json
-
-      - name: Setup Rust
-        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9 # master
-        with:
-          toolchain: stable
-
-      - name: Cache Rust build
-        uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
-        with:
-          workspaces: RivetLink-Application/src-tauri -> target
-          key: appimage-jammy
-          cache-on-failure: "true"
-          cache-all-crates: "true"
-
-      - name: Install Linux dependencies (+ pipewire-upstream PPA for libspa 0.8)
-        run: |
-          apt_retry() {
-            for i in 1 2 3 4; do
-              if sudo timeout 600 "$@"; then return 0; fi
-              echo "::warning::apt timed out/failed (attempt $i): $*"
-              sleep 10
-            done
-            return 1
-          }
-          # jammy ships PipeWire 0.3.48; pipewire/libspa 0.8 needs >= 0.3.65
-          # headers. This PPA backports recent PipeWire built for jammy, so the
-          # headers let libspa compile and the runtime lib still links glibc 2.35.
-          apt_retry add-apt-repository -y ppa:pipewire-debian/pipewire-upstream
-          apt_retry apt-get update
-          apt_retry apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev libgtk-3-dev libsoup-3.0-dev librsvg2-dev \
-            libjavascriptcoregtk-4.1-dev libayatana-appindicator3-dev \
-            libpipewire-0.3-dev clang libpam0g-dev file
-          echo "pipewire dev version: $(pkg-config --modversion libpipewire-0.3 || echo '?')"
-
-      - name: Install npm dependencies
-        working-directory: RivetLink-Application
-        run: npm ci
-
-      - name: Build AppImage
-        working-directory: RivetLink-Application
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: npm run tauri build -- --bundles appimage
-
+      # --- AppImage post-processing (only the matrix.appimage entry) ----------
+      # tauri-action just built, signed, and uploaded the AppImage. But the jammy
+      # build bundled libwayland-client/cursor/egl/server, which on newer hosts
+      # (e.g. Ubuntu 26.04) mix with the host's mesa libEGL and abort at startup
+      # with "Could not create default EGL display: EGL_BAD_PARAMETER", leaving a
+      # white window. We strip those libs, repack, and re-sign; rename-assets then
+      # refreshes the AppImage signature inside latest.json.
+      #
       # Two steps on purpose: the repack downloads + runs appimagetool, so it must
-      # NOT have the updater signing key in its environment (a compromised tool
-      # could exfiltrate it). The key is only exposed to the next step, which runs
+      # NOT have the signing key in its environment (a compromised tool could
+      # exfiltrate it). The key is only exposed to the re-sign step, which runs
       # nothing but the trusted tauri CLI from our npm deps.
       - name: Strip bundled libwayland (EGL white-screen fix) + repack
+        if: matrix.appimage
         working-directory: RivetLink-Application/src-tauri/target/release/bundle/appimage
         env:
           APPIMAGE_EXTRACT_AND_RUN: "1"
@@ -247,12 +206,8 @@ jobs:
           AI=$(ls *.AppImage | head -1)
           echo "repacking $AI"
           ./"$AI" --appimage-extract >/dev/null
-          # libwayland* MUST come from the host. The bundled jammy copies mix with
-          # the host's mesa libEGL on newer hosts (e.g. 26.04) and abort with
-          # "Could not create default EGL display: EGL_BAD_PARAMETER", leaving a
-          # white window. These libs are ABI-stable and present on every desktop,
-          # so dropping them is safe on 22.04/24.04/26.04 alike — and the standard
-          # AppImage excludelist drops them for exactly this reason.
+          # libwayland* MUST come from the host (ABI-stable, present on every
+          # desktop, and on the standard AppImage excludelist for this reason).
           rm -f squashfs-root/usr/lib/libwayland-*.so*
           # Pinned appimagetool 1.9.1 (NOT the mutable `continuous` tag), verified
           # by SHA-256 before we execute it — supply-chain hardening.
@@ -264,6 +219,7 @@ jobs:
           rm -rf squashfs-root
 
       - name: Re-sign repacked AppImage for the updater
+        if: matrix.appimage
         working-directory: RivetLink-Application
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -271,11 +227,11 @@ jobs:
         run: |
           set -euo pipefail
           AI=$(ls src-tauri/target/release/bundle/appimage/*.AppImage | head -1)
-          # The repack invalidated tauri's updater signature; regenerate the .sig
-          # so the auto-updater still verifies the AppImage.
+          # The repack invalidated tauri's updater signature; regenerate the .sig.
           npm run tauri -- signer sign --password "" "$AI"
 
       - name: Verify no bundled lib needs glibc > 2.35
+        if: matrix.appimage
         working-directory: RivetLink-Application/src-tauri/target/release/bundle/appimage
         run: |
           # No `set -e`: objdump/grep exit 1 on libs without GLIBC symbols, which
@@ -293,7 +249,8 @@ jobs:
           fi
           echo "OK: all bundled libs link glibc <= 2.35"
 
-      - name: Upload AppImage into the draft release
+      - name: Re-upload repacked AppImage over tauri-action's original
+        if: matrix.appimage
         working-directory: RivetLink-Application
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -301,15 +258,17 @@ jobs:
           TAG: ${{ github.ref_name }}
         run: |
           set -euo pipefail
+          # Overwrite the un-stripped .AppImage + .sig tauri-action uploaded.
           gh release upload "$TAG" \
             src-tauri/target/release/bundle/appimage/*.AppImage* \
             --repo "$REPO" --clobber
 
   # tauri-action names artifacts without the OS word (e.g. RivetLink_0.1.4_amd64.deb).
-  # Rename every asset to RivetLink_<version>_<os>_<arch>.<ext> and patch the
-  # matching URLs inside latest.json so the updater still resolves them.
+  # Rename every asset to RivetLink_<version>_<os>_<arch>.<ext>, patch the URLs
+  # inside latest.json, and refresh the Linux AppImage signature (it changed when
+  # we repacked the AppImage above).
   rename-assets:
-    needs: [release, appimage]
+    needs: release
     runs-on: ubuntu-latest
     steps:
       - name: Rename release assets + patch latest.json
@@ -356,17 +315,30 @@ jobs:
             -e "s#RivetLink_${V}_x64-setup.exe#RivetLink_${V}_windows_x64-setup.exe#g" \
             -e "s#RivetLink_universal.app.tar.gz#RivetLink_${V}_macos_universal.app.tar.gz#g" \
             latest.json
-          # The .deb and .AppImage are built in separate jobs (different Ubuntu
-          # bases), so the merged manifest's primary "linux-x86_64" key can race
-          # to the .deb. Force it to the AppImage — the only self-updatable Linux
-          # format — so updates install in place instead of opening a download.
-          python3 - <<'PY'
-          import json
+
+          # We stripped libwayland + repacked the AppImage AFTER tauri-action
+          # signed it, so latest.json holds the stale (pre-repack) signature.
+          # Replace it with the re-signed .sig so Linux self-update verifies.
+          SIG_URL=$(gh release view "$TAG" --repo "$REPO" --json assets \
+            -q '.assets[] | select(.name=="RivetLink_'"${V}"'_linux_amd64.AppImage.sig") | .apiUrl')
+          NEW_SIG=""
+          if [ -n "$SIG_URL" ]; then
+            NEW_SIG=$(gh api "${SIG_URL#https://api.github.com}" -H "Accept: application/octet-stream")
+          fi
+          APPIMAGE_URL="https://github.com/${REPO}/releases/download/${TAG}/RivetLink_${V}_linux_amd64.AppImage" \
+          NEW_SIG="$NEW_SIG" python3 - <<'PY'
+          import json, os
           m = json.load(open("latest.json"))
-          p = m["platforms"]
-          if "linux-x86_64-appimage" in p:
-              p["linux-x86_64"] = p["linux-x86_64-appimage"]
+          p = m.setdefault("platforms", {})
+          sig = os.environ.get("NEW_SIG", "").strip()
+          url = os.environ["APPIMAGE_URL"]
+          # tauri historically used a `-appimage` suffixed key; collapse it.
+          p.pop("linux-x86_64-appimage", None)
+          if sig:
+              # Point Linux self-update at the repacked AppImage with its fresh sig.
+              p["linux-x86_64"] = {"signature": sig, "url": url}
           json.dump(m, open("latest.json", "w"), indent=2)
+          print("linux-x86_64:", "set" if sig else "left as-is (no .sig found)")
           PY
           gh release upload "$TAG" latest.json --repo "$REPO" --clobber
 
