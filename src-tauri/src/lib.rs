@@ -57,6 +57,11 @@ struct HostSession {
     forward: tokio::task::JoinHandle<()>,
     /// The PIN the helper must enter; shown on the host's screen.
     pin: String,
+    /// Label of the currently connected client (`None` = nobody). Kept in sync
+    /// by the event-forwarding task so the UI can restore the right "connected /
+    /// waiting" state after navigating away and back, when it missed the live
+    /// `host://connected|disconnected` events.
+    peer: Arc<std::sync::Mutex<Option<String>>>,
 }
 
 impl HostSession {
@@ -721,14 +726,25 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
         }
     });
 
+    // Shared truth for "who is connected", read by `host_active` so the UI can
+    // resync after missing a live event.
+    let peer = Arc::new(std::sync::Mutex::new(None::<String>));
+
     let app_for_fwd = app.clone();
+    let peer_for_fwd = Arc::clone(&peer);
     let forward = tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             match event {
                 HostEvent::ClientConnected(label) => {
+                    if let Ok(mut p) = peer_for_fwd.lock() {
+                        *p = Some(label.clone());
+                    }
                     let _ = app_for_fwd.emit("host://connected", label);
                 },
                 HostEvent::ClientDisconnected => {
+                    if let Ok(mut p) = peer_for_fwd.lock() {
+                        *p = None;
+                    }
                     let _ = app_for_fwd.emit("host://disconnected", ());
                 },
             }
@@ -740,6 +756,7 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
             serve,
             forward,
             pin: pin.clone(),
+            peer,
         });
     }
     Ok(pin)
@@ -763,15 +780,27 @@ async fn stop_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<
     Ok(())
 }
 
-/// The active host PIN, if currently hosting — lets the UI restore its state
-/// (e.g. after navigating away and back).
+/// The host's live state: the active PIN (if hosting) and the currently
+/// connected client label (if any). Lets the UI restore the correct
+/// "connected / waiting / idle" state after navigating away and back, when it
+/// missed the live `host://connected|disconnected` events.
+#[derive(Serialize)]
+struct HostState {
+    pin: Option<String>,
+    peer: Option<String>,
+}
+
 #[tauri::command]
-async fn host_active(state: State<'_, AppState>) -> Result<Option<String>, String> {
-    Ok(state
-        .host
-        .lock()
-        .ok()
-        .and_then(|g| g.as_ref().map(|s| s.pin.clone())))
+async fn host_active(state: State<'_, AppState>) -> Result<HostState, String> {
+    let guard = state.host.lock().map_err(|_| "host lock poisoned".to_string())?;
+    let (pin, peer) = match guard.as_ref() {
+        Some(session) => (
+            Some(session.pin.clone()),
+            session.peer.lock().ok().and_then(|p| p.clone()),
+        ),
+        None => (None, None),
+    };
+    Ok(HostState { pin, peer })
 }
 
 // ---- Network info ----------------------------------------------------------

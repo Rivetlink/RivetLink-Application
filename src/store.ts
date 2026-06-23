@@ -243,14 +243,14 @@ export async function stopHost(): Promise<void> {
 	store.hostPeer = null;
 }
 
-/// Re-sync host state from the backend (e.g. after navigating back).
+/// Re-sync host state from the backend (e.g. after navigating back). Restores
+/// both the PIN and whether a client is currently connected, so the page never
+/// shows a stale "connected" badge after missing a live disconnect event.
 export async function refreshHostState(): Promise<void> {
-	const pin = await invoke<string | null>("host_active");
-	store.hosting = pin !== null;
-	store.hostPin = pin ?? "";
-	if (!store.hosting) {
-		store.hostPeer = null;
-	}
+	const s = await invoke<{ pin: string | null; peer: string | null }>("host_active");
+	store.hosting = s.pin !== null;
+	store.hostPin = s.pin ?? "";
+	store.hostPeer = store.hosting ? s.peer : null;
 }
 
 /// This machine's current Wi-Fi name (if any) and LAN IP.
