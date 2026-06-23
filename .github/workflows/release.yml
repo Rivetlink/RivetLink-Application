@@ -230,14 +230,17 @@ jobs:
       - name: Verify no bundled lib needs glibc > 2.35
         working-directory: RivetLink-Application/src-tauri/target/release/bundle/appimage
         run: |
-          set -euo pipefail
+          # No `set -e`: objdump/grep exit 1 on libs without GLIBC symbols, which
+          # is normal and must not abort the gate.
           AI=$(ls *.AppImage | head -1)
           ./"$AI" --appimage-extract >/dev/null 2>&1 || true
-          bad=$(for so in $(find squashfs-root -name '*.so*' -type f); do
-            objdump -T "$so" 2>/dev/null | grep -oE 'GLIBC_[0-9.]+'
-          done | sort -V | uniq | grep -E 'GLIBC_2\.(3[6-9]|4[0-9])' || true)
-          if [ -n "$bad" ]; then
-            echo "::error::a bundled lib needs glibc newer than 2.35: $bad"
+          find squashfs-root -name '*.so*' -type f -print0 \
+            | xargs -0 objdump -T 2>/dev/null \
+            | grep -oE 'GLIBC_[0-9.]+' | sort -V | uniq > /tmp/glibc_versions.txt
+          echo "=== all GLIBC versions across bundled libs ==="
+          cat /tmp/glibc_versions.txt
+          if grep -qE 'GLIBC_2\.(3[6-9]|4[0-9])' /tmp/glibc_versions.txt; then
+            echo "::error::a bundled lib needs glibc newer than 2.35 — won't run on 22.04"
             exit 1
           fi
           echo "OK: all bundled libs link glibc <= 2.35"

@@ -90,24 +90,33 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         run: npm run tauri build -- --bundles appimage
 
-      - name: Show glibc required by our binary + every bundled lib
+      - name: Verify no bundled lib needs glibc > 2.35
         working-directory: RivetLink-Application/src-tauri/target/release/bundle/appimage
         run: |
-          set -euo pipefail
+          # No `set -e` here: objdump/grep legitimately exit 1 on libs that have
+          # no GLIBC symbols, and we don't want that to abort the check.
           echo "=== our binary (rivetlink-app) ==="
           BIN=$(find ../../.. -maxdepth 2 -type f -name rivetlink-app | head -1)
-          objdump -T "$BIN" 2>/dev/null | grep -oE 'GLIBC_[0-9.]+' | sort -V | uniq | tail -3 || true
-          echo "=== highest GLIBC across ALL bundled libs (MUST be <= 2.35) ==="
+          objdump -T "$BIN" 2>/dev/null | grep -oE 'GLIBC_[0-9.]+' | sort -V | uniq | tail -3
           AI=$(ls *.AppImage | head -1)
           ./"$AI" --appimage-extract >/dev/null 2>&1 || true
+          # Every GLIBC_x.y any bundled lib asks for, de-duplicated and sorted.
           find squashfs-root -name '*.so*' -type f -print0 \
             | xargs -0 objdump -T 2>/dev/null \
-            | grep -oE 'GLIBC_[0-9.]+' | sort -V | uniq | tail -10 || true
-          echo "--- libs pulling the highest version (for debugging) ---"
-          for so in $(find squashfs-root -name '*.so*' -type f); do
-            hi=$(objdump -T "$so" 2>/dev/null | grep -oE 'GLIBC_[0-9.]+' | sort -V | tail -1)
-            case "$hi" in GLIBC_2.3[6-9]|GLIBC_2.4*) echo "$hi  $so" ;; esac
-          done
+            | grep -oE 'GLIBC_[0-9.]+' | sort -V | uniq > /tmp/glibc_versions.txt
+          echo "=== all GLIBC versions across bundled libs ==="
+          cat /tmp/glibc_versions.txt
+          # Fail only if something actually needs newer than 2.35.
+          if grep -qE 'GLIBC_2\.(3[6-9]|4[0-9])' /tmp/glibc_versions.txt; then
+            echo "::error::a bundled lib needs glibc newer than 2.35 — won't run on 22.04"
+            echo "--- offending libs ---"
+            for so in $(find squashfs-root -name '*.so*' -type f); do
+              hi=$(objdump -T "$so" 2>/dev/null | grep -oE 'GLIBC_[0-9.]+' | sort -V | tail -1)
+              case "$hi" in GLIBC_2.3[6-9]|GLIBC_2.4*) echo "$hi  $so" ;; esac
+            done
+            exit 1
+          fi
+          echo "OK: all bundled libs link glibc <= 2.35"
 
       - name: Upload AppImage
         uses: actions/upload-artifact@v4
