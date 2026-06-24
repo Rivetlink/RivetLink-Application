@@ -181,6 +181,61 @@ fn is_appimage() -> bool {
     cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_some()
 }
 
+/// Register the running AppImage in the desktop menu so it shows up in GNOME /
+/// app-search. A bare AppImage is just an executable file — unlike the .deb/.rpm
+/// install it ships no system `.desktop` entry, so nothing indexes it. We write a
+/// user-level entry (`~/.local/share/applications`) + copy the icon out of the
+/// (ephemeral) AppImage mount. Best effort; re-run each launch so `Exec` tracks
+/// the AppImage if the user moves it. No-op when not running from an AppImage.
+#[cfg(target_os = "linux")]
+fn integrate_appimage_desktop() {
+    use std::path::PathBuf;
+
+    let (Some(appimage), Some(appdir), Some(home)) = (
+        std::env::var_os("APPIMAGE"),
+        std::env::var_os("APPDIR"),
+        std::env::var_os("HOME"),
+    ) else {
+        return; // not an AppImage run (or no mount) — nothing to integrate
+    };
+    let appimage = PathBuf::from(appimage);
+    let data = PathBuf::from(home).join(".local/share");
+
+    // Copy the icon out of the temporary AppImage mount to a stable path so the
+    // entry keeps an icon after the app exits (the mount disappears).
+    let icon = "rivetlink-app";
+    for size in ["256x256@2", "128x128", "32x32"] {
+        let src = PathBuf::from(&appdir)
+            .join(format!("usr/share/icons/hicolor/{size}/apps/{icon}.png"));
+        let dst_dir = data.join(format!("icons/hicolor/{size}/apps"));
+        if src.exists() && std::fs::create_dir_all(&dst_dir).is_ok() {
+            let _ = std::fs::copy(&src, dst_dir.join(format!("{icon}.png")));
+        }
+    }
+
+    let apps_dir = data.join("applications");
+    if std::fs::create_dir_all(&apps_dir).is_err() {
+        return;
+    }
+    // Quote the Exec path so a directory with spaces still launches.
+    let entry = format!(
+        "[Desktop Entry]\n\
+         Type=Application\n\
+         Name=RivetLink\n\
+         Comment=Zero-trust remote control\n\
+         Exec=\"{}\" %U\n\
+         Icon={icon}\n\
+         Terminal=false\n\
+         Categories=Network;RemoteAccess;Utility;\n\
+         StartupWMClass=rivetlink-app\n",
+        appimage.display(),
+    );
+    let path = apps_dir.join("rivetlink-app.desktop");
+    if std::fs::write(&path, entry).is_ok() {
+        tracing::info!(path = %path.display(), "registered AppImage in the app menu");
+    }
+}
+
 /// Build the native menu bar: a "RivetLink" menu (version + check for updates +
 /// quit) and a standard "Edit" menu so clipboard shortcuts work everywhere.
 fn install_menu(app: &tauri::App) -> tauri::Result<()> {
@@ -1071,6 +1126,11 @@ pub fn run() {
                     );
                 }
             }
+
+            // Make an AppImage install discoverable in the app menu / search
+            // (the .deb/.rpm already register a system .desktop entry).
+            #[cfg(target_os = "linux")]
+            integrate_appimage_desktop();
 
             // Resolve the data dir, load settings, and seed the shared state.
             let data_dir = app.path().app_data_dir()?;
