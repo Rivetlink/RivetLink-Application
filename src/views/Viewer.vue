@@ -1,6 +1,13 @@
 <template>
 	<div class="viewer">
-		<canvas ref="canvasEl" class="screen" :class="{ hidden: !hasFrame }" />
+		<div class="scroll">
+			<canvas
+				ref="canvasEl"
+				class="screen"
+				:class="{ hidden: !hasFrame }"
+				:style="canvasStyle"
+			/>
+		</div>
 		<VSelect
 			v-if="displays.length > 1 && hasFrame"
 			v-model="currentDisplay"
@@ -33,12 +40,36 @@
 		>
 			{{ t("viewer.poor") }}
 		</VChip>
+		<div v-if="hasFrame" class="zoom-controls">
+			<VBtn
+				icon="mdi-minus"
+				size="small"
+				variant="text"
+				:disabled="zoom <= MIN_ZOOM"
+				@click="zoomBy(-ZOOM_STEP)"
+			/>
+			<button
+				type="button"
+				class="zoom-label"
+				:title="t('viewer.resetZoom')"
+				@click="resetZoom"
+			>
+				{{ Math.round(zoom * 100) }}%
+			</button>
+			<VBtn
+				icon="mdi-plus"
+				size="small"
+				variant="text"
+				:disabled="zoom >= MAX_ZOOM"
+				@click="zoomBy(ZOOM_STEP)"
+			/>
+		</div>
 	</div>
 </template>
 
 <script setup lang="ts">
 	import {
-		onMounted, onUnmounted, ref,
+		computed, onMounted, onUnmounted, ref,
 	} from "vue";
 	import { useI18n } from "vue-i18n";
 	import {
@@ -75,6 +106,48 @@
 	const displays = ref<DisplayInfo[]>([]);
 	const currentDisplay = ref<number | null>(null);
 
+	// Zoom: 1 = fit the whole screen in the window (the default). Above that the
+	// canvas overflows and the `.scroll` container pans. Useful for an oddly-
+	// shaped source (e.g. a portrait monitor) that's tiny when letterboxed.
+	const MIN_ZOOM = 0.25;
+	const MAX_ZOOM = 5;
+	const ZOOM_STEP = 0.25;
+	const zoom = ref(1);
+	// The source frame's pixel size and the live window size — together they give
+	// the "fit" scale that zoom multiplies.
+	const frameW = ref(0);
+	const frameH = ref(0);
+	const winW = ref(window.innerWidth);
+	const winH = ref(window.innerHeight);
+
+	// Explicit display size = fit-to-window × zoom. At zoom 1 this matches an
+	// object-fit:contain (one dimension fills the window); zooming in overflows
+	// the scroll container so the user can pan.
+	const canvasStyle = computed(() => {
+		if (!frameW.value || !frameH.value) {
+			return {};
+		}
+		const fit = Math.min(winW.value / frameW.value, winH.value / frameH.value);
+		const scale = fit * zoom.value;
+		return {
+			width: `${Math.round(frameW.value * scale)}px`,
+			height: `${Math.round(frameH.value * scale)}px`,
+		};
+	});
+
+	function zoomBy(delta: number): void {
+		zoom.value = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round((zoom.value + delta) * 100) / 100));
+	}
+
+	function resetZoom(): void {
+		zoom.value = 1;
+	}
+
+	function onResize(): void {
+		winW.value = window.innerWidth;
+		winH.value = window.innerHeight;
+	}
+
 	let ctx: CanvasRenderingContext2D | null = null;
 	let pending: Promise<void> = Promise.resolve();
 	let unlistenFrame: UnlistenFn | null = null;
@@ -103,6 +176,10 @@
 		if (canvas.width !== delta.w || canvas.height !== delta.h) {
 			canvas.width = delta.w;
 			canvas.height = delta.h;
+			// Drive the fit/zoom sizing off the real frame dimensions (they change
+			// when the host switches to a differently-shaped screen).
+			frameW.value = delta.w;
+			frameH.value = delta.h;
 		}
 		if (!ctx) {
 			ctx = canvas.getContext("2d");
@@ -168,12 +245,14 @@
 				slow.value = performance.now() - lastFrameAt > SLOW_AFTER_MS;
 			}
 		}, 500);
+		window.addEventListener("resize", onResize);
 	});
 
 	onUnmounted(() => {
 		unlistenFrame?.();
 		unlistenEnd?.();
 		unlistenDisplays?.();
+		window.removeEventListener("resize", onResize);
 		if (slowTimer) {
 			clearInterval(slowTimer);
 		}
@@ -186,16 +265,48 @@
 		width: 100vw;
 		height: 100vh;
 		background: #000;
-		display: flex;
-		align-items: center;
-		justify-content: center;
 		overflow: hidden;
+	}
+
+	/* The scroll layer pans the canvas when it's zoomed past the window. As a
+	   flex container it centers the canvas via the child's `margin: auto`, which
+	   (unlike justify-content) collapses to 0 on overflow so panning never clips
+	   the top/left edge. */
+	.scroll {
+		position: absolute;
+		inset: 0;
+		overflow: auto;
+		display: flex;
 	}
 
 	.poor {
 		position: absolute;
 		right: 12px;
 		bottom: 12px;
+	}
+
+	.zoom-controls {
+		position: absolute;
+		bottom: 12px;
+		left: 50%;
+		transform: translateX(-50%);
+		display: flex;
+		align-items: center;
+		gap: 2px;
+		padding: 2px 4px;
+		border-radius: 8px;
+		background: rgba(0, 0, 0, 0.55);
+		opacity: 0.85;
+	}
+
+	.zoom-label {
+		min-width: 48px;
+		color: #fff;
+		font-size: 0.8rem;
+		text-align: center;
+		background: none;
+		border: none;
+		cursor: pointer;
 	}
 
 	.display-picker {
@@ -209,9 +320,11 @@
 	}
 
 	.screen {
-		max-width: 100%;
-		max-height: 100%;
-		object-fit: contain;
+		display: block;
+		/* Auto margins center the canvas in the flex scroll layer and collapse on
+		   overflow (no clipped edge when zoomed in). Size is the inline style. */
+		margin: auto;
+		flex: none;
 	}
 
 	.hidden {

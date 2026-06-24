@@ -192,6 +192,7 @@
     "viewer": {
         "connecting": "Connecting — loading the other computer's screen…",
         "ended": "The connection has ended.",
-        "poor": "Poor connection"
+        "poor": "Poor connection",
+        "resetZoom": "Reset zoom"
     }
 }

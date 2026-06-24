@@ -192,6 +192,7 @@
     "viewer": {
         "connecting": "Verbinden — scherm van de andere computer wordt geladen…",
         "ended": "De verbinding is beëindigd.",
-        "poor": "Slechte verbinding"
+        "poor": "Slechte verbinding",
+        "resetZoom": "Zoom terugzetten"
     }
 }
