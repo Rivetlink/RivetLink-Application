@@ -604,9 +604,8 @@ async fn lan_connect(
     stop_stream(&state);
     open_viewer(&app, &format!("RivetLink — {}", target.name))?;
 
-    // Ask the host which screens it can share (empty on Linux hosts, where the
-    // portal owns selection) and hand it to the viewer for a screen picker.
-    // Bounded too: an unresponsive host shouldn't stall the stream from starting.
+    // Ask the host which screens it can share and hand it to the viewer for a
+    // screen picker. Bounded: an unresponsive host shouldn't stall the stream.
     let displays = match tokio::time::timeout(
         std::time::Duration::from_secs(5),
         rivetlink_sdk::lan::list_displays(&mut stream, &channel),
@@ -616,6 +615,8 @@ async fn lan_connect(
         Ok(Ok(d)) => d,
         _ => Vec::new(),
     };
+    // First (optimistic) emit; the viewer window may not have registered its
+    // listener yet, so the stream task re-emits on the first frame too.
     let _ = app.emit("lan://displays", &displays);
 
     // The viewer's screen picker pushes display ids here to switch mid-stream.
@@ -633,9 +634,18 @@ async fn lan_connect(
     };
 
     let app_for_task = app.clone();
+    let displays_for_viewer = displays.clone();
     let task = tokio::spawn(async move {
+        let mut announced = false;
         let result =
             rivetlink_sdk::lan::stream_frames(stream, channel, 20, None, my_name, switch_rx, |delta| {
+                // The first frame proves the viewer window is mounted + listening,
+                // so re-send the display list now — the optimistic emit above can
+                // beat the viewer's listener registration, leaving the picker empty.
+                if !announced {
+                    announced = true;
+                    let _ = app_for_task.emit("lan://displays", &displays_for_viewer);
+                }
                 // Forward the delta frame to the viewer window. If emit fails the
                 // window is gone — stop the stream.
                 app_for_task.emit("lan://frame", delta).is_ok()
