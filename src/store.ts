@@ -243,6 +243,13 @@ export async function stopHost(): Promise<void> {
 	store.hostPeer = null;
 }
 
+/// Hang up on the currently connected helper but keep hosting (PIN stays live,
+/// still advertising) so a new helper can connect.
+export async function hostDisconnect(): Promise<void> {
+	await invoke("host_disconnect");
+	store.hostPeer = null;
+}
+
 /// Re-sync host state from the backend (e.g. after navigating back). Restores
 /// both the PIN and whether a client is currently connected, so the page never
 /// shows a stale "connected" badge after missing a live disconnect event.

@@ -71,7 +71,9 @@
 	import {
 		isClient, isHost, loadSettings, refreshHostState, startHost, store,
 	} from "./store";
-	import { checkForUpdates } from "./updates";
+	import {
+		checkForUpdates, checkForUpdatesOnStartup,
+	} from "./updates";
 	import Onboarding from "./views/Onboarding.vue";
 	import UpdateModal from "./components/UpdateModal.vue";
 
@@ -104,6 +106,10 @@
 		});
 		await loadSettings();
 		if (getCurrentWindow().label === "main" && store.settings.setup_complete) {
+			// Check for updates once on launch. Silent unless something's waiting:
+			// a normal release pops a dismissable dialog, a forced one a locked
+			// dialog. Fire-and-forget so a slow network never delays the app.
+			void checkForUpdatesOnStartup();
 			// A host-only device has no use for the client "Connect" page — open
 			// the host page instead of the default /connect landing.
 			if (isHost() && !isClient() && route.path === "/connect") {

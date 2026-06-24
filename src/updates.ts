@@ -17,6 +17,15 @@ import { relaunch } from "@tauri-apps/plugin-process";
 const REPO = "Rivetlink/RivetLink-Application";
 const RELEASES_URL = `https://github.com/${REPO}/releases`;
 
+// A release whose notes contain this marker is *mandatory*: the update dialog
+// can't be dismissed until the user updates. Put `[force-update]` anywhere in
+// the GitHub release body to flag a security/breaking release as required.
+const FORCE_MARKER = "[force-update]";
+
+function isForced(body?: string | null): boolean {
+	return (body ?? "").toLowerCase().includes(FORCE_MARKER);
+}
+
 // Tauri's updater can't replace a system package; deb/rpm Linux falls back to
 // notify. An AppImage install *can* self-update, detected at runtime (Rust).
 const isLinux = navigator.userAgent.includes("Linux")
@@ -41,6 +50,9 @@ export const updateState = reactive({
 	latest: "",
 	status: UpdateStatus.Idle,
 	canAutoInstall: !notifyOnly,
+	// When the available release is flagged mandatory, the dialog is persistent
+	// (no close button, can't click away) — the user must update to continue.
+	forced: false,
 });
 
 let pending: Update | null = null;
@@ -62,6 +74,7 @@ async function checkDesktop(): Promise<void> {
 	if (update) {
 		pending = update;
 		updateState.latest = update.version;
+		updateState.forced = isForced(update.body);
 		updateState.status = UpdateStatus.Available;
 	} else {
 		updateState.status = UpdateStatus.UpToDate;
@@ -78,16 +91,16 @@ async function checkLinux(): Promise<void> {
 	const data = await res.json();
 	const tag = String(data.tag_name ?? "").replace(/^v/, "");
 	updateState.latest = tag;
-	updateState.status = compareVersions(tag, updateState.current) > 0
-		? UpdateStatus.Available
-		: UpdateStatus.UpToDate;
+	const isNewer = compareVersions(tag, updateState.current) > 0;
+	updateState.forced = isNewer && isForced(data.body);
+	updateState.status = isNewer ? UpdateStatus.Available : UpdateStatus.UpToDate;
 }
 
-export async function checkForUpdates(): Promise<void> {
-	updateState.dialog = true;
+async function runCheck(): Promise<void> {
 	updateState.checking = true;
 	updateState.status = UpdateStatus.Idle;
 	updateState.latest = "";
+	updateState.forced = false;
 	pending = null;
 	try {
 		updateState.current = await invoke<string>("app_version");
@@ -105,6 +118,24 @@ export async function checkForUpdates(): Promise<void> {
 		updateState.status = UpdateStatus.Error;
 	} finally {
 		updateState.checking = false;
+	}
+}
+
+/** Manual check (RivetLink menu): always opens the dialog so the user sees a
+ * result, even "you're up to date". */
+export async function checkForUpdates(): Promise<void> {
+	updateState.dialog = true;
+	await runCheck();
+}
+
+/** Silent check on launch: runs in the background and only surfaces the dialog
+ * when an update is actually waiting. A forced release opens a dialog the user
+ * can't dismiss; a normal one they can close. Stays quiet when up to date or on
+ * a transient network error, so startup is never interrupted needlessly. */
+export async function checkForUpdatesOnStartup(): Promise<void> {
+	await runCheck();
+	if (updateState.status === UpdateStatus.Available) {
+		updateState.dialog = true;
 	}
 }
 

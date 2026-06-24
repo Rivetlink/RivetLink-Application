@@ -112,8 +112,8 @@
         "waitingTitle": "Wachten tot een helper verbindt…",
         "waitingHint": "Geef de helper je computernaam en deze code. Die kiest jou onder “Lokaal netwerk” en voert de code in.",
         "connectedTitle": "Er is een helper verbonden",
-        "connectedHint": "Iemand bekijkt nu dit scherm.",
-        "pickScreenNote": "Als een helper verbindt, vraagt je systeem welk scherm je wilt delen."
+        "connectedHint": "{name} bekijkt nu dit scherm.",
+        "disconnect": "Verbreken"
     },
     "relays": {
         "title": "Opgeslagen servers",
@@ -184,12 +184,13 @@
         "checking": "Controleren op updates…",
         "upToDate": "Je hebt de nieuwste versie.",
         "available": "Er is een nieuwe versie: {version}",
+        "required": "Deze update is verplicht — je moet updaten om door te gaan.",
         "error": "Kon nu niet op updates controleren.",
         "download": "Downloaden",
         "install": "Updaten en herstarten"
     },
     "viewer": {
-        "connecting": "Verbinden — kies een scherm om te delen op de andere computer…",
+        "connecting": "Verbinden — scherm van de andere computer wordt geladen…",
         "ended": "De verbinding is beëindigd.",
         "poor": "Slechte verbinding"
     }

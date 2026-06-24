@@ -112,8 +112,8 @@
         "waitingTitle": "Waiting for a helper to connect…",
         "waitingHint": "Tell the helper your computer name and this code. They pick you under “Local network” and enter the code.",
         "connectedTitle": "A helper is connected",
-        "connectedHint": "Someone is viewing this screen now.",
-        "pickScreenNote": "When a helper connects, your system asks which screen to share."
+        "connectedHint": "{name} is viewing this screen now.",
+        "disconnect": "Disconnect"
     },
     "relays": {
         "title": "Saved servers",
@@ -184,12 +184,13 @@
         "checking": "Checking for updates…",
         "upToDate": "You're on the latest version.",
         "available": "A new version is available: {version}",
+        "required": "This update is mandatory — you must update to continue.",
         "error": "Couldn't check for updates right now.",
         "download": "Download",
         "install": "Update & Restart"
     },
     "viewer": {
-        "connecting": "Connecting — pick a screen to share on the other computer…",
+        "connecting": "Connecting — loading the other computer's screen…",
         "ended": "The connection has ended.",
         "poor": "Poor connection"
     }

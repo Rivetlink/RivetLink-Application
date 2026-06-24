@@ -62,6 +62,9 @@ struct HostSession {
     /// waiting" state after navigating away and back, when it missed the live
     /// `host://connected|disconnected` events.
     peer: Arc<std::sync::Mutex<Option<String>>>,
+    /// Bumping this hangs up on the *active* viewer without stopping the
+    /// listener (so the PIN/advertisement stay live). Drives "Disconnect helper".
+    kick: tokio::sync::watch::Sender<u64>,
 }
 
 impl HostSession {
@@ -566,10 +569,18 @@ async fn lan_connect(
         *guard = Some(switch_tx);
     }
 
+    // Our own device name travels with the stream so the host can show *who* is
+    // viewing instead of a bare IP.
+    let my_name = {
+        let s = state.settings.lock().await;
+        let n = s.device_name.trim();
+        if n.is_empty() { None } else { Some(n.to_string()) }
+    };
+
     let app_for_task = app.clone();
     let task = tokio::spawn(async move {
         let result =
-            rivetlink_sdk::lan::stream_frames(stream, channel, 20, None, switch_rx, |delta| {
+            rivetlink_sdk::lan::stream_frames(stream, channel, 20, None, my_name, switch_rx, |delta| {
                 // Forward the delta frame to the viewer window. If emit fails the
                 // window is gone — stop the stream.
                 app_for_task.emit("lan://frame", delta).is_ok()
@@ -708,6 +719,9 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     stop_host_inner(&state);
 
     let (tx, mut rx) = tokio::sync::mpsc::channel::<HostEvent>(8);
+    // Kick channel: bumping the value drops the active viewer (host pressed
+    // "Disconnect") while keeping the listener up.
+    let (kick_tx, kick_rx) = tokio::sync::watch::channel(0u64);
 
     let app_for_serve = app.clone();
     let serve_pin = pin.clone();
@@ -720,7 +734,9 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
         };
         let port = rivetlink_sdk::lan::DEFAULT_LAN_PORT;
         tracing::info!(%device_name, port, "start_host: advertising + serving on LAN");
-        if let Err(e) = serve_with_events(signing_key, device_name, port, auth, Some(tx)).await {
+        if let Err(e) =
+            serve_with_events(signing_key, device_name, port, auth, Some(tx), Some(kick_rx)).await
+        {
             tracing::warn!(error = %e, "start_host: serve loop ended with error");
             let _ = app_for_serve.emit("host://error", e.to_string());
         }
@@ -757,6 +773,7 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
             forward,
             pin: pin.clone(),
             peer,
+            kick: kick_tx,
         });
     }
     Ok(pin)
@@ -801,6 +818,25 @@ async fn host_active(state: State<'_, AppState>) -> Result<HostState, String> {
         None => (None, None),
     };
     Ok(HostState { pin, peer })
+}
+
+/// Hang up on the currently connected helper without stopping hosting: the
+/// listener and PIN stay live so a new helper can connect. No-op if nobody is
+/// connected. The host's "connected" badge clears immediately; the agent drops
+/// the viewer's stream (it sees a disconnect).
+#[tauri::command]
+async fn host_disconnect(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
+    if let Ok(guard) = state.host.lock() {
+        if let Some(session) = guard.as_ref() {
+            // Bump the watched value to wake every session's kick arm.
+            session.kick.send_modify(|v| *v = v.wrapping_add(1));
+            if let Ok(mut p) = session.peer.lock() {
+                *p = None;
+            }
+        }
+    }
+    let _ = app.emit("host://disconnected", ());
+    Ok(())
 }
 
 // ---- Network info ----------------------------------------------------------
@@ -1098,6 +1134,7 @@ pub fn run() {
             start_host,
             stop_host,
             host_active,
+            host_disconnect,
             network_info,
             lan_ping,
             add_trusted_key,

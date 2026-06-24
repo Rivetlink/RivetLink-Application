@@ -59,11 +59,28 @@
 						density="comfortable"
 						class="mb-0"
 					>
-						<div class="text-subtitle-2">
-							{{ store.hostPeer ? t("device.connectedTitle") : t("device.waitingTitle") }}
-						</div>
-						<div class="text-caption">
-							{{ store.hostPeer ? t("device.connectedHint") : t("device.waitingHint") }}
+						<div class="d-flex align-center ga-3">
+							<div class="flex-grow-1">
+								<div class="text-subtitle-2">
+									{{ store.hostPeer ? t("device.connectedTitle") : t("device.waitingTitle") }}
+								</div>
+								<div class="text-caption">
+									{{ store.hostPeer
+										? t("device.connectedHint", { name: store.hostPeer })
+										: t("device.waitingHint") }}
+								</div>
+							</div>
+							<VBtn
+								v-if="store.hostPeer"
+								color="error"
+								variant="tonal"
+								size="small"
+								prepend-icon="mdi-close-circle-outline"
+								:loading="disconnecting"
+								@click="onDisconnect"
+							>
+								{{ t("device.disconnect") }}
+							</VBtn>
 						</div>
 					</VAlert>
 				</template>
@@ -87,10 +104,6 @@
 						{{ t("device.retry") }}
 					</VBtn>
 				</template>
-
-				<p class="text-caption text-medium-emphasis mt-4 mb-0">
-					{{ t("device.pickScreenNote") }}
-				</p>
 			</VCardText>
 		</VCard>
 
@@ -122,12 +135,14 @@
 		listen, type UnlistenFn,
 	} from "@tauri-apps/api/event";
 	import {
-		loadPublicKey, type NetworkInfo, networkInfo, refreshHostState, startHost, store,
+		hostDisconnect, loadPublicKey, type NetworkInfo, networkInfo,
+		refreshHostState, startHost, store,
 	} from "../store";
 
 	const { t } = useI18n();
 	const copied = ref(false);
 	const busy = ref(false);
+	const disconnecting = ref(false);
 	const net = ref<NetworkInfo | null>(null);
 
 	let unlistenConnected: UnlistenFn | null = null;
@@ -202,6 +217,15 @@
 			await startHost();
 		} finally {
 			busy.value = false;
+		}
+	}
+
+	async function onDisconnect() {
+		disconnecting.value = true;
+		try {
+			await hostDisconnect();
+		} finally {
+			disconnecting.value = false;
 		}
 	}
 

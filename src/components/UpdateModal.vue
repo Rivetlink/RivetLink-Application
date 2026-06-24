@@ -1,5 +1,9 @@
 <template>
-	<VDialog v-model="updateState.dialog" max-width="420">
+	<VDialog
+		v-model="updateState.dialog"
+		max-width="420"
+		:persistent="updateState.forced"
+	>
 		<VCard>
 			<VCardTitle>{{ t("updates.title") }}</VCardTitle>
 			<VCardText>
@@ -14,11 +18,14 @@
 				</div>
 				<VAlert
 					v-else-if="updateState.status === UpdateStatus.Available"
-					type="info"
+					:type="updateState.forced ? 'warning' : 'info'"
 					variant="tonal"
 					density="compact"
 				>
 					{{ t("updates.available", { version: updateState.latest }) }}
+					<div v-if="updateState.forced" class="mt-1 font-weight-medium">
+						{{ t("updates.required") }}
+					</div>
 				</VAlert>
 				<VAlert
 					v-else-if="updateState.status === UpdateStatus.UpToDate"
@@ -39,7 +46,7 @@
 			</VCardText>
 			<VCardActions>
 				<VBtn
-					v-if="updateState.status === UpdateStatus.Available"
+					v-if="canInstall"
 					color="primary"
 					variant="text"
 					:loading="updateState.installing"
@@ -49,7 +56,11 @@
 					{{ updateState.canAutoInstall ? t("updates.install") : t("updates.download") }}
 				</VBtn>
 				<VSpacer />
-				<VBtn variant="text" @click="updateState.dialog = false">
+				<VBtn
+					v-if="!updateState.forced"
+					variant="text"
+					@click="updateState.dialog = false"
+				>
 					{{ t("common.close") }}
 				</VBtn>
 			</VCardActions>
@@ -58,10 +69,18 @@
 </template>
 
 <script setup lang="ts">
+	import { computed } from "vue";
 	import { useI18n } from "vue-i18n";
 	import {
 		installUpdate, updateState, UpdateStatus,
 	} from "../updates";
 
 	const { t } = useI18n();
+
+	// Show the install/download action whenever an update is available — and also
+	// after a *forced* install fails, so a mandatory dialog (which has no close
+	// button) always keeps a retry path instead of trapping the user.
+	const canInstall = computed(() =>
+		updateState.status === UpdateStatus.Available
+		|| (updateState.forced && updateState.status === UpdateStatus.Error));
 </script>
