@@ -768,7 +768,10 @@ async fn lan_connect(
         let result = rivetlink_sdk::lan::stream_frames(
             stream,
             channel,
-            20,
+            // 30 fps: a 33 ms frame interval (vs 50 ms at 20) directly trims the
+            // capture-cadence term that dominates felt LAN latency, and is
+            // smoother. Tile-delta means a static screen stays cheap regardless.
+            30,
             None,
             my_name,
             Some(&identity),
