@@ -65,10 +65,13 @@
 	}
 
 	onMounted(async () => {
-		for (const el of [document.documentElement, document.body]) {
-			el.style.background = "transparent";
-			el.style.margin = "0";
-			el.style.overflow = "hidden";
+		const app = document.getElementById("app");
+		for (const el of [document.documentElement, document.body, app]) {
+			if (el) {
+				el.style.background = "transparent";
+				el.style.margin = "0";
+				el.style.overflow = "hidden";
+			}
 		}
 		await fit();
 		// The connect event can fire before this window mounts, so pull the live

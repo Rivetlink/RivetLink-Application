@@ -1,7 +1,9 @@
 <template>
-	<!-- Host overlay windows render fully bare (no Vuetify shell) so the window
-	     can stay transparent — just the red border / floating badge. -->
-	<RouterView v-if="route.meta.overlay" />
+	<!-- Host overlay windows render their component DIRECTLY off the window
+	     label — no Vuetify shell, no router/store wait — so the window stays
+	     transparent and never flashes the opaque loading spinner. -->
+	<OverlayBorder v-if="overlayKind === 'border'" />
+	<OverlayPanel v-else-if="overlayKind === 'panel'" />
 
 	<VApp v-else>
 		<!-- Standalone windows (e.g. the live viewer) render bare, no shell. -->
@@ -80,10 +82,26 @@
 	} from "./updates";
 	import Onboarding from "./views/Onboarding.vue";
 	import UpdateModal from "./components/UpdateModal.vue";
+	import OverlayBorder from "./views/OverlayBorder.vue";
+	import OverlayPanel from "./views/OverlayPanel.vue";
 
 	const route = useRoute();
 	const { t } = useI18n();
 	const drawer = ref(true);
+
+	// Overlay windows are dedicated to one component each. Pick it synchronously
+	// from the window label so they never go through the router/store/loadSettings
+	// path (which left the window stuck on the opaque loading shell).
+	const overlayKind = ((): "border" | "panel" | null => {
+		const label = getCurrentWindow().label;
+		if (label === "hostborder") {
+			return "border";
+		}
+		if (label === "hostpanel") {
+			return "panel";
+		}
+		return null;
+	})();
 	let unlistenMenu: UnlistenFn | null = null;
 	let unlistenConnected: UnlistenFn | null = null;
 	let unlistenDisconnected: UnlistenFn | null = null;
@@ -98,6 +116,11 @@
 	}
 
 	onMounted(async () => {
+		// Overlay windows render a self-contained component; skip the whole app
+		// boot (settings load, update check, host autostart, global listeners).
+		if (overlayKind) {
+			return;
+		}
 		window.addEventListener("keydown", onKeydown);
 		// The native "RivetLink -> Check for Updates" menu item fires this event.
 		unlistenMenu = await listen("menu://check-updates", () => checkForUpdates());

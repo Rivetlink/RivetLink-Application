@@ -9,10 +9,13 @@
 	// the window builder); force this document transparent too so only the red
 	// frame paints and the host's desktop shows through the middle.
 	onMounted(() => {
-		for (const el of [document.documentElement, document.body]) {
-			el.style.background = "transparent";
-			el.style.margin = "0";
-			el.style.overflow = "hidden";
+		const app = document.getElementById("app");
+		for (const el of [document.documentElement, document.body, app]) {
+			if (el) {
+				el.style.background = "transparent";
+				el.style.margin = "0";
+				el.style.overflow = "hidden";
+			}
 		}
 	});
 </script>
