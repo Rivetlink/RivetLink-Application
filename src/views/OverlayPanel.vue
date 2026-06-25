@@ -121,6 +121,9 @@
 		}
 		unlistenConnected = await listen<string>("host://connected", (e) => {
 			peer.value = e.payload;
+			// The window is reused across sessions, so start each one expanded.
+			collapsed.value = false;
+			confirming.value = false;
 		});
 		unlistenDisconnected = await listen("host://disconnected", () => {
 			peer.value = null;

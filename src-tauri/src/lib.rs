@@ -602,35 +602,41 @@ fn primary_logical_rect(app: &tauri::AppHandle) -> Option<(f64, f64, f64, f64)> 
 /// while a helper is actually viewing. Idempotent. The overlay places itself via
 /// `place_badge` once mounted (Wayland ignores the builder's initial position).
 fn show_host_overlay(app: &tauri::AppHandle) {
-    let rect = primary_logical_rect(app);
+    // Reuse the window across sessions. Closing it on disconnect and rebuilding
+    // it on the next connect races on GNOME/Wayland — the closing window lingers
+    // while a quick reconnect builds a second "hostpanel", leaving two badges
+    // overlapping (one stale-collapsed, one fresh-expanded). Just un-hide it.
+    if let Some(win) = app.get_webview_window("hostpanel") {
+        let _ = win.show();
+        return;
+    }
 
-    if app.get_webview_window("hostpanel").is_none() {
-        let mut builder = tauri::WebviewWindowBuilder::new(
-            app,
-            "hostpanel",
-            tauri::WebviewUrl::App("index.html#/overlay-panel".into()),
-        )
-        .title("RivetLink")
-        .transparent(true)
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .shadow(false)
-        .resizable(false)
-        .inner_size(BADGE_EXPANDED_W, BADGE_H)
-        .focused(false);
-        if let Some((x, y, w, h)) = rect {
-            let (px, py) = badge_origin(x, y, w, h, BADGE_EXPANDED_W);
-            builder = builder.position(px, py);
-        }
-        match builder.build() {
-            // Drop the inherited app menu bar ("RivetLink"/"Edit") — on Linux it
-            // renders inside the window and would clip the badge row.
-            Ok(win) => {
-                let _ = win.remove_menu();
-            },
-            Err(e) => tracing::warn!(error = %e, "overlay: panel window failed"),
-        }
+    let rect = primary_logical_rect(app);
+    let mut builder = tauri::WebviewWindowBuilder::new(
+        app,
+        "hostpanel",
+        tauri::WebviewUrl::App("index.html#/overlay-panel".into()),
+    )
+    .title("RivetLink")
+    .transparent(true)
+    .decorations(false)
+    .always_on_top(true)
+    .skip_taskbar(true)
+    .shadow(false)
+    .resizable(false)
+    .inner_size(BADGE_EXPANDED_W, BADGE_H)
+    .focused(false);
+    if let Some((x, y, w, h)) = rect {
+        let (px, py) = badge_origin(x, y, w, h, BADGE_EXPANDED_W);
+        builder = builder.position(px, py);
+    }
+    match builder.build() {
+        // Drop the inherited app menu bar ("RivetLink"/"Edit") — on Linux it
+        // renders inside the window and would clip the badge row.
+        Ok(win) => {
+            let _ = win.remove_menu();
+        },
+        Err(e) => tracing::warn!(error = %e, "overlay: panel window failed"),
     }
 }
 
@@ -665,10 +671,12 @@ fn place_badge(app: tauri::AppHandle) {
     }
 }
 
-/// Tear down the host "being viewed" badge (the viewing session ended).
+/// Hide the host "being viewed" badge (the viewing session ended). Hidden, not
+/// closed, so the next session re-shows the same window — see `show_host_overlay`
+/// for why recreating it races into two overlapping badges.
 fn hide_host_overlay(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("hostpanel") {
-        let _ = win.close();
+        let _ = win.hide();
     }
 }
 
