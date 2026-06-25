@@ -1,22 +1,49 @@
 <template>
 	<div class="badge" :class="{ collapsed }">
 		<span class="dot" />
-		<template v-if="!collapsed">
-			<span class="label">{{ peer || t("overlay.sharing") }}</span>
-			<i
-				class="mdi screens"
-				:class="shareAll ? 'mdi-monitor-multiple' : 'mdi-monitor'"
-				:title="shareAll ? t('overlay.allScreens') : t('overlay.oneScreen')"
-			/>
-		</template>
+
+		<!-- Collapsed: only the dot + expand handle, tucked against the edge. -->
 		<button
+			v-if="collapsed"
 			type="button"
-			class="toggle"
-			:title="collapsed ? t('overlay.expand') : t('overlay.collapse')"
+			class="handle"
+			:title="t('overlay.expand')"
 			@click="toggle"
 		>
-			<i class="mdi" :class="collapsed ? 'mdi-chevron-left' : 'mdi-chevron-right'" />
+			<i class="mdi mdi-chevron-left" />
 		</button>
+
+		<!-- "Are you sure?" before kicking. -->
+		<template v-else-if="confirming">
+			<span class="label">{{ t("overlay.kickConfirm") }}</span>
+			<button type="button" class="btn danger" @click="doKick">
+				{{ t("overlay.kick") }}
+			</button>
+			<button type="button" class="btn" @click="confirming = false">
+				{{ t("common.cancel") }}
+			</button>
+		</template>
+
+		<!-- Normal: who's watching + kick + collapse. -->
+		<template v-else>
+			<span class="label">{{ t("overlay.watching", { name: peer || t("overlay.someone") }) }}</span>
+			<button
+				type="button"
+				class="btn danger icon"
+				:title="t('overlay.kick')"
+				@click="confirming = true"
+			>
+				<i class="mdi mdi-account-cancel" />
+			</button>
+			<button
+				type="button"
+				class="handle"
+				:title="t('overlay.collapse')"
+				@click="toggle"
+			>
+				<i class="mdi mdi-chevron-right" />
+			</button>
+		</template>
 	</div>
 </template>
 
@@ -29,39 +56,36 @@
 	import {
 		listen, type UnlistenFn,
 	} from "@tauri-apps/api/event";
-	import { getCurrentWindow } from "@tauri-apps/api/window";
-	import { LogicalSize } from "@tauri-apps/api/dpi";
 
 	type HostState = {
 		pin: string | null;
 		peer: string | null;
-		share_all: boolean;
 	};
 
 	const { t } = useI18n();
 	const peer = ref<string | null>(null);
-	const shareAll = ref(true);
 	const collapsed = ref(false);
+	const confirming = ref(false);
 
 	let unlistenConnected: UnlistenFn | null = null;
 	let unlistenDisconnected: UnlistenFn | null = null;
-	let unlistenShareAll: UnlistenFn | null = null;
 
-	// Collapse folds the badge to a small tab against the screen edge. Resize the
-	// OS window to match so its transparent area never becomes an invisible
-	// click-trap. (Position is fixed by the compositor on Wayland — fine.)
-	async function fit(): Promise<void> {
-		const width = collapsed.value ? 56 : 230;
-		try {
-			await getCurrentWindow().setSize(new LogicalSize(width, 44));
-		} catch {
-			// Resize unsupported — the badge just keeps the builder's size.
-		}
+	// The window is resized + repositioned in Rust (it owns the monitor rect), so
+	// the collapsed handle stays pinned to the screen edge instead of drifting.
+	function setGeometry(isCollapsed: boolean): void {
+		invoke("set_badge_geometry", { collapsed: isCollapsed }).catch(() => { /* gone */ });
 	}
 
 	function toggle(): void {
 		collapsed.value = !collapsed.value;
-		void fit();
+		confirming.value = false;
+		setGeometry(collapsed.value);
+	}
+
+	// Kick the helper. The backend drops the viewer and closes this window, so
+	// there's nothing to clean up here.
+	async function doKick(): Promise<void> {
+		await invoke("host_disconnect").catch(() => { /* already gone */ });
 	}
 
 	onMounted(async () => {
@@ -73,13 +97,12 @@
 				el.style.overflow = "hidden";
 			}
 		}
-		await fit();
+		setGeometry(false);
 		// The connect event can fire before this window mounts, so pull the live
-		// state up front, then track changes.
+		// peer up front, then track changes.
 		try {
 			const state = await invoke<HostState>("host_active");
 			peer.value = state.peer;
-			shareAll.value = state.share_all;
 		} catch {
 			// Backend unavailable — the badge still shows the generic label.
 		}
@@ -89,15 +112,11 @@
 		unlistenDisconnected = await listen("host://disconnected", () => {
 			peer.value = null;
 		});
-		unlistenShareAll = await listen<boolean>("host://share-all", (e) => {
-			shareAll.value = e.payload;
-		});
 	});
 
 	onUnmounted(() => {
 		unlistenConnected?.();
 		unlistenDisconnected?.();
-		unlistenShareAll?.();
 	});
 </script>
 
@@ -105,27 +124,33 @@
 	.badge {
 		display: flex;
 		align-items: center;
-		gap: 8px;
-		height: 44px;
-		padding: 0 8px 0 12px;
+		gap: 10px;
+		height: 64px;
+		padding: 0 10px 0 16px;
 		box-sizing: border-box;
-		border-radius: 10px;
-		background: rgba(20, 20, 22, 0.92);
+		border-radius: 12px;
+		background: rgba(20, 20, 22, 0.94);
 		color: #fff;
 		font-family: system-ui, sans-serif;
-		font-size: 0.85rem;
+		font-size: 0.95rem;
 		white-space: nowrap;
 		overflow: hidden;
 		user-select: none;
 	}
 
+	.badge.collapsed {
+		justify-content: center;
+		gap: 8px;
+		padding: 0 8px;
+	}
+
 	.dot {
 		flex: none;
-		width: 10px;
-		height: 10px;
+		width: 12px;
+		height: 12px;
 		border-radius: 50%;
 		background: #ff1744;
-		box-shadow: 0 0 6px #ff1744;
+		box-shadow: 0 0 7px #ff1744;
 		animation: pulse 1.6s ease-in-out infinite;
 	}
 
@@ -141,32 +166,60 @@
 		text-overflow: ellipsis;
 	}
 
-	.screens {
-		flex: none;
-		font-size: 1.1rem;
-		opacity: 0.7;
-	}
-
-	/* Only this collapse control is interactive — everything else is a label. */
-	.toggle {
+	.btn {
 		flex: none;
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 28px;
-		height: 28px;
+		height: 34px;
+		padding: 0 12px;
 		color: #fff;
-		background: rgba(255, 255, 255, 0.08);
+		font-size: 0.9rem;
+		background: rgba(255, 255, 255, 0.1);
 		border: none;
-		border-radius: 6px;
+		border-radius: 8px;
 		cursor: pointer;
 	}
 
-	.toggle:hover {
+	.btn.icon {
+		width: 38px;
+		padding: 0;
+	}
+
+	.btn:hover {
+		background: rgba(255, 255, 255, 0.2);
+	}
+
+	.btn.danger {
+		color: #ff6b81;
+		background: rgba(255, 23, 68, 0.16);
+	}
+
+	.btn.danger:hover {
+		background: rgba(255, 23, 68, 0.32);
+	}
+
+	/* The collapse/expand handle — the chevron. */
+	.handle {
+		flex: none;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 34px;
+		height: 34px;
+		color: #fff;
+		background: rgba(255, 255, 255, 0.08);
+		border: none;
+		border-radius: 8px;
+		cursor: pointer;
+	}
+
+	.handle:hover {
 		background: rgba(255, 255, 255, 0.18);
 	}
 
-	.toggle .mdi {
-		font-size: 1.2rem;
+	.handle .mdi,
+	.btn .mdi {
+		font-size: 1.3rem;
 	}
 </style>

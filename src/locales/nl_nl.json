@@ -201,9 +201,10 @@
         "disconnect": "Verbreken"
     },
     "overlay": {
-        "sharing": "Delen",
-        "allScreens": "Alle schermen gedeeld",
-        "oneScreen": "Alleen het hoofdscherm wordt gedeeld",
+        "watching": "{name} kijkt mee",
+        "someone": "Iemand",
+        "kick": "Kick",
+        "kickConfirm": "Deze persoon kicken?",
         "expand": "Uitklappen",
         "collapse": "Inklappen"
     }

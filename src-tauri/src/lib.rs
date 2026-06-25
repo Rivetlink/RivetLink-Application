@@ -572,9 +572,6 @@ fn show_host_overlay(app: &tauri::AppHandle) {
     let rect = primary_logical_rect(app);
 
     if app.get_webview_window("hostpanel").is_none() {
-        const PANEL_W: f64 = 230.0;
-        const PANEL_H: f64 = 44.0;
-        const MARGIN: f64 = 16.0;
         let mut builder = tauri::WebviewWindowBuilder::new(
             app,
             "hostpanel",
@@ -587,19 +584,48 @@ fn show_host_overlay(app: &tauri::AppHandle) {
         .skip_taskbar(true)
         .shadow(false)
         .resizable(false)
-        .inner_size(PANEL_W, PANEL_H)
+        .inner_size(BADGE_EXPANDED_W, BADGE_H)
         .focused(false);
         if let Some((x, y, w, h)) = rect {
-            builder = builder.position(x + w - PANEL_W - MARGIN, y + h - PANEL_H - MARGIN);
+            builder = builder
+                .position(x + w - BADGE_EXPANDED_W - BADGE_MARGIN, y + h - BADGE_H - BADGE_MARGIN);
         }
         match builder.build() {
             // Drop the inherited app menu bar ("RivetLink"/"Edit") — on Linux it
-            // renders inside the window and would clip the 44px-tall badge.
+            // renders inside the window and would clip the badge row.
             Ok(win) => {
                 let _ = win.remove_menu();
             },
             Err(e) => tracing::warn!(error = %e, "overlay: panel window failed"),
         }
+    }
+}
+
+/// Badge window geometry. The collapsed handle is narrow and sits flush in the
+/// corner; the expanded badge has a small margin.
+const BADGE_EXPANDED_W: f64 = 340.0;
+const BADGE_COLLAPSED_W: f64 = 66.0;
+const BADGE_H: f64 = 64.0;
+const BADGE_MARGIN: f64 = 16.0;
+
+/// Resize + reposition the host badge as it collapses/expands, keeping it pinned
+/// to the bottom-right of the primary screen. Repositioning is what keeps the
+/// collapsed handle against the edge — shrinking the width alone leaves the left
+/// edge fixed, so the handle would drift left, away from the screen edge.
+#[tauri::command]
+fn set_badge_geometry(app: tauri::AppHandle, collapsed: bool) {
+    let Some(win) = app.get_webview_window("hostpanel") else {
+        return;
+    };
+    let width = if collapsed { BADGE_COLLAPSED_W } else { BADGE_EXPANDED_W };
+    let _ = win.set_size(tauri::LogicalSize::new(width, BADGE_H));
+    if let Some((mx, my, mw, mh)) = primary_logical_rect(&app) {
+        // Collapsed tucks flush to the very edge; expanded keeps a small margin.
+        let margin = if collapsed { 0.0 } else { BADGE_MARGIN };
+        let _ = win.set_position(tauri::LogicalPosition::new(
+            mx + mw - width - margin,
+            my + mh - BADGE_H - margin,
+        ));
     }
 }
 
@@ -1333,6 +1359,7 @@ pub fn run() {
             host_disconnect,
             host_set_share_all,
             host_share_all,
+            set_badge_geometry,
             network_info,
             lan_ping,
             add_trusted_key,

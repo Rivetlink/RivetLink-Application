@@ -201,9 +201,10 @@
         "disconnect": "Disconnect"
     },
     "overlay": {
-        "sharing": "Sharing",
-        "allScreens": "All screens shared",
-        "oneScreen": "Only the main screen is shared",
+        "watching": "{name} is viewing",
+        "someone": "Someone",
+        "kick": "Kick",
+        "kickConfirm": "Kick this person?",
         "expand": "Expand",
         "collapse": "Collapse"
     }
