@@ -82,6 +82,11 @@ export const store = reactive({
 	hosting: false,
 	hostPin: "",
 	hostPeer: null as string | null,
+	/// The connected client's verified identity key (base64), if it proved one,
+	/// and whether it's already trusted — drives the "remember this device"
+	/// (trust-on-connect) prompt on the Receive-help page.
+	hostClientKey: null as string | null,
+	hostClientTrusted: false,
 });
 
 export function isHost(): boolean {
@@ -257,10 +262,22 @@ export async function refreshHostState(): Promise<void> {
 	const s = await invoke<{
 		pin: string | null;
 		peer: string | null;
+		client_key: string | null;
+		client_trusted: boolean;
 	}>("host_active");
 	store.hosting = s.pin !== null;
 	store.hostPin = s.pin ?? "";
 	store.hostPeer = store.hosting ? s.peer : null;
+	store.hostClientKey = store.hosting ? s.client_key : null;
+	store.hostClientTrusted = s.client_trusted;
+}
+
+/// Remember the currently connected client (trust-on-connect) so it can
+/// reconnect without the session code. No OS password — the live PIN connection
+/// is the gate.
+export async function trustClient(name: string): Promise<void> {
+	store.settings = await invoke<AppSettings>("trust_client", { name });
+	store.hostClientTrusted = true;
 }
 
 /// This machine's current Wi-Fi name (if any) and LAN IP.

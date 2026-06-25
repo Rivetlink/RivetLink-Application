@@ -183,6 +183,7 @@
 	// while the link is slow/stalled rather than just a static screen.
 	let lastFrameAt = 0;
 	let slowTimer: ReturnType<typeof setInterval> | undefined;
+	let closeTimer: ReturnType<typeof setTimeout> | undefined;
 	const SLOW_AFTER_MS = 2000;
 
 	function base64ToBytes(b64: string): Uint8Array {
@@ -255,8 +256,13 @@
 			hasFrame.value = false;
 			slow.value = false;
 			clearCanvas(); // drop the last frame instead of leaving it frozen
-			// The session is over — close this standalone viewer window.
-			getCurrentWindow().close().catch(() => { /* already gone */ });
+			// Keep the "connection ended" message up briefly so the viewer sees
+			// what happened (e.g. the host hung up) before the window closes.
+			if (closeTimer === undefined) {
+				closeTimer = setTimeout(() => {
+					getCurrentWindow().close().catch(() => { /* already gone */ });
+				}, 5000);
+			}
 		});
 		unlistenDisplays = await listen<DisplayInfo[]>("lan://displays", (e) => {
 			displays.value = e.payload;
@@ -281,6 +287,9 @@
 		window.removeEventListener("resize", onResize);
 		if (slowTimer) {
 			clearInterval(slowTimer);
+		}
+		if (closeTimer) {
+			clearTimeout(closeTimer);
 		}
 	});
 </script>

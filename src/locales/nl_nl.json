@@ -115,7 +115,11 @@
         "connectedHint": "{name} bekijkt nu dit scherm.",
         "disconnect": "Verbreken",
         "shareAll": "Alle schermen delen",
-        "shareAllHint": "Uit beperkt de helper tot je hoofdscherm. Aan laat ze tussen al je schermen wisselen."
+        "shareAllHint": "Uit beperkt de helper tot je hoofdscherm. Aan laat ze tussen al je schermen wisselen.",
+        "rememberTitle": "{name} onthouden?",
+        "rememberHint": "Dan kan't de volgende keer zonder code verbinden. Sleutel:",
+        "remember": "Onthoud",
+        "remembered": "Dit apparaat is onthouden — verbindt voortaan zonder code."
     },
     "relays": {
         "title": "Opgeslagen servers",

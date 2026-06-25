@@ -83,6 +83,50 @@
 							</VBtn>
 						</div>
 					</VAlert>
+
+					<!-- Trust-on-connect: offer to remember an as-yet-untrusted
+					     device that proved its identity, so it can reconnect
+					     without the code. -->
+					<VAlert
+						v-if="store.hostPeer && store.hostClientKey && !store.hostClientTrusted"
+						type="info"
+						variant="tonal"
+						density="comfortable"
+						class="mt-3 mb-0"
+						icon="mdi-shield-key-outline"
+					>
+						<div class="d-flex align-center ga-3">
+							<div class="flex-grow-1">
+								<div class="text-subtitle-2">
+									{{ t("device.rememberTitle", { name: store.hostPeer }) }}
+								</div>
+								<div class="text-caption">
+									{{ t("device.rememberHint") }}
+									<code>{{ fingerprint }}</code>
+								</div>
+							</div>
+							<VBtn
+								color="primary"
+								variant="flat"
+								size="small"
+								prepend-icon="mdi-check"
+								:loading="remembering"
+								@click="onRemember"
+							>
+								{{ t("device.remember") }}
+							</VBtn>
+						</div>
+					</VAlert>
+
+					<VFadeTransition>
+						<div
+							v-if="store.hostPeer && store.hostClientTrusted"
+							class="text-caption text-success mt-2 d-flex align-center ga-1"
+						>
+							<VIcon icon="mdi-shield-check" size="small" />
+							{{ t("device.remembered") }}
+						</div>
+					</VFadeTransition>
 				</template>
 
 				<template v-else>
@@ -136,18 +180,29 @@
 	} from "@tauri-apps/api/event";
 	import {
 		hostDisconnect, loadPublicKey, type NetworkInfo, networkInfo,
-		refreshHostState, startHost, store,
+		refreshHostState, startHost, store, trustClient,
 	} from "../store";
+
+	type ClientIdentity = {
+		key: string | null;
+		name: string | null;
+		trusted: boolean;
+	};
 
 	const { t } = useI18n();
 	const copied = ref(false);
 	const busy = ref(false);
 	const disconnecting = ref(false);
+	const remembering = ref(false);
 	const net = ref<NetworkInfo | null>(null);
+
+	// Short, human-comparable fingerprint of the connected client's key.
+	const fingerprint = computed(() => (store.hostClientKey ?? "").slice(0, 12));
 
 	let unlistenConnected: UnlistenFn | null = null;
 	let unlistenDisconnected: UnlistenFn | null = null;
 	let unlistenStopped: UnlistenFn | null = null;
+	let unlistenIdentity: UnlistenFn | null = null;
 	let netTimer: ReturnType<typeof setInterval> | undefined;
 
 	async function refreshNet() {
@@ -194,6 +249,13 @@
 		});
 		unlistenDisconnected = await listen("host://disconnected", () => {
 			store.hostPeer = null;
+			store.hostClientKey = null;
+			store.hostClientTrusted = false;
+		});
+		// The connected client's verified identity (for the "remember" prompt).
+		unlistenIdentity = await listen<ClientIdentity>("host://client-identity", (e) => {
+			store.hostClientKey = e.payload.key;
+			store.hostClientTrusted = e.payload.trusted;
 		});
 		unlistenStopped = await listen("host://stopped", () => {
 			store.hosting = false;
@@ -206,6 +268,7 @@
 		unlistenConnected?.();
 		unlistenDisconnected?.();
 		unlistenStopped?.();
+		unlistenIdentity?.();
 		if (netTimer) {
 			clearInterval(netTimer);
 		}
@@ -226,6 +289,20 @@
 			await hostDisconnect();
 		} finally {
 			disconnecting.value = false;
+		}
+	}
+
+	async function onRemember() {
+		if (!store.hostPeer) {
+			return;
+		}
+		remembering.value = true;
+		try {
+			await trustClient(store.hostPeer);
+		} catch {
+			// Nobody connected anymore, or already trusted — the prompt just hides.
+		} finally {
+			remembering.value = false;
 		}
 	}
 

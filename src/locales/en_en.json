@@ -115,7 +115,11 @@
         "connectedHint": "{name} is viewing this screen now.",
         "disconnect": "Disconnect",
         "shareAll": "Share all screens",
-        "shareAllHint": "Off limits the helper to your main screen. On lets them switch between all your screens."
+        "shareAllHint": "Off limits the helper to your main screen. On lets them switch between all your screens.",
+        "rememberTitle": "Remember {name}?",
+        "rememberHint": "Then it can connect without the code next time. Key:",
+        "remember": "Remember",
+        "remembered": "This device is remembered — it can connect without the code."
     },
     "relays": {
         "title": "Saved servers",

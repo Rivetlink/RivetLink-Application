@@ -69,6 +69,19 @@ struct HostSession {
     /// `false` pins it to the primary. Toggled live from the host UI; the agent
     /// reads it per request and pushes the client a fresh display list on change.
     share_all: tokio::sync::watch::Sender<bool>,
+    /// The connected client's verified identity `(key_b64, label)` when it
+    /// announced one — what `trust_client` remembers (trust-on-connect). `None`
+    /// for nobody, or a client that connected without proving an identity.
+    current_client: Arc<std::sync::Mutex<Option<(String, String)>>>,
+}
+
+/// What the host UI needs to offer "remember this device": the connected
+/// client's identity key + name, and whether it's already trusted.
+#[derive(Serialize, Clone)]
+struct ClientIdentityDto {
+    key: Option<String>,
+    name: Option<String>,
+    trusted: bool,
 }
 
 impl HostSession {
@@ -723,6 +736,10 @@ async fn lan_connect(
         let n = s.device_name.trim();
         if n.is_empty() { None } else { Some(n.to_string()) }
     };
+    // Announce our identity (signed) with the stream so a host we reached by PIN
+    // can offer to remember this device (trust-on-connect). Same identity the
+    // key-mode connect uses, so a remembered device later connects code-free.
+    let identity = Identity::load_or_create(&state.identity_path()).map_err(|e| e.to_string())?;
 
     let app_for_task = app.clone();
     let app_for_displays = app.clone();
@@ -735,6 +752,7 @@ async fn lan_connect(
             20,
             None,
             my_name,
+            Some(&identity),
             switch_rx,
             |delta| {
                 // The first frame proves the viewer window is mounted + listening,
@@ -926,24 +944,44 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     // Shared truth for "who is connected", read by `host_active` so the UI can
     // resync after missing a live event.
     let peer = Arc::new(std::sync::Mutex::new(None::<String>));
+    let current_client = Arc::new(std::sync::Mutex::new(None::<(String, String)>));
 
     let app_for_fwd = app.clone();
     let peer_for_fwd = Arc::clone(&peer);
+    let client_for_fwd = Arc::clone(&current_client);
+    let trusted_for_fwd = Arc::clone(&state.trusted_keys);
     let forward = tokio::spawn(async move {
         while let Some(event) = rx.recv().await {
             match event {
-                HostEvent::ClientConnected(label) => {
+                HostEvent::ClientConnected { label, key } => {
                     if let Ok(mut p) = peer_for_fwd.lock() {
                         *p = Some(label.clone());
                     }
-                    // Raise the on-screen "you're being viewed" overlay (red
-                    // border + collapsible badge) on the host's primary screen.
+                    // Remember the verified identity so the host can offer to
+                    // trust this device (trust-on-connect).
+                    if let Ok(mut c) = client_for_fwd.lock() {
+                        *c = key.as_ref().map(|k| (k.clone(), label.clone()));
+                    }
+                    // Raise the on-screen "you're being viewed" badge.
                     show_host_overlay(&app_for_fwd);
-                    let _ = app_for_fwd.emit("host://connected", label);
+                    let _ = app_for_fwd.emit("host://connected", &label);
+                    // Tell the UI whether this device can be remembered (it isn't
+                    // already trusted, and it proved an identity).
+                    let trusted = key
+                        .as_ref()
+                        .is_some_and(|k| trusted_for_fwd.lock().is_ok_and(|t| t.iter().any(|x| x == k)));
+                    let _ = app_for_fwd.emit("host://client-identity", ClientIdentityDto {
+                        key,
+                        name: Some(label),
+                        trusted,
+                    });
                 },
                 HostEvent::ClientDisconnected => {
                     if let Ok(mut p) = peer_for_fwd.lock() {
                         *p = None;
+                    }
+                    if let Ok(mut c) = client_for_fwd.lock() {
+                        *c = None;
                     }
                     hide_host_overlay(&app_for_fwd);
                     let _ = app_for_fwd.emit("host://disconnected", ());
@@ -960,6 +998,7 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
             peer,
             kick: kick_tx,
             share_all: share_tx,
+            current_client,
         });
     }
     Ok(pin)
@@ -994,20 +1033,29 @@ struct HostState {
     peer: Option<String>,
     /// Whether the helper may see/switch every screen (vs. the primary only).
     share_all: bool,
+    /// The connected client's verified identity key (base64), if it proved one —
+    /// for restoring the "remember this device" prompt after a UI resync.
+    client_key: Option<String>,
+    /// Whether that client is already in the trusted list.
+    client_trusted: bool,
 }
 
 #[tauri::command]
 async fn host_active(state: State<'_, AppState>) -> Result<HostState, String> {
     let guard = state.host.lock().map_err(|_| "host lock poisoned".to_string())?;
-    let (pin, peer, share_all) = match guard.as_ref() {
+    let (pin, peer, share_all, client_key) = match guard.as_ref() {
         Some(session) => (
             Some(session.pin.clone()),
             session.peer.lock().ok().and_then(|p| p.clone()),
             *session.share_all.borrow(),
+            session.current_client.lock().ok().and_then(|c| c.as_ref().map(|(k, _)| k.clone())),
         ),
-        None => (None, None, true),
+        None => (None, None, true, None),
     };
-    Ok(HostState { pin, peer, share_all })
+    let client_trusted = client_key.as_ref().is_some_and(|k| {
+        state.trusted_keys.lock().is_ok_and(|t| t.iter().any(|x| x == k))
+    });
+    Ok(HostState { pin, peer, share_all, client_key, client_trusted })
 }
 
 /// Toggle "share all screens" on the live host session. The agent picks it up
@@ -1048,6 +1096,9 @@ async fn host_disconnect(app: tauri::AppHandle, state: State<'_, AppState>) -> R
             session.kick.send_modify(|v| *v = v.wrapping_add(1));
             if let Ok(mut p) = session.peer.lock() {
                 *p = None;
+            }
+            if let Ok(mut c) = session.current_client.lock() {
+                *c = None;
             }
         }
     }
@@ -1186,11 +1237,21 @@ async fn add_trusted_key(
     if !os_password_ok(&os_password) {
         return Err("wrong-os-password".to_string());
     }
+    let mut settings = state.settings.lock().await;
+    push_trusted_key(&mut settings, &name, &public_key)?;
+    settings.save(&state.data_dir)?;
+    sync_trusted_live(&state, &settings);
+    Ok(settings.clone())
+}
+
+/// Add a trusted key to `settings` (validate non-empty, dedupe by key). Shared
+/// by the manual add (OS-password gated) and trust-on-connect (gated by the live
+/// PIN connection instead). Does NOT persist — the caller saves + syncs.
+fn push_trusted_key(settings: &mut AppSettings, name: &str, public_key: &str) -> Result<(), String> {
     let key = public_key.trim().to_string();
     if key.is_empty() {
         return Err("empty-key".to_string());
     }
-    let mut settings = state.settings.lock().await;
     if settings.trusted_keys.iter().any(|k| k.public_key == key) {
         return Err("duplicate-key".to_string());
     }
@@ -1199,9 +1260,43 @@ async fn add_trusted_key(
         name: name.trim().to_string(),
         public_key: key,
     });
-    settings.save(&state.data_dir)?;
-    sync_trusted_live(&state, &settings);
-    Ok(settings.clone())
+    Ok(())
+}
+
+/// Trust the *currently connected* client (trust-on-connect): remember its
+/// verified identity key so it can reconnect without the session code. No OS
+/// password — the correct PIN plus the host actively clicking "remember" on a
+/// live connection is the gate. No-op error if nobody is connected (with a key).
+#[tauri::command]
+async fn trust_client(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    name: String,
+) -> Result<AppSettings, String> {
+    let key = state
+        .host
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().and_then(|s| s.current_client.lock().ok().and_then(|c| c.clone())))
+        .map(|(k, _label)| k)
+        .ok_or_else(|| "no connected client to trust".to_string())?;
+
+    let mut settings = state.settings.lock().await;
+    // Already trusted (e.g. double-click) is success, not an error.
+    if !settings.trusted_keys.iter().any(|k| k.public_key == key) {
+        push_trusted_key(&mut settings, &name, &key)?;
+        settings.save(&state.data_dir)?;
+        sync_trusted_live(&state, &settings);
+    }
+    let result = settings.clone();
+    drop(settings);
+    // Reflect the new trusted state in the host UI.
+    let _ = app.emit("host://client-identity", ClientIdentityDto {
+        key: Some(key),
+        name: Some(name),
+        trusted: true,
+    });
+    Ok(result)
 }
 
 /// Mirror the persisted trusted keys into the live allow-list the running host
@@ -1360,6 +1455,7 @@ pub fn run() {
             host_set_share_all,
             host_share_all,
             set_badge_geometry,
+            trust_client,
             network_info,
             lan_ping,
             add_trusted_key,
