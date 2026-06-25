@@ -1,9 +1,8 @@
 <template>
-	<!-- Host overlay windows render their component DIRECTLY off the window
-	     label — no Vuetify shell, no router/store wait — so the window stays
-	     transparent and never flashes the opaque loading spinner. -->
-	<OverlayBorder v-if="overlayKind === 'border'" />
-	<OverlayPanel v-else-if="overlayKind === 'panel'" />
+	<!-- The host "being viewed" badge renders its component DIRECTLY off the
+	     window label — no Vuetify shell, no router/store wait — so the window
+	     stays transparent and never flashes the opaque loading spinner. -->
+	<OverlayPanel v-if="overlayKind === 'panel'" />
 
 	<VApp v-else>
 		<!-- Standalone windows (e.g. the live viewer) render bare, no shell. -->
@@ -82,25 +81,17 @@
 	} from "./updates";
 	import Onboarding from "./views/Onboarding.vue";
 	import UpdateModal from "./components/UpdateModal.vue";
-	import OverlayBorder from "./views/OverlayBorder.vue";
 	import OverlayPanel from "./views/OverlayPanel.vue";
 
 	const route = useRoute();
 	const { t } = useI18n();
 	const drawer = ref(true);
 
-	// Overlay windows are dedicated to one component each. Pick it synchronously
-	// from the window label so they never go through the router/store/loadSettings
+	// The host badge window is dedicated to one component. Pick it synchronously
+	// from the window label so it never goes through the router/store/loadSettings
 	// path (which left the window stuck on the opaque loading shell).
-	const overlayKind = ((): "border" | "panel" | null => {
-		const label = getCurrentWindow().label;
-		if (label === "hostborder") {
-			return "border";
-		}
-		if (label === "hostpanel") {
-			return "panel";
-		}
-		return null;
+	const overlayKind = ((): "panel" | null => {
+		return getCurrentWindow().label === "hostpanel" ? "panel" : null;
 	})();
 	let unlistenMenu: UnlistenFn | null = null;
 	let unlistenConnected: UnlistenFn | null = null;

@@ -561,42 +561,15 @@ fn primary_logical_rect(app: &tauri::AppHandle) -> Option<(f64, f64, f64, f64)> 
     Some((pos.x, pos.y, size.width, size.height))
 }
 
-/// Show the "you're being viewed" overlay on the host's primary screen: a
-/// click-through red border covering the screen plus a small collapsible badge
-/// bottom-right. Both are transparent, borderless, always-on-top windows; the
-/// border ignores the cursor so the host keeps working behind it. Idempotent.
+/// Show the "you're being viewed" badge: a small, collapsible, transparent,
+/// always-on-top window bottom-right of the host's primary screen, shown only
+/// while a helper is actually viewing. Idempotent.
 ///
-/// On Wayland the compositor owns window placement, so the overlay lands on the
+/// On Wayland the compositor owns window placement, so the badge lands on the
 /// current/primary output and can't be repositioned — by design (the user opted
 /// for "panel stays on screen 1 always").
 fn show_host_overlay(app: &tauri::AppHandle) {
     let rect = primary_logical_rect(app);
-
-    if app.get_webview_window("hostborder").is_none() {
-        let mut builder = tauri::WebviewWindowBuilder::new(
-            app,
-            "hostborder",
-            tauri::WebviewUrl::App("index.html#/overlay-border".into()),
-        )
-        .title("RivetLink — sharing")
-        .transparent(true)
-        .decorations(false)
-        .always_on_top(true)
-        .skip_taskbar(true)
-        .shadow(false)
-        .resizable(false)
-        .focused(false);
-        if let Some((x, y, w, h)) = rect {
-            builder = builder.position(x, y).inner_size(w, h);
-        }
-        match builder.build() {
-            // Click-through: the border is decoration only, never steals input.
-            Ok(win) => {
-                let _ = win.set_ignore_cursor_events(true);
-            },
-            Err(e) => tracing::warn!(error = %e, "overlay: border window failed"),
-        }
-    }
 
     if app.get_webview_window("hostpanel").is_none() {
         const PANEL_W: f64 = 230.0;
@@ -625,12 +598,10 @@ fn show_host_overlay(app: &tauri::AppHandle) {
     }
 }
 
-/// Tear down the host overlay windows (the viewing session ended).
+/// Tear down the host "being viewed" badge (the viewing session ended).
 fn hide_host_overlay(app: &tauri::AppHandle) {
-    for label in ["hostborder", "hostpanel"] {
-        if let Some(win) = app.get_webview_window(label) {
-            let _ = win.close();
-        }
+    if let Some(win) = app.get_webview_window("hostpanel") {
+        let _ = win.close();
     }
 }
 
