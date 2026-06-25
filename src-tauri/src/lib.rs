@@ -620,11 +620,11 @@ fn set_badge_geometry(app: tauri::AppHandle, collapsed: bool) {
     let width = if collapsed { BADGE_COLLAPSED_W } else { BADGE_EXPANDED_W };
     let _ = win.set_size(tauri::LogicalSize::new(width, BADGE_H));
     if let Some((mx, my, mw, mh)) = primary_logical_rect(&app) {
-        // Collapsed tucks flush to the very edge; expanded keeps a small margin.
-        let margin = if collapsed { 0.0 } else { BADGE_MARGIN };
+        // Keep a margin in both states so the badge clears the panel/dock at the
+        // screen edge (a zero margin dropped the collapsed handle into the bar).
         let _ = win.set_position(tauri::LogicalPosition::new(
-            mx + mw - width - margin,
-            my + mh - BADGE_H - margin,
+            mx + mw - width - BADGE_MARGIN,
+            my + mh - BADGE_H - BADGE_MARGIN,
         ));
     }
 }
