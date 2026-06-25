@@ -646,6 +646,22 @@ fn badge_origin(mx: f64, my: f64, mw: f64, mh: f64, width: f64) -> (f64, f64) {
     (mx + mw - width - BADGE_MARGIN, my + mh - BADGE_H - mh * 0.10)
 }
 
+/// Place the host badge bottom-right of the primary screen. Called once from the
+/// overlay's `onMounted`: on GNOME/Wayland the window builder's initial position
+/// is ignored (the badge lands centred), but a runtime `set_position` lands it
+/// correctly. Position only — the window is a fixed size and collapse is pure
+/// CSS, so there's no `set_size`/`set_position` desync to fling it off-screen.
+#[tauri::command]
+fn place_badge(app: tauri::AppHandle) {
+    let Some(win) = app.get_webview_window("hostpanel") else {
+        return;
+    };
+    if let Some((mx, my, mw, mh)) = primary_logical_rect(&app) {
+        let (px, py) = badge_origin(mx, my, mw, mh, BADGE_EXPANDED_W);
+        let _ = win.set_position(tauri::LogicalPosition::new(px, py));
+    }
+}
+
 /// Tear down the host "being viewed" badge (the viewing session ended).
 fn hide_host_overlay(app: &tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("hostpanel") {
@@ -1496,13 +1512,6 @@ pub fn run() {
                 }
             }
 
-            // Dev convenience: in a debug build (`npm run tauri dev`) pop the host
-            // "being viewed" badge on launch so its layout can be iterated without
-            // a real incoming connection. Release builds only show it while a
-            // helper is actually viewing.
-            #[cfg(debug_assertions)]
-            show_host_overlay(app.handle());
-
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1534,6 +1543,7 @@ pub fn run() {
             host_disconnect,
             host_set_share_all,
             host_share_all,
+            place_badge,
             trust_client,
             respond_consent,
             network_info,

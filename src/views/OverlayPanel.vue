@@ -108,6 +108,9 @@
 			app.style.justifyContent = "flex-end";
 			app.style.alignItems = "center";
 		}
+		// Position the (fixed-size) window bottom-right. GNOME/Wayland ignores the
+		// window builder's initial position, so do it here at runtime.
+		invoke("place_badge").catch(() => { /* window gone */ });
 		// The connect event can fire before this window mounts, so pull the live
 		// peer up front, then track changes.
 		try {
