@@ -315,6 +315,41 @@ fn install_menu(app: &tauri::App) -> tauri::Result<()> {
     Ok(())
 }
 
+/// Re-show + focus the main window (from the tray, or when a second launch is
+/// blocked). No-op if the window is gone.
+fn show_main_window(app: &tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.show();
+        let _ = win.unminimize();
+        let _ = win.set_focus();
+    }
+}
+
+/// System-tray icon. Closing the main window only hides it (so the host keeps
+/// serving in the background), so the tray is how you re-open the app or quit it
+/// for real.
+fn install_tray(app: &tauri::App) -> tauri::Result<()> {
+    let open = MenuItemBuilder::new("Open RivetLink").id("tray_open").build(app)?;
+    let quit = MenuItemBuilder::new("Quit RivetLink").id("tray_quit").build(app)?;
+    let menu = MenuBuilder::new(app).item(&open).item(&quit).build()?;
+
+    let mut builder = tauri::tray::TrayIconBuilder::with_id("main")
+        .tooltip("RivetLink")
+        .menu(&menu)
+        .on_menu_event(|app, event| {
+            if event.id() == "tray_open" {
+                show_main_window(app);
+            } else if event.id() == "tray_quit" {
+                app.exit(0);
+            }
+        });
+    if let Some(icon) = app.default_window_icon().cloned() {
+        builder = builder.icon(icon);
+    }
+    builder.build(app)?;
+    Ok(())
+}
+
 // ---- Relays ----------------------------------------------------------------
 
 /// Derive the WebSocket URL from the server's HTTP URL: http -> ws, https ->
@@ -569,6 +604,9 @@ fn open_viewer(app: &tauri::AppHandle, title: &str) -> Result<(), String> {
     .title(title)
     .inner_size(1280.0, 800.0)
     .min_inner_size(640.0, 400.0)
+    // Keep the live screen above other windows for the whole session — it's the
+    // thing the operator is working in during a takeover.
+    .always_on_top(true)
     .build()
     .map_err(|e| e.to_string())?;
 
@@ -1469,6 +1507,18 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .on_window_event(|window, event| {
+            // Closing the main window hides it to the tray instead of quitting —
+            // the host keeps serving and any live takeover window stays up. Quit
+            // for real from the tray's "Afsluiten" item. The viewer/hostpanel
+            // windows close normally (their own handlers tear the session down).
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if window.label() == "main" {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        })
         .setup(|app| {
             // Logging first, so startup + the LAN path are captured from the off.
             if let Ok(log_dir) = app.path().app_log_dir() {
@@ -1508,6 +1558,7 @@ pub fn run() {
             // Native menu bar (RivetLink + Edit). The "Check for Updates" item
             // forwards to the frontend, which does the actual version check.
             install_menu(app)?;
+            install_tray(app)?;
             app.on_menu_event(|app, event| {
                 if event.id() == "check_updates" {
                     let _ = app.emit("menu://check-updates", ());

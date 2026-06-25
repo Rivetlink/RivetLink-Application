@@ -52,7 +52,7 @@
 
 <script setup lang="ts">
 	import {
-		onMounted, onUnmounted, ref,
+		nextTick, onMounted, onUnmounted, ref,
 	} from "vue";
 	import { useI18n } from "vue-i18n";
 	import { invoke } from "@tauri-apps/api/core";
@@ -77,9 +77,19 @@
 	// resize+reposition desync on GNOME/Wayland and flung the badge off-screen).
 	// The pill hugs the window's right edge, so collapsing just swaps the content
 	// to the "< dot" peek tab — the rest of the fixed window is transparent.
-	function toggle(): void {
+	async function toggle(): Promise<void> {
 		collapsed.value = !collapsed.value;
 		confirming.value = false;
+		// WebKitGTK only repaints dirty regions, so shrinking the pill on collapse
+		// leaves the expanded pill's pixels as a ghost in the now-transparent area
+		// until some later full repaint (the "fixes itself after 5-10s" effect).
+		// Force a full-surface repaint once the new layout has committed.
+		await nextTick();
+		const root = document.documentElement;
+		root.style.opacity = "0.999";
+		requestAnimationFrame(() => {
+			root.style.opacity = "";
+		});
 	}
 
 	// Kick the helper. The backend drops the viewer and closes this window, so
