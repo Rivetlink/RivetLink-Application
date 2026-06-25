@@ -1,20 +1,22 @@
 <template>
 	<div class="badge" :class="{ collapsed }">
-		<span class="dot" />
-
-		<!-- Collapsed: only the dot + expand handle, tucked against the edge. -->
-		<button
-			v-if="collapsed"
-			type="button"
-			class="handle"
-			:title="t('overlay.expand')"
-			@click="toggle"
-		>
-			<i class="mdi mdi-chevron-left" />
-		</button>
+		<!-- Collapsed: expand chevron on the LEFT, live dot tucked to the right
+		     (against the screen edge). Explicit element order — no row-reverse. -->
+		<template v-if="collapsed">
+			<button
+				type="button"
+				class="handle"
+				:title="t('overlay.expand')"
+				@click="toggle"
+			>
+				<i class="mdi mdi-chevron-left" />
+			</button>
+			<span class="dot" />
+		</template>
 
 		<!-- "Are you sure?" before kicking. -->
 		<template v-else-if="confirming">
+			<span class="dot" />
 			<span class="label">{{ t("overlay.kickConfirm") }}</span>
 			<button type="button" class="btn danger" @click="doKick">
 				{{ t("overlay.kick") }}
@@ -26,6 +28,7 @@
 
 		<!-- Normal: who's watching + kick + collapse. -->
 		<template v-else>
+			<span class="dot" />
 			<span class="label">{{ t("overlay.watching", { name: peer || t("overlay.someone") }) }}</span>
 			<button
 				type="button"
@@ -95,7 +98,18 @@
 				el.style.background = "transparent";
 				el.style.margin = "0";
 				el.style.overflow = "hidden";
+				el.style.width = "100%";
+				el.style.height = "100%";
 			}
+		}
+		// Right-hug the pill: the dark badge is only ever as wide as its content
+		// (chevron+dot when collapsed), and any leftover window width stays
+		// transparent on the LEFT — no dead dark space. Robust to the window not
+		// shrinking on collapse (GNOME/Wayland sometimes ignores set_size).
+		if (app) {
+			app.style.display = "flex";
+			app.style.justifyContent = "flex-end";
+			app.style.alignItems = "center";
 		}
 		setGeometry(false);
 		// The connect event can fire before this window mounts, so pull the live
@@ -123,6 +137,7 @@
 <style scoped>
 	.badge {
 		display: flex;
+		flex: none; /* size to content, hug the right edge — never fill the window */
 		align-items: center;
 		gap: 10px;
 		height: 64px;
@@ -138,14 +153,11 @@
 		user-select: none;
 	}
 
-	/* Collapsed: chevron on the left, dot tucked against the screen edge on the
-	   right. row-reverse flips the shared dot (first in DOM) to the right and the
-	   expand handle to the left, with no wasted space beside the dot. */
+	/* Collapsed: just the expand chevron (left) + live dot (right), in a tight
+	   content-width pill. Explicit element order in the template — no row-reverse. */
 	.badge.collapsed {
-		flex-direction: row-reverse;
-		justify-content: center;
 		gap: 8px;
-		padding: 0 12px;
+		padding: 0 14px;
 	}
 
 	.dot {
