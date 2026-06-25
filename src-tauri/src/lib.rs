@@ -631,10 +631,12 @@ fn show_host_overlay(app: &tauri::AppHandle) {
     }
 }
 
-/// Badge window geometry. Pinned bottom-right of the primary screen, raised 10%
-/// of the screen height so it clears the dock/taskbar.
+/// Badge window geometry. Fixed at the bottom-right of the primary screen,
+/// raised 10% of the screen height so it clears the dock/taskbar. The window is
+/// never resized/repositioned at runtime — collapse is pure CSS and the pill
+/// hugs the window's right edge — because GNOME/Wayland desyncs runtime
+/// set_size/set_position and flung the badge off-screen.
 const BADGE_EXPANDED_W: f64 = 340.0;
-const BADGE_COLLAPSED_W: f64 = 90.0;
 const BADGE_H: f64 = 64.0;
 const BADGE_MARGIN: f64 = 16.0;
 
@@ -642,23 +644,6 @@ const BADGE_MARGIN: f64 = 16.0;
 /// lifted 10% of the screen height clear of the dock.
 fn badge_origin(mx: f64, my: f64, mw: f64, mh: f64, width: f64) -> (f64, f64) {
     (mx + mw - width - BADGE_MARGIN, my + mh - BADGE_H - mh * 0.10)
-}
-
-/// Resize + reposition the host badge as it collapses/expands, keeping it pinned
-/// to the bottom-right of the primary screen. Repositioning is what keeps the
-/// collapsed handle against the edge — shrinking the width alone leaves the left
-/// edge fixed, so the handle would drift left, away from the screen edge.
-#[tauri::command]
-fn set_badge_geometry(app: tauri::AppHandle, collapsed: bool) {
-    let Some(win) = app.get_webview_window("hostpanel") else {
-        return;
-    };
-    let width = if collapsed { BADGE_COLLAPSED_W } else { BADGE_EXPANDED_W };
-    let _ = win.set_size(tauri::LogicalSize::new(width, BADGE_H));
-    if let Some((mx, my, mw, mh)) = primary_logical_rect(&app) {
-        let (px, py) = badge_origin(mx, my, mw, mh, width);
-        let _ = win.set_position(tauri::LogicalPosition::new(px, py));
-    }
 }
 
 /// Tear down the host "being viewed" badge (the viewing session ended).
@@ -1510,6 +1495,14 @@ pub fn run() {
                     window.open_devtools();
                 }
             }
+
+            // Dev convenience: in a debug build (`npm run tauri dev`) pop the host
+            // "being viewed" badge on launch so its layout can be iterated without
+            // a real incoming connection. Release builds only show it while a
+            // helper is actually viewing.
+            #[cfg(debug_assertions)]
+            show_host_overlay(app.handle());
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -1541,7 +1534,6 @@ pub fn run() {
             host_disconnect,
             host_set_share_all,
             host_share_all,
-            set_badge_geometry,
             trust_client,
             respond_consent,
             network_info,

@@ -73,16 +73,13 @@
 	let unlistenConnected: UnlistenFn | null = null;
 	let unlistenDisconnected: UnlistenFn | null = null;
 
-	// The window is resized + repositioned in Rust (it owns the monitor rect), so
-	// the collapsed handle stays pinned to the screen edge instead of drifting.
-	function setGeometry(isCollapsed: boolean): void {
-		invoke("set_badge_geometry", { collapsed: isCollapsed }).catch(() => { /* gone */ });
-	}
-
+	// Collapse is pure CSS now: the window stays at a fixed size/position (runtime
+	// resize+reposition desync on GNOME/Wayland and flung the badge off-screen).
+	// The pill hugs the window's right edge, so collapsing just swaps the content
+	// to the "< dot" peek tab — the rest of the fixed window is transparent.
 	function toggle(): void {
 		collapsed.value = !collapsed.value;
 		confirming.value = false;
-		setGeometry(collapsed.value);
 	}
 
 	// Kick the helper. The backend drops the viewer and closes this window, so
@@ -111,7 +108,6 @@
 			app.style.justifyContent = "flex-end";
 			app.style.alignItems = "center";
 		}
-		setGeometry(false);
 		// The connect event can fire before this window mounts, so pull the live
 		// peer up front, then track changes.
 		try {
