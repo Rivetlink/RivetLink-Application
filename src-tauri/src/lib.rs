@@ -592,8 +592,13 @@ fn show_host_overlay(app: &tauri::AppHandle) {
         if let Some((x, y, w, h)) = rect {
             builder = builder.position(x + w - PANEL_W - MARGIN, y + h - PANEL_H - MARGIN);
         }
-        if let Err(e) = builder.build() {
-            tracing::warn!(error = %e, "overlay: panel window failed");
+        match builder.build() {
+            // Drop the inherited app menu bar ("RivetLink"/"Edit") — on Linux it
+            // renders inside the window and would clip the 44px-tall badge.
+            Ok(win) => {
+                let _ = win.remove_menu();
+            },
+            Err(e) => tracing::warn!(error = %e, "overlay: panel window failed"),
         }
     }
 }

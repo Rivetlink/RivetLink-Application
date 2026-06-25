@@ -82,9 +82,6 @@ export const store = reactive({
 	hosting: false,
 	hostPin: "",
 	hostPeer: null as string | null,
-	/// Whether the connected helper may see/switch every screen (vs. the primary
-	/// only). The host toggles this; defaults to sharing all on a LAN session.
-	hostShareAll: true,
 });
 
 export function isHost(): boolean {
@@ -260,19 +257,10 @@ export async function refreshHostState(): Promise<void> {
 	const s = await invoke<{
 		pin: string | null;
 		peer: string | null;
-		share_all: boolean;
 	}>("host_active");
 	store.hosting = s.pin !== null;
 	store.hostPin = s.pin ?? "";
 	store.hostPeer = store.hosting ? s.peer : null;
-	store.hostShareAll = s.share_all;
-}
-
-/// Grant or revoke "share all screens" for the live host session. With it off,
-/// the helper is restricted to the primary screen (switching is refused).
-export async function hostSetShareAll(value: boolean): Promise<void> {
-	await invoke("host_set_share_all", { value });
-	store.hostShareAll = value;
 }
 
 /// This machine's current Wi-Fi name (if any) and LAN IP.
