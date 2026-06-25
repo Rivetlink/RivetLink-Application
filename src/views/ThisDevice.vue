@@ -69,6 +69,13 @@
 										? t("device.connectedHint", { name: store.hostPeer })
 										: t("device.waitingHint") }}
 								</div>
+								<div
+									v-if="store.hostPeer && store.hostClientTrusted"
+									class="text-caption d-flex align-center ga-1 mt-1"
+								>
+									<VIcon icon="mdi-shield-check" size="small" />
+									{{ t("device.helperRemembered") }}
+								</div>
 							</div>
 							<VBtn
 								v-if="store.hostPeer"
@@ -117,16 +124,6 @@
 							</VBtn>
 						</div>
 					</VAlert>
-
-					<VFadeTransition>
-						<div
-							v-if="store.hostPeer && store.hostClientTrusted"
-							class="text-caption text-success mt-2 d-flex align-center ga-1"
-						>
-							<VIcon icon="mdi-shield-check" size="small" />
-							{{ t("device.remembered") }}
-						</div>
-					</VFadeTransition>
 				</template>
 
 				<template v-else>

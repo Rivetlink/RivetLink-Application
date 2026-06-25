@@ -119,7 +119,7 @@
         "rememberTitle": "{name} onthouden?",
         "rememberHint": "Dan kan't de volgende keer zonder code verbinden. Sleutel:",
         "remember": "Onthoud",
-        "remembered": "Dit apparaat is onthouden — verbindt voortaan zonder code."
+        "helperRemembered": "Deze helper is onthouden en kan joinen zonder code."
     },
     "relays": {
         "title": "Opgeslagen servers",

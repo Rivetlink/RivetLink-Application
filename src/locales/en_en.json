@@ -119,7 +119,7 @@
         "rememberTitle": "Remember {name}?",
         "rememberHint": "Then it can connect without the code next time. Key:",
         "remember": "Remember",
-        "remembered": "This device is remembered — it can connect without the code."
+        "helperRemembered": "This helper is remembered and can join without the code."
     },
     "relays": {
         "title": "Saved servers",

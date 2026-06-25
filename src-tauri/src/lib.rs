@@ -616,9 +616,9 @@ fn show_host_overlay(app: &tauri::AppHandle) {
         .resizable(false)
         .inner_size(BADGE_EXPANDED_W, BADGE_H)
         .focused(false);
-        if let Some((x, y, w, _h)) = rect {
-            builder = builder
-                .position(x + w - BADGE_EXPANDED_W - BADGE_MARGIN, y + BADGE_TOP_MARGIN);
+        if let Some((x, y, w, h)) = rect {
+            let (px, py) = badge_origin(x, y, w, h, BADGE_EXPANDED_W);
+            builder = builder.position(px, py);
         }
         match builder.build() {
             // Drop the inherited app menu bar ("RivetLink"/"Edit") — on Linux it
@@ -631,17 +631,21 @@ fn show_host_overlay(app: &tauri::AppHandle) {
     }
 }
 
-/// Badge window geometry. Pinned to the **top**-right — the bottom edge kept
-/// landing in the dock/panel on the host's compositor. The top margin clears the
-/// GNOME top bar.
+/// Badge window geometry. Pinned bottom-right of the primary screen, raised 10%
+/// of the screen height so it clears the dock/taskbar.
 const BADGE_EXPANDED_W: f64 = 340.0;
-const BADGE_COLLAPSED_W: f64 = 66.0;
+const BADGE_COLLAPSED_W: f64 = 84.0;
 const BADGE_H: f64 = 64.0;
 const BADGE_MARGIN: f64 = 16.0;
-const BADGE_TOP_MARGIN: f64 = 48.0;
+
+/// Top-left for a badge of `width` on the primary screen: bottom-right corner,
+/// lifted 10% of the screen height clear of the dock.
+fn badge_origin(mx: f64, my: f64, mw: f64, mh: f64, width: f64) -> (f64, f64) {
+    (mx + mw - width - BADGE_MARGIN, my + mh - BADGE_H - mh * 0.10)
+}
 
 /// Resize + reposition the host badge as it collapses/expands, keeping it pinned
-/// to the top-right of the primary screen. Repositioning is what keeps the
+/// to the bottom-right of the primary screen. Repositioning is what keeps the
 /// collapsed handle against the edge — shrinking the width alone leaves the left
 /// edge fixed, so the handle would drift left, away from the screen edge.
 #[tauri::command]
@@ -651,11 +655,9 @@ fn set_badge_geometry(app: tauri::AppHandle, collapsed: bool) {
     };
     let width = if collapsed { BADGE_COLLAPSED_W } else { BADGE_EXPANDED_W };
     let _ = win.set_size(tauri::LogicalSize::new(width, BADGE_H));
-    if let Some((mx, my, mw, _mh)) = primary_logical_rect(&app) {
-        let _ = win.set_position(tauri::LogicalPosition::new(
-            mx + mw - width - BADGE_MARGIN,
-            my + BADGE_TOP_MARGIN,
-        ));
+    if let Some((mx, my, mw, mh)) = primary_logical_rect(&app) {
+        let (px, py) = badge_origin(mx, my, mw, mh, width);
+        let _ = win.set_position(tauri::LogicalPosition::new(px, py));
     }
 }
 
