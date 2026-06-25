@@ -1,6 +1,6 @@
 [package]
 name = "rivetlink-app"
-version = "0.1.41"
+version = "0.1.42"
 description = "RivetLink desktop app"
 authors = ["RivetLink"]
 edition = "2021"

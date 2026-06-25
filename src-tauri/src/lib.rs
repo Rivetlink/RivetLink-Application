@@ -6,6 +6,12 @@
 //! relay, sign in, list devices, capture a screenshot). Host mode and
 //! session-code pairing are wired in as the backend lands.
 
+// Hosting (being viewed) is unsupported on Windows: `start_host` is a stub there
+// and the whole host-serve / consent / overlay machinery is compiled but unused.
+// Allow that dead code on Windows only — real dead code still surfaces on the
+// primary host platforms (Linux/macOS).
+#![cfg_attr(windows, allow(dead_code))]
+
 mod settings;
 
 use std::path::PathBuf;
@@ -593,11 +599,8 @@ fn primary_logical_rect(app: &tauri::AppHandle) -> Option<(f64, f64, f64, f64)> 
 
 /// Show the "you're being viewed" badge: a small, collapsible, transparent,
 /// always-on-top window bottom-right of the host's primary screen, shown only
-/// while a helper is actually viewing. Idempotent.
-///
-/// On Wayland the compositor owns window placement, so the badge lands on the
-/// current/primary output and can't be repositioned — by design (the user opted
-/// for "panel stays on screen 1 always").
+/// while a helper is actually viewing. Idempotent. The overlay places itself via
+/// `place_badge` once mounted (Wayland ignores the builder's initial position).
 fn show_host_overlay(app: &tauri::AppHandle) {
     let rect = primary_logical_rect(app);
 
