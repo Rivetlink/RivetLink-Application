@@ -138,10 +138,14 @@
 		user-select: none;
 	}
 
+	/* Collapsed: chevron on the left, dot tucked against the screen edge on the
+	   right. row-reverse flips the shared dot (first in DOM) to the right and the
+	   expand handle to the left, with no wasted space beside the dot. */
 	.badge.collapsed {
+		flex-direction: row-reverse;
 		justify-content: center;
 		gap: 8px;
-		padding: 0 8px;
+		padding: 0 12px;
 	}
 
 	.dot {

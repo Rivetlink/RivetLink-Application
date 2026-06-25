@@ -634,7 +634,7 @@ fn show_host_overlay(app: &tauri::AppHandle) {
 /// Badge window geometry. Pinned bottom-right of the primary screen, raised 10%
 /// of the screen height so it clears the dock/taskbar.
 const BADGE_EXPANDED_W: f64 = 340.0;
-const BADGE_COLLAPSED_W: f64 = 84.0;
+const BADGE_COLLAPSED_W: f64 = 78.0;
 const BADGE_H: f64 = 64.0;
 const BADGE_MARGIN: f64 = 16.0;
 
