@@ -113,7 +113,9 @@
         "waitingHint": "Tell the helper your computer name and this code. They pick you under “Local network” and enter the code.",
         "connectedTitle": "A helper is connected",
         "connectedHint": "{name} is viewing this screen now.",
-        "disconnect": "Disconnect"
+        "disconnect": "Disconnect",
+        "shareAll": "Share all screens",
+        "shareAllHint": "Off limits the helper to your main screen. On lets them switch between all your screens."
     },
     "relays": {
         "title": "Saved servers",
@@ -193,6 +195,16 @@
         "connecting": "Connecting — loading the other computer's screen…",
         "ended": "The connection has ended.",
         "poor": "Poor connection",
-        "resetZoom": "Reset zoom"
+        "resetZoom": "Reset zoom",
+        "collapse": "Collapse",
+        "expand": "Expand",
+        "disconnect": "Disconnect"
+    },
+    "overlay": {
+        "sharing": "Sharing",
+        "allScreens": "All screens shared",
+        "oneScreen": "Only the main screen is shared",
+        "expand": "Expand",
+        "collapse": "Collapse"
     }
 }

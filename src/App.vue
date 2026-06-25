@@ -1,5 +1,9 @@
 <template>
-	<VApp>
+	<!-- Host overlay windows render fully bare (no Vuetify shell) so the window
+	     can stay transparent — just the red border / floating badge. -->
+	<RouterView v-if="route.meta.overlay" />
+
+	<VApp v-else>
 		<!-- Standalone windows (e.g. the live viewer) render bare, no shell. -->
 		<RouterView v-if="route.meta.bare" />
 

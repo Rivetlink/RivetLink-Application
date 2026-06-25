@@ -113,7 +113,9 @@
         "waitingHint": "Geef de helper je computernaam en deze code. Die kiest jou onder “Lokaal netwerk” en voert de code in.",
         "connectedTitle": "Er is een helper verbonden",
         "connectedHint": "{name} bekijkt nu dit scherm.",
-        "disconnect": "Verbreken"
+        "disconnect": "Verbreken",
+        "shareAll": "Alle schermen delen",
+        "shareAllHint": "Uit beperkt de helper tot je hoofdscherm. Aan laat ze tussen al je schermen wisselen."
     },
     "relays": {
         "title": "Opgeslagen servers",
@@ -193,6 +195,16 @@
         "connecting": "Verbinden — scherm van de andere computer wordt geladen…",
         "ended": "De verbinding is beëindigd.",
         "poor": "Slechte verbinding",
-        "resetZoom": "Zoom terugzetten"
+        "resetZoom": "Zoom terugzetten",
+        "collapse": "Inklappen",
+        "expand": "Uitklappen",
+        "disconnect": "Verbreken"
+    },
+    "overlay": {
+        "sharing": "Delen",
+        "allScreens": "Alle schermen gedeeld",
+        "oneScreen": "Alleen het hoofdscherm wordt gedeeld",
+        "expand": "Uitklappen",
+        "collapse": "Inklappen"
     }
 }

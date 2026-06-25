@@ -12,6 +12,8 @@ import Relays from "./views/Relays.vue";
 import Resources from "./views/Resources.vue";
 import Settings from "./views/Settings.vue";
 import Viewer from "./views/Viewer.vue";
+import OverlayBorder from "./views/OverlayBorder.vue";
+import OverlayPanel from "./views/OverlayPanel.vue";
 
 export const router = createRouter({
 	history: createWebHashHistory(),
@@ -68,6 +70,24 @@ export const router = createRouter({
 			component: Viewer,
 			meta: {
 				bare: true,
+			},
+		},
+		{
+			// Host "being viewed" overlay: a click-through red border covering the
+			// screen. `meta.overlay` renders it outside the Vuetify shell so the
+			// window stays transparent.
+			path: "/overlay-border",
+			component: OverlayBorder,
+			meta: {
+				overlay: true,
+			},
+		},
+		{
+			// Host overlay badge (bottom-right): collapsible, shows who's viewing.
+			path: "/overlay-panel",
+			component: OverlayPanel,
+			meta: {
+				overlay: true,
 			},
 		},
 	],

@@ -42,27 +42,45 @@
 		</VChip>
 		<div v-if="hasFrame" class="zoom-controls">
 			<VBtn
-				icon="mdi-minus"
+				:icon="panelOpen ? 'mdi-chevron-right' : 'mdi-chevron-left'"
 				size="small"
 				variant="text"
-				:disabled="zoom <= MIN_ZOOM"
-				@click="zoomBy(-ZOOM_STEP)"
+				:title="panelOpen ? t('viewer.collapse') : t('viewer.expand')"
+				@click="panelOpen = !panelOpen"
 			/>
-			<button
-				type="button"
-				class="zoom-label"
-				:title="t('viewer.resetZoom')"
-				@click="resetZoom"
-			>
-				{{ Math.round(zoom * 100) }}%
-			</button>
-			<VBtn
-				icon="mdi-plus"
-				size="small"
-				variant="text"
-				:disabled="zoom >= MAX_ZOOM"
-				@click="zoomBy(ZOOM_STEP)"
-			/>
+			<template v-if="panelOpen">
+				<VBtn
+					icon="mdi-minus"
+					size="small"
+					variant="text"
+					:disabled="zoom <= MIN_ZOOM"
+					@click="zoomBy(-ZOOM_STEP)"
+				/>
+				<button
+					type="button"
+					class="zoom-label"
+					:title="t('viewer.resetZoom')"
+					@click="resetZoom"
+				>
+					{{ Math.round(zoom * 100) }}%
+				</button>
+				<VBtn
+					icon="mdi-plus"
+					size="small"
+					variant="text"
+					:disabled="zoom >= MAX_ZOOM"
+					@click="zoomBy(ZOOM_STEP)"
+				/>
+				<div class="sep" />
+				<VBtn
+					icon="mdi-close-circle-outline"
+					size="small"
+					variant="text"
+					color="error"
+					:title="t('viewer.disconnect')"
+					@click="disconnect"
+				/>
+			</template>
 		</div>
 	</div>
 </template>
@@ -113,6 +131,8 @@
 	const MAX_ZOOM = 5;
 	const ZOOM_STEP = 0.25;
 	const zoom = ref(1);
+	// The floating control bar can be folded to a single chevron, TeamViewer-style.
+	const panelOpen = ref(true);
 	// The source frame's pixel size and the live window size — together they give
 	// the "fit" scale that zoom multiplies.
 	const frameW = ref(0);
@@ -141,6 +161,12 @@
 
 	function resetZoom(): void {
 		zoom.value = 1;
+	}
+
+	// End the session from the viewer side. The backend stops the stream and
+	// closes this window, so no local cleanup is needed here.
+	async function disconnect(): Promise<void> {
+		await invoke("lan_disconnect").catch(() => { /* already gone */ });
 	}
 
 	function onResize(): void {
@@ -297,6 +323,13 @@
 		border-radius: 8px;
 		background: rgba(0, 0, 0, 0.55);
 		opacity: 0.85;
+	}
+
+	.sep {
+		width: 1px;
+		height: 20px;
+		margin: 0 4px;
+		background: rgba(255, 255, 255, 0.2);
 	}
 
 	.zoom-label {

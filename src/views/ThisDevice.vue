@@ -83,6 +83,19 @@
 							</VBtn>
 						</div>
 					</VAlert>
+
+					<VSwitch
+						:model-value="store.hostShareAll"
+						color="primary"
+						density="comfortable"
+						hide-details
+						class="mt-2"
+						:label="t('device.shareAll')"
+						@update:model-value="onShareAll"
+					/>
+					<div class="text-caption text-medium-emphasis">
+						{{ t("device.shareAllHint") }}
+					</div>
 				</template>
 
 				<template v-else>
@@ -135,7 +148,7 @@
 		listen, type UnlistenFn,
 	} from "@tauri-apps/api/event";
 	import {
-		hostDisconnect, loadPublicKey, type NetworkInfo, networkInfo,
+		hostDisconnect, hostSetShareAll, loadPublicKey, type NetworkInfo, networkInfo,
 		refreshHostState, startHost, store,
 	} from "../store";
 
@@ -148,6 +161,7 @@
 	let unlistenConnected: UnlistenFn | null = null;
 	let unlistenDisconnected: UnlistenFn | null = null;
 	let unlistenStopped: UnlistenFn | null = null;
+	let unlistenShareAll: UnlistenFn | null = null;
 	let netTimer: ReturnType<typeof setInterval> | undefined;
 
 	async function refreshNet() {
@@ -200,12 +214,17 @@
 			store.hostPin = "";
 			store.hostPeer = null;
 		});
+		// Keep the toggle in sync if it's flipped elsewhere (e.g. a future place).
+		unlistenShareAll = await listen<boolean>("host://share-all", (e) => {
+			store.hostShareAll = e.payload;
+		});
 	});
 
 	onUnmounted(() => {
 		unlistenConnected?.();
 		unlistenDisconnected?.();
 		unlistenStopped?.();
+		unlistenShareAll?.();
 		if (netTimer) {
 			clearInterval(netTimer);
 		}
@@ -226,6 +245,14 @@
 			await hostDisconnect();
 		} finally {
 			disconnecting.value = false;
+		}
+	}
+
+	async function onShareAll(value: boolean | null) {
+		try {
+			await hostSetShareAll(value ?? false);
+		} catch {
+			// Not hosting (rare race) — the switch reverts on next state sync.
 		}
 	}
 

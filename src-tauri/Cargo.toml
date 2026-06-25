@@ -1,6 +1,6 @@
 [package]
 name = "rivetlink-app"
-version = "0.1.28"
+version = "0.1.29"
 description = "RivetLink desktop app"
 authors = ["RivetLink"]
 edition = "2021"
@@ -17,7 +17,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 # `devtools` keeps the web inspector available in release builds too (right-
 # click -> Inspect Element). Drop it for a hardened production release.
-tauri = { version = "2", features = ["devtools"] }
+# `macos-private-api`: transparent windows on macOS (the host "being viewed"
+# overlay). No-op on Linux/Windows; pairs with `macOSPrivateApi: true` in
+# tauri.conf.json.
+tauri = { version = "2", features = ["devtools", "macos-private-api"] }
 tauri-plugin-opener = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"

@@ -65,6 +65,10 @@ struct HostSession {
     /// Bumping this hangs up on the *active* viewer without stopping the
     /// listener (so the PIN/advertisement stay live). Drives "Disconnect helper".
     kick: tokio::sync::watch::Sender<u64>,
+    /// "Share all screens": `true` lets the helper list/switch every display,
+    /// `false` pins it to the primary. Toggled live from the host UI; the agent
+    /// reads it per request and pushes the client a fresh display list on change.
+    share_all: tokio::sync::watch::Sender<bool>,
 }
 
 impl HostSession {
@@ -545,6 +549,91 @@ fn open_viewer(app: &tauri::AppHandle, title: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ---- Host "being viewed" overlay -------------------------------------------
+
+/// The host's primary screen as a *logical* rect (x, y, width, height) — what
+/// Tauri's window builder expects. `None` if no monitor is reported (headless).
+fn primary_logical_rect(app: &tauri::AppHandle) -> Option<(f64, f64, f64, f64)> {
+    let monitor = app.primary_monitor().ok().flatten()?;
+    let scale = monitor.scale_factor();
+    let pos = monitor.position().to_logical::<f64>(scale);
+    let size = monitor.size().to_logical::<f64>(scale);
+    Some((pos.x, pos.y, size.width, size.height))
+}
+
+/// Show the "you're being viewed" overlay on the host's primary screen: a
+/// click-through red border covering the screen plus a small collapsible badge
+/// bottom-right. Both are transparent, borderless, always-on-top windows; the
+/// border ignores the cursor so the host keeps working behind it. Idempotent.
+///
+/// On Wayland the compositor owns window placement, so the overlay lands on the
+/// current/primary output and can't be repositioned — by design (the user opted
+/// for "panel stays on screen 1 always").
+fn show_host_overlay(app: &tauri::AppHandle) {
+    let rect = primary_logical_rect(app);
+
+    if app.get_webview_window("hostborder").is_none() {
+        let mut builder = tauri::WebviewWindowBuilder::new(
+            app,
+            "hostborder",
+            tauri::WebviewUrl::App("index.html#/overlay-border".into()),
+        )
+        .title("RivetLink — sharing")
+        .transparent(true)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .shadow(false)
+        .resizable(false)
+        .focused(false);
+        if let Some((x, y, w, h)) = rect {
+            builder = builder.position(x, y).inner_size(w, h);
+        }
+        match builder.build() {
+            // Click-through: the border is decoration only, never steals input.
+            Ok(win) => {
+                let _ = win.set_ignore_cursor_events(true);
+            },
+            Err(e) => tracing::warn!(error = %e, "overlay: border window failed"),
+        }
+    }
+
+    if app.get_webview_window("hostpanel").is_none() {
+        const PANEL_W: f64 = 230.0;
+        const PANEL_H: f64 = 44.0;
+        const MARGIN: f64 = 16.0;
+        let mut builder = tauri::WebviewWindowBuilder::new(
+            app,
+            "hostpanel",
+            tauri::WebviewUrl::App("index.html#/overlay-panel".into()),
+        )
+        .title("RivetLink")
+        .transparent(true)
+        .decorations(false)
+        .always_on_top(true)
+        .skip_taskbar(true)
+        .shadow(false)
+        .resizable(false)
+        .inner_size(PANEL_W, PANEL_H)
+        .focused(false);
+        if let Some((x, y, w, h)) = rect {
+            builder = builder.position(x + w - PANEL_W - MARGIN, y + h - PANEL_H - MARGIN);
+        }
+        if let Err(e) = builder.build() {
+            tracing::warn!(error = %e, "overlay: panel window failed");
+        }
+    }
+}
+
+/// Tear down the host overlay windows (the viewing session ended).
+fn hide_host_overlay(app: &tauri::AppHandle) {
+    for label in ["hostborder", "hostpanel"] {
+        if let Some(win) = app.get_webview_window(label) {
+            let _ = win.close();
+        }
+    }
+}
+
 /// Connect to a LAN host and open a live screen stream in its own window.
 ///
 /// Frames are emitted to the frontend as `lan://frame` (a JPEG data URL); the
@@ -634,11 +723,18 @@ async fn lan_connect(
     };
 
     let app_for_task = app.clone();
+    let app_for_displays = app.clone();
     let displays_for_viewer = displays.clone();
     let task = tokio::spawn(async move {
         let mut announced = false;
-        let result =
-            rivetlink_sdk::lan::stream_frames(stream, channel, 20, None, my_name, switch_rx, |delta| {
+        let result = rivetlink_sdk::lan::stream_frames(
+            stream,
+            channel,
+            20,
+            None,
+            my_name,
+            switch_rx,
+            |delta| {
                 // The first frame proves the viewer window is mounted + listening,
                 // so re-send the display list now — the optimistic emit above can
                 // beat the viewer's listener registration, leaving the picker empty.
@@ -649,8 +745,14 @@ async fn lan_connect(
                 // Forward the delta frame to the viewer window. If emit fails the
                 // window is gone — stop the stream.
                 app_for_task.emit("lan://frame", delta).is_ok()
-            })
-            .await;
+            },
+            // The host pushes a fresh display list when it grants/revokes "share
+            // all screens" mid-stream — relay it so the viewer's picker updates.
+            move |displays| {
+                let _ = app_for_displays.emit("lan://displays", displays);
+            },
+        )
+        .await;
         if let Err(e) = result {
             let _ = app_for_task.emit("lan://error", e.to_string());
         }
@@ -787,6 +889,10 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     // Kick channel: bumping the value drops the active viewer (host pressed
     // "Disconnect") while keeping the listener up.
     let (kick_tx, kick_rx) = tokio::sync::watch::channel(0u64);
+    // Share-all channel: a direct LAN helper sees every screen by default; the
+    // host can flip this off to restrict it to the primary screen. (A future
+    // internet/session-code transport would start this at `false`.)
+    let (share_tx, share_rx) = tokio::sync::watch::channel(true);
 
     let app_for_serve = app.clone();
     let serve_pin = pin.clone();
@@ -799,8 +905,16 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
         };
         let port = rivetlink_sdk::lan::DEFAULT_LAN_PORT;
         tracing::info!(%device_name, port, "start_host: advertising + serving on LAN");
-        if let Err(e) =
-            serve_with_events(signing_key, device_name, port, auth, Some(tx), Some(kick_rx)).await
+        if let Err(e) = serve_with_events(
+            signing_key,
+            device_name,
+            port,
+            auth,
+            Some(tx),
+            Some(kick_rx),
+            Some(share_rx),
+        )
+        .await
         {
             tracing::warn!(error = %e, "start_host: serve loop ended with error");
             let _ = app_for_serve.emit("host://error", e.to_string());
@@ -820,12 +934,16 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
                     if let Ok(mut p) = peer_for_fwd.lock() {
                         *p = Some(label.clone());
                     }
+                    // Raise the on-screen "you're being viewed" overlay (red
+                    // border + collapsible badge) on the host's primary screen.
+                    show_host_overlay(&app_for_fwd);
                     let _ = app_for_fwd.emit("host://connected", label);
                 },
                 HostEvent::ClientDisconnected => {
                     if let Ok(mut p) = peer_for_fwd.lock() {
                         *p = None;
                     }
+                    hide_host_overlay(&app_for_fwd);
                     let _ = app_for_fwd.emit("host://disconnected", ());
                 },
             }
@@ -839,6 +957,7 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
             pin: pin.clone(),
             peer,
             kick: kick_tx,
+            share_all: share_tx,
         });
     }
     Ok(pin)
@@ -858,6 +977,7 @@ fn stop_host_inner(state: &AppState) {
 #[tauri::command]
 async fn stop_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     stop_host_inner(&state);
+    hide_host_overlay(&app);
     let _ = app.emit("host://stopped", ());
     Ok(())
 }
@@ -870,19 +990,48 @@ async fn stop_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<
 struct HostState {
     pin: Option<String>,
     peer: Option<String>,
+    /// Whether the helper may see/switch every screen (vs. the primary only).
+    share_all: bool,
 }
 
 #[tauri::command]
 async fn host_active(state: State<'_, AppState>) -> Result<HostState, String> {
     let guard = state.host.lock().map_err(|_| "host lock poisoned".to_string())?;
-    let (pin, peer) = match guard.as_ref() {
+    let (pin, peer, share_all) = match guard.as_ref() {
         Some(session) => (
             Some(session.pin.clone()),
             session.peer.lock().ok().and_then(|p| p.clone()),
+            *session.share_all.borrow(),
         ),
-        None => (None, None),
+        None => (None, None, true),
     };
-    Ok(HostState { pin, peer })
+    Ok(HostState { pin, peer, share_all })
+}
+
+/// Toggle "share all screens" on the live host session. The agent picks it up
+/// per request and pushes the connected helper a fresh display list; on revoke
+/// it snaps the helper back to the primary screen. No-op if not hosting.
+#[tauri::command]
+async fn host_set_share_all(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    value: bool,
+) -> Result<(), String> {
+    if let Ok(guard) = state.host.lock() {
+        if let Some(session) = guard.as_ref() {
+            let _ = session.share_all.send(value);
+        }
+    }
+    // Mirror to any open host UI (the page + the overlay badge).
+    let _ = app.emit("host://share-all", value);
+    Ok(())
+}
+
+/// Current "share all screens" state (defaults to `true` when not hosting).
+#[tauri::command]
+async fn host_share_all(state: State<'_, AppState>) -> Result<bool, String> {
+    let guard = state.host.lock().map_err(|_| "host lock poisoned".to_string())?;
+    Ok(guard.as_ref().map_or(true, |s| *s.share_all.borrow()))
 }
 
 /// Hang up on the currently connected helper without stopping hosting: the
@@ -900,6 +1049,7 @@ async fn host_disconnect(app: tauri::AppHandle, state: State<'_, AppState>) -> R
             }
         }
     }
+    hide_host_overlay(&app);
     let _ = app.emit("host://disconnected", ());
     Ok(())
 }
@@ -1205,6 +1355,8 @@ pub fn run() {
             stop_host,
             host_active,
             host_disconnect,
+            host_set_share_all,
+            host_share_all,
             network_info,
             lan_ping,
             add_trusted_key,
