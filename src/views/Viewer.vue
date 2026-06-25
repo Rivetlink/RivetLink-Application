@@ -374,7 +374,14 @@
 	}
 
 	.waiting {
+		position: absolute;
+		inset: 0;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
 		color: #fff;
 		text-align: center;
+		pointer-events: none;
 	}
 </style>

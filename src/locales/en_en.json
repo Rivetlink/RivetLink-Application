@@ -211,5 +211,15 @@
         "kickConfirm": "Kick this person?",
         "expand": "Expand",
         "collapse": "Collapse"
+    },
+    "consent": {
+        "title": "Allow this connection?",
+        "body": "{name} wants to view this screen.",
+        "someone": "Someone",
+        "key": "Key:",
+        "remember": "Remember this device",
+        "rememberHint": "Then it can connect without the code next time.",
+        "accept": "Allow",
+        "reject": "Reject"
     }
 }

@@ -18,7 +18,7 @@ use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-use rivetlink_agent::lan::{serve_with_events, HostEvent, LanAuth};
+use rivetlink_agent::lan::{serve_with_events, ConsentRequest, HostEvent, LanAuth};
 use rivetlink_sdk::{ClientConfig, Device, Identity, RivetClient};
 
 use settings::{AppSettings, Relay, TrustedKey};
@@ -47,6 +47,20 @@ struct AppState {
     /// Reused `sysinfo` handle for the Resources page. Kept alive so each poll
     /// measures CPU use since the previous one (a single refresh can't).
     sys: std::sync::Mutex<sysinfo::System>,
+    /// In-flight host-consent prompts, keyed by a per-request id. The agent
+    /// awaits the host's accept/reject on each entry's `reply`; `respond_consent`
+    /// looks it up by id and answers.
+    pending_consents: std::sync::Mutex<std::collections::HashMap<u64, ConsentPending>>,
+    /// Monotonic id source for consent prompts.
+    consent_seq: std::sync::atomic::AtomicU64,
+}
+
+/// A pending host-consent prompt awaiting the user's accept/reject.
+struct ConsentPending {
+    reply: tokio::sync::oneshot::Sender<bool>,
+    /// The client's verified identity key (base64), if any — to remember it.
+    key: Option<String>,
+    name: String,
 }
 
 /// A running host session: the accept-loop task and the task forwarding its
@@ -55,6 +69,8 @@ struct AppState {
 struct HostSession {
     serve: tokio::task::JoinHandle<()>,
     forward: tokio::task::JoinHandle<()>,
+    /// Task draining host-consent requests from the agent to the UI.
+    consent_fwd: tokio::task::JoinHandle<()>,
     /// The PIN the helper must enter; shown on the host's screen.
     pin: String,
     /// Label of the currently connected client (`None` = nobody). Kept in sync
@@ -88,6 +104,7 @@ impl HostSession {
     fn stop(self) {
         self.serve.abort();
         self.forward.abort();
+        self.consent_fwd.abort();
     }
 }
 
@@ -599,9 +616,9 @@ fn show_host_overlay(app: &tauri::AppHandle) {
         .resizable(false)
         .inner_size(BADGE_EXPANDED_W, BADGE_H)
         .focused(false);
-        if let Some((x, y, w, h)) = rect {
+        if let Some((x, y, w, _h)) = rect {
             builder = builder
-                .position(x + w - BADGE_EXPANDED_W - BADGE_MARGIN, y + h - BADGE_H - BADGE_MARGIN);
+                .position(x + w - BADGE_EXPANDED_W - BADGE_MARGIN, y + BADGE_TOP_MARGIN);
         }
         match builder.build() {
             // Drop the inherited app menu bar ("RivetLink"/"Edit") — on Linux it
@@ -614,15 +631,17 @@ fn show_host_overlay(app: &tauri::AppHandle) {
     }
 }
 
-/// Badge window geometry. The collapsed handle is narrow and sits flush in the
-/// corner; the expanded badge has a small margin.
+/// Badge window geometry. Pinned to the **top**-right — the bottom edge kept
+/// landing in the dock/panel on the host's compositor. The top margin clears the
+/// GNOME top bar.
 const BADGE_EXPANDED_W: f64 = 340.0;
 const BADGE_COLLAPSED_W: f64 = 66.0;
 const BADGE_H: f64 = 64.0;
 const BADGE_MARGIN: f64 = 16.0;
+const BADGE_TOP_MARGIN: f64 = 48.0;
 
 /// Resize + reposition the host badge as it collapses/expands, keeping it pinned
-/// to the bottom-right of the primary screen. Repositioning is what keeps the
+/// to the top-right of the primary screen. Repositioning is what keeps the
 /// collapsed handle against the edge — shrinking the width alone leaves the left
 /// edge fixed, so the handle would drift left, away from the screen edge.
 #[tauri::command]
@@ -632,12 +651,10 @@ fn set_badge_geometry(app: tauri::AppHandle, collapsed: bool) {
     };
     let width = if collapsed { BADGE_COLLAPSED_W } else { BADGE_EXPANDED_W };
     let _ = win.set_size(tauri::LogicalSize::new(width, BADGE_H));
-    if let Some((mx, my, mw, mh)) = primary_logical_rect(&app) {
-        // Keep a margin in both states so the badge clears the panel/dock at the
-        // screen edge (a zero margin dropped the collapsed handle into the bar).
+    if let Some((mx, my, mw, _mh)) = primary_logical_rect(&app) {
         let _ = win.set_position(tauri::LogicalPosition::new(
             mx + mw - width - BADGE_MARGIN,
-            my + mh - BADGE_H - BADGE_MARGIN,
+            my + BADGE_TOP_MARGIN,
         ));
     }
 }
@@ -913,6 +930,9 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     // host can flip this off to restrict it to the primary screen. (A future
     // internet/session-code transport would start this at `false`.)
     let (share_tx, share_rx) = tokio::sync::watch::channel(true);
+    // Consent channel: the agent asks before letting a not-yet-trusted (PIN)
+    // client view; the drain task below turns each request into a UI prompt.
+    let (consent_tx, mut consent_rx) = tokio::sync::mpsc::channel::<ConsentRequest>(8);
 
     let app_for_serve = app.clone();
     let serve_pin = pin.clone();
@@ -933,11 +953,32 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
             Some(tx),
             Some(kick_rx),
             Some(share_rx),
+            Some(consent_tx),
         )
         .await
         {
             tracing::warn!(error = %e, "start_host: serve loop ended with error");
             let _ = app_for_serve.emit("host://error", e.to_string());
+        }
+    });
+
+    // Turn each agent consent request into a UI prompt: store the reply keyed by
+    // an id, surface the main window, and emit the request to the frontend.
+    let app_for_consent = app.clone();
+    let consent_fwd = tokio::spawn(async move {
+        while let Some(ConsentRequest { key, name, reply }) = consent_rx.recv().await {
+            let st = app_for_consent.state::<AppState>();
+            let id = st.consent_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if let Ok(mut map) = st.pending_consents.lock() {
+                map.insert(id, ConsentPending { reply, key: key.clone(), name: name.clone() });
+            }
+            // Bring the host's window forward so the prompt isn't missed.
+            if let Some(win) = app_for_consent.get_webview_window("main") {
+                let _ = win.show();
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+            }
+            let _ = app_for_consent.emit("host://consent-request", ConsentRequestDto { id, key, name });
         }
     });
 
@@ -994,6 +1035,7 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
         *guard = Some(HostSession {
             serve,
             forward,
+            consent_fwd,
             pin: pin.clone(),
             peer,
             kick: kick_tx,
@@ -1299,6 +1341,44 @@ async fn trust_client(
     Ok(result)
 }
 
+/// A pending consent prompt sent to the host UI.
+#[derive(Serialize, Clone)]
+struct ConsentRequestDto {
+    id: u64,
+    key: Option<String>,
+    name: String,
+}
+
+/// The host answered a consent prompt. Forwards the decision to the waiting
+/// agent session; on accept + remember, trusts the client's key (no OS password
+/// — the correct PIN plus this explicit accept is the gate). No-op for an
+/// unknown id (e.g. the request already timed out).
+#[tauri::command]
+async fn respond_consent(
+    state: State<'_, AppState>,
+    id: u64,
+    accept: bool,
+    remember: bool,
+) -> Result<(), String> {
+    let pending = state.pending_consents.lock().ok().and_then(|mut m| m.remove(&id));
+    let Some(ConsentPending { reply, key, name }) = pending else {
+        return Ok(());
+    };
+    if accept && remember {
+        if let Some(key) = key {
+            let mut settings = state.settings.lock().await;
+            if !settings.trusted_keys.iter().any(|k| k.public_key == key) {
+                // Best-effort: ignore empty/dup since the host explicitly accepted.
+                let _ = push_trusted_key(&mut settings, &name, &key);
+                settings.save(&state.data_dir)?;
+                sync_trusted_live(&state, &settings);
+            }
+        }
+    }
+    let _ = reply.send(accept);
+    Ok(())
+}
+
 /// Mirror the persisted trusted keys into the live allow-list the running host
 /// reads, so an add/remove applies without restarting the host.
 fn sync_trusted_live(state: &AppState, settings: &AppSettings) {
@@ -1404,6 +1484,8 @@ pub fn run() {
                 host: std::sync::Mutex::new(None),
                 trusted_keys: Arc::new(std::sync::Mutex::new(trusted)),
                 sys: std::sync::Mutex::new(sysinfo::System::new()),
+                pending_consents: std::sync::Mutex::new(std::collections::HashMap::new()),
+                consent_seq: std::sync::atomic::AtomicU64::new(0),
             });
 
             // Native menu bar (RivetLink + Edit). The "Check for Updates" item
@@ -1456,6 +1538,7 @@ pub fn run() {
             host_share_all,
             set_badge_geometry,
             trust_client,
+            respond_consent,
             network_info,
             lan_ping,
             add_trusted_key,

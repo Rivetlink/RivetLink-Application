@@ -280,6 +280,20 @@ export async function trustClient(name: string): Promise<void> {
 	store.hostClientTrusted = true;
 }
 
+/// Answer a host-consent prompt (accept/reject an incoming connection, and
+/// optionally remember the device).
+export async function respondConsent(
+	id: number,
+	accept: boolean,
+	remember: boolean,
+): Promise<void> {
+	await invoke("respond_consent", {
+		id,
+		accept,
+		remember,
+	});
+}
+
 /// This machine's current Wi-Fi name (if any) and LAN IP.
 export async function networkInfo(): Promise<NetworkInfo> {
 	return invoke<NetworkInfo>("network_info");

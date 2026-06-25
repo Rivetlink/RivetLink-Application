@@ -57,6 +57,9 @@
 
 			<!-- Check for updates (from the RivetLink native menu) -->
 			<UpdateModal />
+
+			<!-- Host consent: approve an incoming connection -->
+			<ConsentModal />
 		</template>
 	</VApp>
 </template>
@@ -81,6 +84,7 @@
 	} from "./updates";
 	import Onboarding from "./views/Onboarding.vue";
 	import UpdateModal from "./components/UpdateModal.vue";
+	import ConsentModal from "./components/ConsentModal.vue";
 	import OverlayPanel from "./views/OverlayPanel.vue";
 
 	const route = useRoute();

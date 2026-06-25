@@ -211,5 +211,15 @@
         "kickConfirm": "Deze persoon kicken?",
         "expand": "Uitklappen",
         "collapse": "Inklappen"
+    },
+    "consent": {
+        "title": "Deze verbinding toestaan?",
+        "body": "{name} wil dit scherm bekijken.",
+        "someone": "Iemand",
+        "key": "Sleutel:",
+        "remember": "Onthoud dit apparaat",
+        "rememberHint": "Dan kan't de volgende keer zonder code verbinden.",
+        "accept": "Toestaan",
+        "reject": "Weigeren"
     }
 }
