@@ -83,13 +83,15 @@
 		// WebKitGTK only repaints dirty regions, so shrinking the pill on collapse
 		// leaves the expanded pill's pixels as a ghost in the now-transparent area
 		// until some later full repaint (the "fixes itself after 5-10s" effect).
-		// Force a full-surface repaint once the new layout has committed.
+		// An opacity nudge is treated as visually-identical and skipped, so instead
+		// pull <body> out of the render tree and back in one synchronous task: that
+		// invalidates the WHOLE body rect (erased to transparent → ghost cleared),
+		// and since none→'' happens before any paint there's no visible blink.
 		await nextTick();
-		const root = document.documentElement;
-		root.style.opacity = "0.999";
-		requestAnimationFrame(() => {
-			root.style.opacity = "";
-		});
+		const b = document.body;
+		b.style.display = "none";
+		void b.offsetHeight; // flush layout in the hidden state to commit the removal
+		b.style.display = "";
 	}
 
 	// Kick the helper. The backend drops the viewer and closes this window, so
