@@ -709,6 +709,23 @@ fn place_badge(app: tauri::AppHandle) {
     }
 }
 
+/// Force a full repaint of the badge window after a collapse/expand. WebKitGTK
+/// only repaints dirty regions on a transparent surface, so shrinking the pill
+/// leaves the old (wider) pill's pixels ghosting in the now-transparent area
+/// until some unrelated full repaint ~10s later. DOM-level nudges (opacity,
+/// display toggle) don't invalidate that area — only a window-surface realloc
+/// does. Nudge the height by 1px (top-left stays put, so the bottom edge moves
+/// 1px and nothing repositions — no Wayland fling) and restore it a frame later.
+#[tauri::command]
+async fn repaint_badge(app: tauri::AppHandle) {
+    let Some(win) = app.get_webview_window("hostpanel") else {
+        return;
+    };
+    let _ = win.set_size(tauri::LogicalSize::new(BADGE_EXPANDED_W, BADGE_H - 1.0));
+    tokio::time::sleep(std::time::Duration::from_millis(16)).await;
+    let _ = win.set_size(tauri::LogicalSize::new(BADGE_EXPANDED_W, BADGE_H));
+}
+
 /// Hide the host "being viewed" badge (the viewing session ended). Hidden, not
 /// closed, so the next session re-shows the same window — see `show_host_overlay`
 /// for why recreating it races into two overlapping badges.
@@ -1606,6 +1623,7 @@ pub fn run() {
             host_set_share_all,
             host_share_all,
             place_badge,
+            repaint_badge,
             trust_client,
             respond_consent,
             network_info,
