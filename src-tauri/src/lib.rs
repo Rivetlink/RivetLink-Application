@@ -593,6 +593,9 @@ async fn lan_screenshot(
 /// Closing the window stops the stream.
 fn open_viewer(app: &tauri::AppHandle, title: &str) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("viewer") {
+        // Re-assert on-top + raise: a reused viewer (reconnect) can drop behind
+        // other apps, and GNOME only honours always_on_top when it's (re)set.
+        let _ = win.set_always_on_top(true);
         let _ = win.set_focus();
         return Ok(());
     }
@@ -707,23 +710,6 @@ fn place_badge(app: tauri::AppHandle) {
         let (px, py) = badge_origin(mx, my, mw, mh, BADGE_EXPANDED_W);
         let _ = win.set_position(tauri::LogicalPosition::new(px, py));
     }
-}
-
-/// Force a full repaint of the badge window after a collapse/expand. WebKitGTK
-/// only repaints dirty regions on a transparent surface, so shrinking the pill
-/// leaves the old (wider) pill's pixels ghosting in the now-transparent area
-/// until some unrelated full repaint ~10s later. DOM-level nudges (opacity,
-/// display toggle) don't invalidate that area — only a window-surface realloc
-/// does. Nudge the height by 1px (top-left stays put, so the bottom edge moves
-/// 1px and nothing repositions — no Wayland fling) and restore it a frame later.
-#[tauri::command]
-async fn repaint_badge(app: tauri::AppHandle) {
-    let Some(win) = app.get_webview_window("hostpanel") else {
-        return;
-    };
-    let _ = win.set_size(tauri::LogicalSize::new(BADGE_EXPANDED_W, BADGE_H - 1.0));
-    tokio::time::sleep(std::time::Duration::from_millis(16)).await;
-    let _ = win.set_size(tauri::LogicalSize::new(BADGE_EXPANDED_W, BADGE_H));
 }
 
 /// Hide the host "being viewed" badge (the viewing session ended). Hidden, not
@@ -1516,6 +1502,16 @@ fn init_logging(log_dir: &std::path::Path) -> Option<PathBuf> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // WebKitGTK's accelerated-compositing layer cache doesn't erase the vacated
+    // region when the transparent overlay's pill shrinks on collapse, so the old
+    // (wider) pill ghosts for ~10s until the cache flushes on its own. (Expanding
+    // is fine — it paints a larger opaque pill over everything.) Disabling
+    // accelerated compositing forces the software painter, which repaints dirty
+    // regions — including erase-to-transparent — immediately. Must be set before
+    // the webview spawns; the overlay/viewer are light enough that SW paint is OK.
+    #[cfg(target_os = "linux")]
+    std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -1623,7 +1619,6 @@ pub fn run() {
             host_set_share_all,
             host_share_all,
             place_badge,
-            repaint_badge,
             trust_client,
             respond_consent,
             network_info,

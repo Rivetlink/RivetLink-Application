@@ -80,14 +80,15 @@
 	async function toggle(): Promise<void> {
 		collapsed.value = !collapsed.value;
 		confirming.value = false;
-		// WebKitGTK only repaints dirty regions, so shrinking the pill on collapse
-		// leaves the expanded pill's pixels as a ghost in the now-transparent area
-		// until some later full repaint (the "fixes itself after ~10s" effect).
-		// DOM-level nudges (opacity, display toggle) don't invalidate that region —
-		// only a window-surface realloc does. The backend nudges the window height
-		// by 1px and back, which is invisible but forces a clean full repaint.
+		// The webview runs with accelerated compositing disabled (the backend sets
+		// WEBKIT_DISABLE_COMPOSITING_MODE), so the software painter erases the shrunk
+		// pill's vacated region on its own. Belt-and-suspenders: a body display
+		// toggle forces a full repaint in case anything is still cached.
 		await nextTick();
-		invoke("repaint_badge").catch(() => { /* window gone */ });
+		const b = document.body;
+		b.style.display = "none";
+		void b.offsetHeight;
+		b.style.display = "";
 	}
 
 	// Kick the helper. The backend drops the viewer and closes this window, so
