@@ -40,6 +40,16 @@
 		>
 			{{ t("viewer.poor") }}
 		</VChip>
+		<VChip
+			v-if="controlling"
+			class="controlling-chip"
+			color="primary"
+			size="small"
+			variant="flat"
+			prepend-icon="mdi-mouse"
+		>
+			{{ t("viewer.controlling") }}
+		</VChip>
 		<div v-if="hasFrame" class="zoom-controls">
 			<VBtn
 				:icon="panelOpen ? 'mdi-chevron-right' : 'mdi-chevron-left'"
@@ -70,6 +80,15 @@
 					variant="text"
 					:disabled="zoom >= MAX_ZOOM"
 					@click="zoomBy(ZOOM_STEP)"
+				/>
+				<div class="sep" />
+				<VBtn
+					:icon="controlling ? 'mdi-mouse' : 'mdi-mouse-off'"
+					size="small"
+					variant="text"
+					:color="controlling ? 'primary' : undefined"
+					:title="controlling ? t('viewer.releaseControl') : t('viewer.takeControl')"
+					@click="toggleControl"
 				/>
 				<div class="sep" />
 				<VBtn
@@ -133,6 +152,15 @@
 	const zoom = ref(1);
 	// The floating control bar can be folded to a single chevron, TeamViewer-style.
 	const panelOpen = ref(true);
+	// Remote control: when on, local mouse/keyboard over the canvas is captured and
+	// forwarded to the host (which only acts on it if it granted control). The host
+	// maps the platform command modifier itself, so we just flag ours as such.
+	const controlling = ref(false);
+	const isMac = navigator.platform.toUpperCase().includes("MAC");
+	// Throttle pointer moves: only the latest position matters, and the host's
+	// control channel shouldn't be flooded. ~120 Hz is smooth and cheap.
+	const MOVE_INTERVAL_MS = 8;
+	let lastMoveAt = 0;
 	// The source frame's pixel size and the live window size — together they give
 	// the "fit" scale that zoom multiplies.
 	const frameW = ref(0);
@@ -246,6 +274,178 @@
 		await invoke("lan_switch_display", { display: id }).catch(() => { /* stream gone */ });
 	}
 
+	// Fire-and-forget: input is high-frequency and lossy by design (the backend
+	// drops on a full queue), so never await or surface errors here.
+	function sendInput(event: Record<string, unknown>): void {
+		invoke("lan_send_input", { event }).catch(() => { /* stream gone */ });
+	}
+
+	// Map a pointer position to 0..10000 of the displayed frame (resolution-
+	// independent). Returns null when the pointer is outside the screen image.
+	function framePoint(e: PointerEvent): {
+		x: number;
+		y: number
+	} | null {
+		const canvas = canvasEl.value;
+		if (!canvas) {
+			return null;
+		}
+		const rect = canvas.getBoundingClientRect();
+		if (rect.width === 0 || rect.height === 0) {
+			return null;
+		}
+		const x = Math.round(((e.clientX - rect.left) / rect.width) * 10000);
+		const y = Math.round(((e.clientY - rect.top) / rect.height) * 10000);
+		if (x < 0 || x > 10000 || y < 0 || y > 10000) {
+			return null;
+		}
+		return {
+			x,
+			y,
+		};
+	}
+
+	function pointerButton(e: PointerEvent): string | null {
+		switch (e.button) {
+			case 0: return "left";
+			case 1: return "middle";
+			case 2: return "right";
+			default: return null;
+		}
+	}
+
+	function onPointerMove(e: PointerEvent): void {
+		const now = performance.now();
+		if (now - lastMoveAt < MOVE_INTERVAL_MS) {
+			return;
+		}
+		const point = framePoint(e);
+		if (point === null) {
+			return;
+		}
+		lastMoveAt = now;
+		sendInput({
+			kind: "move",
+			x: point.x,
+			y: point.y,
+		});
+	}
+
+	function onPointerDown(e: PointerEvent): void {
+		const point = framePoint(e);
+		const button = pointerButton(e);
+		if (point === null || button === null) {
+			return;
+		}
+		e.preventDefault();
+		// Move first so the press lands exactly under the cursor.
+		sendInput({
+			kind: "move",
+			x: point.x,
+			y: point.y,
+		});
+		sendInput({
+			kind: "button",
+			button,
+			down: true,
+		});
+	}
+
+	function onPointerUp(e: PointerEvent): void {
+		const button = pointerButton(e);
+		if (button === null) {
+			return;
+		}
+		e.preventDefault();
+		sendInput({
+			kind: "button",
+			button,
+			down: false,
+		});
+	}
+
+	function onWheel(e: WheelEvent): void {
+		e.preventDefault();
+		// Browsers report deltas in pixels; the host wants wheel notches. One notch
+		// per ~40px keeps fast flicks responsive without runaway scrolling.
+		const dy = Math.trunc(e.deltaY / 40) || Math.sign(e.deltaY);
+		const dx = Math.trunc(e.deltaX / 40) || Math.sign(e.deltaX);
+		if (dx === 0 && dy === 0) {
+			return;
+		}
+		sendInput({
+			kind: "scroll",
+			dx,
+			dy,
+		});
+	}
+
+	function onKey(e: KeyboardEvent, down: boolean): void {
+		// Capture the key for the remote — don't let it trigger viewer shortcuts.
+		e.preventDefault();
+		let code = e.code;
+		// Send the platform command modifier as a logical token; the host maps it
+		// onto its own (⌘ on macOS, Ctrl elsewhere). On non-mac Ctrl IS that key.
+		const isCommandMod = isMac
+			? (code === "MetaLeft" || code === "MetaRight")
+			: (code === "ControlLeft" || code === "ControlRight");
+		if (isCommandMod) {
+			code = "CommandMod";
+		}
+		sendInput({
+			kind: "key",
+			code,
+			down,
+		});
+	}
+
+	function onKeyDown(e: KeyboardEvent): void {
+		onKey(e, true);
+	}
+
+	function onKeyUp(e: KeyboardEvent): void {
+		onKey(e, false);
+	}
+
+	function onContextMenu(e: Event): void {
+		e.preventDefault(); // right-click belongs to the remote while controlling
+	}
+
+	function attachControl(canvas: HTMLCanvasElement): void {
+		canvas.addEventListener("pointermove", onPointerMove);
+		canvas.addEventListener("pointerdown", onPointerDown);
+		canvas.addEventListener("pointerup", onPointerUp);
+		canvas.addEventListener("wheel", onWheel, { passive: false });
+		canvas.addEventListener("contextmenu", onContextMenu);
+		window.addEventListener("keydown", onKeyDown);
+		window.addEventListener("keyup", onKeyUp);
+	}
+
+	function detachControl(canvas: HTMLCanvasElement | null): void {
+		if (canvas) {
+			canvas.removeEventListener("pointermove", onPointerMove);
+			canvas.removeEventListener("pointerdown", onPointerDown);
+			canvas.removeEventListener("pointerup", onPointerUp);
+			canvas.removeEventListener("wheel", onWheel);
+			canvas.removeEventListener("contextmenu", onContextMenu);
+		}
+		window.removeEventListener("keydown", onKeyDown);
+		window.removeEventListener("keyup", onKeyUp);
+	}
+
+	function toggleControl(): void {
+		const canvas = canvasEl.value;
+		if (!canvas) {
+			return;
+		}
+		controlling.value = !controlling.value;
+		if (controlling.value) {
+			attachControl(canvas);
+		} else {
+			detachControl(canvas);
+		}
+	}
+
 	onMounted(async () => {
 		unlistenFrame = await listen<FrameDelta>("lan://frame", (e) => {
 			// Serialise frames so tile draws never interleave out of order.
@@ -255,6 +455,11 @@
 			ended.value = true;
 			hasFrame.value = false;
 			slow.value = false;
+			// Stop capturing input — there's no host to drive anymore.
+			if (controlling.value) {
+				controlling.value = false;
+				detachControl(canvasEl.value);
+			}
 			clearCanvas(); // drop the last frame instead of leaving it frozen
 			// Keep the "connection ended" message up briefly so the viewer sees
 			// what happened (e.g. the host hung up) before the window closes.
@@ -284,6 +489,7 @@
 		unlistenFrame?.();
 		unlistenEnd?.();
 		unlistenDisplays?.();
+		detachControl(canvasEl.value); // drop any input listeners
 		window.removeEventListener("resize", onResize);
 		if (slowTimer) {
 			clearInterval(slowTimer);
@@ -318,6 +524,13 @@
 		position: absolute;
 		right: 12px;
 		bottom: 12px;
+	}
+
+	.controlling-chip {
+		position: absolute;
+		top: 12px;
+		left: 12px;
+		opacity: 0.9;
 	}
 
 	.zoom-controls {

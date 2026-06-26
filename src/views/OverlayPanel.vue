@@ -26,10 +26,19 @@
 			</button>
 		</template>
 
-		<!-- Normal: who's watching + kick + collapse. -->
+		<!-- Normal: who's watching + grant control + kick + collapse. -->
 		<template v-else>
 			<span class="dot" />
 			<span class="label">{{ t("overlay.watching", { name: peer || t("overlay.someone") }) }}</span>
+			<button
+				type="button"
+				class="btn icon"
+				:class="{ active: controlGranted }"
+				:title="controlGranted ? t('overlay.controlOn') : t('overlay.controlOff')"
+				@click="toggleControl"
+			>
+				<i class="mdi" :class="controlGranted ? 'mdi-mouse' : 'mdi-mouse-off'" />
+			</button>
 			<button
 				type="button"
 				class="btn danger icon"
@@ -63,15 +72,20 @@
 	type HostState = {
 		pin: string | null;
 		peer: string | null;
+		control: boolean;
 	};
 
 	const { t } = useI18n();
 	const peer = ref<string | null>(null);
 	const collapsed = ref(false);
 	const confirming = ref(false);
+	// Whether the helper is allowed to drive this device's mouse/keyboard. Off by
+	// default — being viewed never implies being controlled.
+	const controlGranted = ref(false);
 
 	let unlistenConnected: UnlistenFn | null = null;
 	let unlistenDisconnected: UnlistenFn | null = null;
+	let unlistenControl: UnlistenFn | null = null;
 
 	// Collapse is pure CSS now: the window stays at a fixed size/position (runtime
 	// resize+reposition desync on GNOME/Wayland and flung the badge off-screen).
@@ -95,6 +109,16 @@
 	// there's nothing to clean up here.
 	async function doKick(): Promise<void> {
 		await invoke("host_disconnect").catch(() => { /* already gone */ });
+	}
+
+	// Grant or revoke the helper's mouse/keyboard control. Optimistic; the backend
+	// echoes "host://control" to confirm and keep every host surface in sync.
+	async function toggleControl(): Promise<void> {
+		const next = !controlGranted.value;
+		controlGranted.value = next;
+		await invoke("host_set_control", { value: next }).catch(() => {
+			controlGranted.value = !next; // revert on failure
+		});
 	}
 
 	onMounted(async () => {
@@ -125,6 +149,7 @@
 		try {
 			const state = await invoke<HostState>("host_active");
 			peer.value = state.peer;
+			controlGranted.value = state.control;
 		} catch {
 			// Backend unavailable — the badge still shows the generic label.
 		}
@@ -137,11 +162,15 @@
 		unlistenDisconnected = await listen("host://disconnected", () => {
 			peer.value = null;
 		});
+		unlistenControl = await listen<boolean>("host://control", (e) => {
+			controlGranted.value = e.payload;
+		});
 	});
 
 	onUnmounted(() => {
 		unlistenConnected?.();
 		unlistenDisconnected?.();
+		unlistenControl?.();
 	});
 </script>
 
@@ -211,6 +240,12 @@
 	.btn.icon {
 		width: 38px;
 		padding: 0;
+	}
+
+	/* Control granted — the mouse toggle goes green. */
+	.btn.active {
+		color: #69f0ae;
+		background: rgba(105, 240, 174, 0.18);
 	}
 
 	.btn:hover {

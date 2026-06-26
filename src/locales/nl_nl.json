@@ -202,7 +202,10 @@
         "resetZoom": "Zoom terugzetten",
         "collapse": "Inklappen",
         "expand": "Uitklappen",
-        "disconnect": "Verbreken"
+        "disconnect": "Verbreken",
+        "takeControl": "Overnemen (muis + toetsenbord)",
+        "releaseControl": "Overname stoppen",
+        "controlling": "Aan het besturen"
     },
     "overlay": {
         "watching": "{name} kijkt mee",
@@ -210,7 +213,9 @@
         "kick": "Kick",
         "kickConfirm": "Deze persoon kicken?",
         "expand": "Uitklappen",
-        "collapse": "Inklappen"
+        "collapse": "Inklappen",
+        "controlOff": "Muis + toetsenbord laten overnemen",
+        "controlOn": "Overname stoppen"
     },
     "consent": {
         "title": "Deze verbinding toestaan?",

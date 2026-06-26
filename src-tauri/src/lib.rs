@@ -44,6 +44,9 @@ struct AppState {
     /// stream is running; the client uses it to switch which host screen it views
     /// (honoured by macOS hosts).
     switch_tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<u32>>>,
+    /// Sends remote-input events (mouse/keyboard) to the active live-stream task
+    /// while *this* device is controlling a host. Set alongside `switch_tx`.
+    input_tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<rivetlink_sdk::lan::LanRequest>>>,
     /// The active "receive help" host session (advertise + serve), if any.
     host: std::sync::Mutex<Option<HostSession>>,
     /// Trusted client identity keys (base64), shared live with the running host
@@ -91,6 +94,10 @@ struct HostSession {
     /// `false` pins it to the primary. Toggled live from the host UI; the agent
     /// reads it per request and pushes the client a fresh display list on change.
     share_all: tokio::sync::watch::Sender<bool>,
+    /// "Allow remote control": `false` (the default — viewing never implies
+    /// control) makes the agent ignore the helper's mouse/keyboard; `true` lets
+    /// it drive this device. Toggled live from the host UI.
+    control: tokio::sync::watch::Sender<bool>,
     /// The connected client's verified identity `(key_b64, label)` when it
     /// announced one — what `trust_client` remembers (trust-on-connect). `None`
     /// for nobody, or a client that connected without proving an identity.
@@ -686,7 +693,7 @@ fn show_host_overlay(app: &tauri::AppHandle) {
 /// never resized/repositioned at runtime — collapse is pure CSS and the pill
 /// hugs the window's right edge — because GNOME/Wayland desyncs runtime
 /// set_size/set_position and flung the badge off-screen.
-const BADGE_EXPANDED_W: f64 = 340.0;
+const BADGE_EXPANDED_W: f64 = 400.0;
 const BADGE_H: f64 = 64.0;
 const BADGE_MARGIN: f64 = 16.0;
 
@@ -800,6 +807,13 @@ async fn lan_connect(
     if let Ok(mut guard) = state.switch_tx.lock() {
         *guard = Some(switch_tx);
     }
+    // The viewer's input capture pushes mouse/keyboard events here when it has
+    // control. Sized for high-frequency pointer moves bursting between frames.
+    let (input_tx, input_rx) =
+        tokio::sync::mpsc::channel::<rivetlink_sdk::lan::LanRequest>(256);
+    if let Ok(mut guard) = state.input_tx.lock() {
+        *guard = Some(input_tx);
+    }
 
     // Our own device name travels with the stream so the host can show *who* is
     // viewing instead of a bare IP.
@@ -829,6 +843,7 @@ async fn lan_connect(
             my_name,
             Some(&identity),
             switch_rx,
+            input_rx,
             |delta| {
                 // The first frame proves the viewer window is mounted + listening,
                 // so re-send the display list now — the optimistic emit above can
@@ -870,6 +885,42 @@ async fn lan_switch_display(state: State<'_, AppState>, display: u32) -> Result<
     let sender = state.switch_tx.lock().ok().and_then(|g| g.as_ref().cloned());
     if let Some(tx) = sender {
         tx.send(display).await.map_err(|_| "stream is not running".to_string())?;
+    }
+    Ok(())
+}
+
+/// A remote-input event captured by the viewer window, sent to the host while
+/// controlling it. `x`/`y` are normalized to `0..=10_000` of the frame.
+#[derive(serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+enum ClientInput {
+    Move { x: u16, y: u16 },
+    Button {
+        button: rivetlink_sdk::lan::PtrButton,
+        down: bool,
+    },
+    Scroll { dx: i16, dy: i16 },
+    Key { code: String, down: bool },
+}
+
+/// Forward one captured input event to the host over the live stream's control
+/// channel. No-op if nothing is streaming. The host only acts on it when it has
+/// granted remote control, so a rejected event is silently dropped there.
+#[tauri::command]
+async fn lan_send_input(state: State<'_, AppState>, event: ClientInput) -> Result<(), String> {
+    use rivetlink_sdk::lan::LanRequest;
+    let req = match event {
+        ClientInput::Move { x, y } => LanRequest::PointerMove { x, y },
+        ClientInput::Button { button, down } => LanRequest::PointerButton { button, down },
+        ClientInput::Scroll { dx, dy } => LanRequest::Scroll { dx, dy },
+        ClientInput::Key { code, down } => LanRequest::Key { code, down },
+    };
+    let sender = state.input_tx.lock().ok().and_then(|g| g.as_ref().cloned());
+    if let Some(tx) = sender {
+        // Drop rather than await on a full queue: a backed-up channel means the
+        // link is saturated, and a stale pointer move is worthless once newer
+        // ones exist. Keys/buttons are rare enough that 256 slots never fill.
+        let _ = tx.try_send(req);
     }
     Ok(())
 }
@@ -920,8 +971,11 @@ fn stop_stream(state: &AppState) {
             task.abort();
         }
     }
-    // Drop the switch sender so a stale picker can't talk to a dead stream.
+    // Drop the switch + input senders so a stale viewer can't talk to a dead stream.
     if let Ok(mut guard) = state.switch_tx.lock() {
+        *guard = None;
+    }
+    if let Ok(mut guard) = state.input_tx.lock() {
         *guard = None;
     }
 }
@@ -988,6 +1042,9 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     // host can flip this off to restrict it to the primary screen. (A future
     // internet/session-code transport would start this at `false`.)
     let (share_tx, share_rx) = tokio::sync::watch::channel(true);
+    // Remote-control gate: OFF by default — being viewed never implies being
+    // controlled. The host flips it on explicitly to hand over mouse/keyboard.
+    let (control_tx, control_rx) = tokio::sync::watch::channel(false);
     // Consent channel: the agent asks before letting a not-yet-trusted (PIN)
     // client view; the drain task below turns each request into a UI prompt.
     let (consent_tx, mut consent_rx) = tokio::sync::mpsc::channel::<ConsentRequest>(8);
@@ -1011,6 +1068,7 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
             Some(tx),
             Some(kick_rx),
             Some(share_rx),
+            Some(control_rx),
             Some(consent_tx),
         )
         .await
@@ -1098,6 +1156,7 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
             peer,
             kick: kick_tx,
             share_all: share_tx,
+            control: control_tx,
             current_client,
         });
     }
@@ -1133,6 +1192,8 @@ struct HostState {
     peer: Option<String>,
     /// Whether the helper may see/switch every screen (vs. the primary only).
     share_all: bool,
+    /// Whether the helper may control this device's mouse/keyboard.
+    control: bool,
     /// The connected client's verified identity key (base64), if it proved one —
     /// for restoring the "remember this device" prompt after a UI resync.
     client_key: Option<String>,
@@ -1143,19 +1204,20 @@ struct HostState {
 #[tauri::command]
 async fn host_active(state: State<'_, AppState>) -> Result<HostState, String> {
     let guard = state.host.lock().map_err(|_| "host lock poisoned".to_string())?;
-    let (pin, peer, share_all, client_key) = match guard.as_ref() {
+    let (pin, peer, share_all, control, client_key) = match guard.as_ref() {
         Some(session) => (
             Some(session.pin.clone()),
             session.peer.lock().ok().and_then(|p| p.clone()),
             *session.share_all.borrow(),
+            *session.control.borrow(),
             session.current_client.lock().ok().and_then(|c| c.as_ref().map(|(k, _)| k.clone())),
         ),
-        None => (None, None, true, None),
+        None => (None, None, true, false, None),
     };
     let client_trusted = client_key.as_ref().is_some_and(|k| {
         state.trusted_keys.lock().is_ok_and(|t| t.iter().any(|x| x == k))
     });
-    Ok(HostState { pin, peer, share_all, client_key, client_trusted })
+    Ok(HostState { pin, peer, share_all, control, client_key, client_trusted })
 }
 
 /// Toggle "share all screens" on the live host session. The agent picks it up
@@ -1182,6 +1244,31 @@ async fn host_set_share_all(
 async fn host_share_all(state: State<'_, AppState>) -> Result<bool, String> {
     let guard = state.host.lock().map_err(|_| "host lock poisoned".to_string())?;
     Ok(guard.as_ref().map_or(true, |s| *s.share_all.borrow()))
+}
+
+/// Grant or revoke the helper's remote control (mouse/keyboard) on the live host
+/// session. The agent reads it per input event. No-op if not hosting.
+#[tauri::command]
+async fn host_set_control(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    value: bool,
+) -> Result<(), String> {
+    if let Ok(guard) = state.host.lock() {
+        if let Some(session) = guard.as_ref() {
+            let _ = session.control.send(value);
+        }
+    }
+    // Mirror to any open host UI (the page + the overlay badge).
+    let _ = app.emit("host://control", value);
+    Ok(())
+}
+
+/// Current "allow remote control" state (defaults to `false` when not hosting).
+#[tauri::command]
+async fn host_control(state: State<'_, AppState>) -> Result<bool, String> {
+    let guard = state.host.lock().map_err(|_| "host lock poisoned".to_string())?;
+    Ok(guard.as_ref().is_some_and(|s| *s.control.borrow()))
 }
 
 /// Hang up on the currently connected helper without stopping hosting: the
@@ -1561,6 +1648,7 @@ pub fn run() {
                 client: Arc::new(Mutex::new(None)),
                 stream: std::sync::Mutex::new(None),
                 switch_tx: std::sync::Mutex::new(None),
+                input_tx: std::sync::Mutex::new(None),
                 host: std::sync::Mutex::new(None),
                 trusted_keys: Arc::new(std::sync::Mutex::new(trusted)),
                 sys: std::sync::Mutex::new(sysinfo::System::new()),
@@ -1610,6 +1698,7 @@ pub fn run() {
             lan_screenshot,
             lan_connect,
             lan_switch_display,
+            lan_send_input,
             lan_disconnect,
             resource_usage,
             start_host,
@@ -1618,6 +1707,8 @@ pub fn run() {
             host_disconnect,
             host_set_share_all,
             host_share_all,
+            host_set_control,
+            host_control,
             place_badge,
             trust_client,
             respond_consent,

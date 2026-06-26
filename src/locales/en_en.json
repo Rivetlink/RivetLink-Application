@@ -202,7 +202,10 @@
         "resetZoom": "Reset zoom",
         "collapse": "Collapse",
         "expand": "Expand",
-        "disconnect": "Disconnect"
+        "disconnect": "Disconnect",
+        "takeControl": "Take control (mouse + keyboard)",
+        "releaseControl": "Release control",
+        "controlling": "Controlling"
     },
     "overlay": {
         "watching": "{name} is viewing",
@@ -210,7 +213,9 @@
         "kick": "Kick",
         "kickConfirm": "Kick this person?",
         "expand": "Expand",
-        "collapse": "Collapse"
+        "collapse": "Collapse",
+        "controlOff": "Allow mouse + keyboard control",
+        "controlOn": "Stop allowing control"
     },
     "consent": {
         "title": "Allow this connection?",
