@@ -483,6 +483,10 @@
 			}
 		}, 500);
 		window.addEventListener("resize", onResize);
+		// Raise above every app now the window is mapped — GNOME/Wayland honours
+		// always_on_top reliably here but not always at build time, so a reconnect
+		// (fresh window) would otherwise come up behind other apps.
+		void invoke("viewer_raise").catch(() => { /* window gone */ });
 	});
 
 	onUnmounted(() => {

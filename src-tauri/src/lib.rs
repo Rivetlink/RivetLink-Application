@@ -620,6 +620,13 @@ fn open_viewer(app: &tauri::AppHandle, title: &str) -> Result<(), String> {
     .build()
     .map_err(|e| e.to_string())?;
 
+    // GNOME/Wayland frequently ignores the builder's always_on_top on a fresh
+    // window, so re-assert it at runtime once built. The viewer also calls
+    // `viewer_raise` from its onMounted, which lands after the window is mapped —
+    // belt and suspenders so a reconnect always comes up above every app.
+    let _ = window.set_always_on_top(true);
+    let _ = window.set_focus();
+
     // Closing the viewer disconnects the live stream.
     let handle = app.clone();
     window.on_window_event(move |event| {
@@ -650,6 +657,11 @@ fn primary_logical_rect(app: &tauri::AppHandle) -> Option<(f64, f64, f64, f64)> 
 /// while a helper is actually viewing. Idempotent. The overlay places itself via
 /// `place_badge` once mounted (Wayland ignores the builder's initial position).
 fn show_host_overlay(app: &tauri::AppHandle) {
+    // Shield the badge's buttons from the controlling client's injected clicks.
+    // Done on every show (the window is reused, so its onMounted may not refire).
+    #[cfg(target_os = "linux")]
+    rivetlink_agent::input::set_overlay_protect(overlay_protect_rect(app));
+
     // Reuse the window across sessions. Closing it on disconnect and rebuilding
     // it on the next connect races on GNOME/Wayland — the closing window lingers
     // while a quick reconnect builds a second "hostpanel", leaving two badges
@@ -723,9 +735,35 @@ fn place_badge(app: tauri::AppHandle) {
 /// closed, so the next session re-shows the same window — see `show_host_overlay`
 /// for why recreating it races into two overlapping badges.
 fn hide_host_overlay(app: &tauri::AppHandle) {
+    #[cfg(target_os = "linux")]
+    rivetlink_agent::input::set_overlay_protect(None);
     if let Some(win) = app.get_webview_window("hostpanel") {
         let _ = win.hide();
     }
+}
+
+/// The badge's interactive buttons (control / kick / collapse) as a normalized
+/// rect (0..=10_000 of the primary monitor) — the same space the client sends
+/// pointer coords in, so the injector can drop clicks that land here. The buttons
+/// are right-anchored in the bottom-right pill; we protect that band. Computed as
+/// fractions of the monitor, so it's correct at any display scale. `None` when no
+/// monitor is reported. Mirrors the `OverlayPanel` badge geometry (`BADGE_*`).
+#[cfg(target_os = "linux")]
+fn overlay_protect_rect(app: &tauri::AppHandle) -> Option<(u16, u16, u16, u16)> {
+    let (_mx, _my, mw, mh) = primary_logical_rect(app)?;
+    if mw <= 0.0 || mh <= 0.0 {
+        return None;
+    }
+    let nx = |v: f64| (v / mw * 10_000.0).clamp(0.0, 10_000.0).round() as u16;
+    let ny = |v: f64| (v / mh * 10_000.0).clamp(0.0, 10_000.0).round() as u16;
+    // The control + kick + collapse buttons live in the right-most ~180px of the
+    // pill (the pill hugs the window's right edge, BADGE_MARGIN off the screen).
+    let x_min = nx(mw - 180.0);
+    let x_max = nx(mw - BADGE_MARGIN);
+    // Badge sits with its bottom at 90% of the screen height (raised 10%).
+    let y_min = ny(mh * 0.90 - BADGE_H - 4.0);
+    let y_max = ny(mh * 0.90 + 4.0);
+    Some((x_min, y_min, x_max, y_max))
 }
 
 /// Connect to a LAN host and open a live screen stream in its own window.
@@ -1244,7 +1282,7 @@ async fn host_set_share_all(
 #[tauri::command]
 async fn host_share_all(state: State<'_, AppState>) -> Result<bool, String> {
     let guard = state.host.lock().map_err(|_| "host lock poisoned".to_string())?;
-    Ok(guard.as_ref().map_or(true, |s| *s.share_all.borrow()))
+    Ok(guard.as_ref().is_none_or(|s| *s.share_all.borrow()))
 }
 
 /// Grant or revoke the helper's remote control (mouse/keyboard) on the live host
@@ -1270,6 +1308,25 @@ async fn host_set_control(
 async fn host_control(state: State<'_, AppState>) -> Result<bool, String> {
     let guard = state.host.lock().map_err(|_| "host lock poisoned".to_string())?;
     Ok(guard.as_ref().is_some_and(|s| *s.control.borrow()))
+}
+
+/// Raise the viewer window above every other app and focus it. Called from the
+/// viewer's onMounted (lands after the window is mapped, when GNOME/Wayland
+/// actually honours always_on_top) so a reconnect always comes up on top.
+#[tauri::command]
+fn viewer_raise(app: tauri::AppHandle) {
+    if let Some(win) = app.get_webview_window("viewer") {
+        let _ = win.set_always_on_top(true);
+        let _ = win.set_focus();
+    }
+}
+
+/// Debug sink for the overlay badge's collapse timing: the overlay forwards
+/// timestamped paint/layout samples here so they land in the app's `tracing`
+/// log (the webview console isn't visible in a release build).
+#[tauri::command]
+fn overlay_log(msg: String) {
+    tracing::info!(target: "overlay_debug", "{msg}");
 }
 
 /// Hang up on the currently connected helper without stopping hosting: the
@@ -1710,6 +1767,8 @@ pub fn run() {
             host_share_all,
             host_set_control,
             host_control,
+            viewer_raise,
+            overlay_log,
             place_badge,
             trust_client,
             respond_consent,
