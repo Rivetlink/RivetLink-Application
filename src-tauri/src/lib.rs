@@ -657,15 +657,6 @@ fn primary_logical_rect(app: &tauri::AppHandle) -> Option<(f64, f64, f64, f64)> 
 /// while a helper is actually viewing. Idempotent. The overlay places itself via
 /// `place_badge` once mounted (Wayland ignores the builder's initial position).
 fn show_host_overlay(app: &tauri::AppHandle) {
-    // Shield the badge's buttons from the controlling client's injected clicks.
-    // Done on every show (the window is reused, so its onMounted may not refire).
-    // Only set when we actually have a monitor — never clobber a good rect with
-    // None on a transient miss (place_badge re-arms it on mount regardless).
-    #[cfg(target_os = "linux")]
-    if let Some(r) = overlay_protect_rect(app) {
-        rivetlink_agent::input::set_overlay_protect(Some(r));
-    }
-
     // Reuse the window across sessions. Closing it on disconnect and rebuilding
     // it on the next connect races on GNOME/Wayland — the closing window lingers
     // while a quick reconnect builds a second "hostpanel", leaving two badges
@@ -733,51 +724,15 @@ fn place_badge(app: tauri::AppHandle) {
         let (px, py) = badge_origin(mx, my, mw, mh, BADGE_EXPANDED_W);
         let _ = win.set_position(tauri::LogicalPosition::new(px, py));
     }
-    // Re-arm the click shield here too: this runs on the overlay's onMounted with
-    // the monitor reliably available, in case it wasn't yet when the session
-    // connected (show_host_overlay also sets it).
-    #[cfg(target_os = "linux")]
-    if let Some(r) = overlay_protect_rect(&app) {
-        rivetlink_agent::input::set_overlay_protect(Some(r));
-    }
 }
 
 /// Hide the host "being viewed" badge (the viewing session ended). Hidden, not
 /// closed, so the next session re-shows the same window — see `show_host_overlay`
 /// for why recreating it races into two overlapping badges.
 fn hide_host_overlay(app: &tauri::AppHandle) {
-    #[cfg(target_os = "linux")]
-    rivetlink_agent::input::set_overlay_protect(None);
     if let Some(win) = app.get_webview_window("hostpanel") {
         let _ = win.hide();
     }
-}
-
-/// The badge's interactive buttons (control / kick / collapse) as a normalized
-/// rect (0..=10_000 of the primary monitor) — the same space the client sends
-/// pointer coords in, so the injector can drop clicks that land here. The buttons
-/// are right-anchored in the bottom-right pill; we protect that band. Computed as
-/// fractions of the monitor, so it's correct at any display scale. `None` when no
-/// monitor is reported. Mirrors the `OverlayPanel` badge geometry (`BADGE_*`).
-#[cfg(target_os = "linux")]
-fn overlay_protect_rect(app: &tauri::AppHandle) -> Option<(u16, u16, u16, u16)> {
-    let (_mx, _my, mw, mh) = primary_logical_rect(app)?;
-    if mw <= 0.0 || mh <= 0.0 {
-        return None;
-    }
-    let nx = |v: f64| (v / mw * 10_000.0).clamp(0.0, 10_000.0).round() as u16;
-    let ny = |v: f64| (v / mh * 10_000.0).clamp(0.0, 10_000.0).round() as u16;
-    // The pill's buttons (control / kick / collapse) are right-anchored in the
-    // rightmost ~156 logical px. Protect the rightmost 240px band — generous so an
-    // injected click is caught even if a button sits a few px off the predicted
-    // spot, without over-blocking the transparent-left part of the window (which
-    // shows real content). The badge occludes this corner anyway. Cost: the client
-    // can't click-collapse the badge. Slop on every edge.
-    let x_min = nx(mw - 240.0);
-    let x_max = nx(mw - BADGE_MARGIN + 8.0);
-    let y_min = ny(mh * 0.90 - BADGE_H - 8.0);
-    let y_max = ny(mh * 0.90 + 8.0);
-    Some((x_min, y_min, x_max, y_max))
 }
 
 /// Connect to a LAN host and open a live screen stream in its own window.
@@ -1343,6 +1298,24 @@ fn overlay_log(msg: String) {
     tracing::info!(target: "overlay_debug", "{msg}");
 }
 
+/// Milliseconds since the agent last injected a remote pointer press (`u64::MAX`
+/// if none). The host overlay's kick / control buttons check this and ignore a
+/// click that arrives right after an injection — i.e. one the controlling client
+/// made on the badge by driving the host cursor. A physical host click has no
+/// recent injection, so it goes through. (We can't block such clicks
+/// geometrically: GNOME/Wayland won't tell us where the badge actually is.)
+#[tauri::command]
+fn host_injection_age_ms() -> u64 {
+    #[cfg(target_os = "linux")]
+    {
+        rivetlink_agent::input::injected_click_age_ms()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        u64::MAX
+    }
+}
+
 /// Hang up on the currently connected helper without stopping hosting: the
 /// listener and PIN stay live so a new helper can connect. No-op if nobody is
 /// connected. The host's "connected" badge clears immediately; the agent drops
@@ -1783,6 +1756,7 @@ pub fn run() {
             host_control,
             viewer_raise,
             overlay_log,
+            host_injection_age_ms,
             place_badge,
             trust_client,
             respond_consent,

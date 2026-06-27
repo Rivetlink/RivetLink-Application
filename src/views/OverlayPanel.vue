@@ -43,7 +43,7 @@
 				type="button"
 				class="btn danger icon"
 				:title="t('overlay.kick')"
-				@click="confirming = true"
+				@click="startKick"
 			>
 				<i class="mdi mdi-account-cancel" />
 			</button>
@@ -144,15 +144,40 @@
 		b.style.display = "";
 	}
 
+	// True when this click is one the controlling client injected onto the badge
+	// (it drives the host cursor, so it can reach these buttons). The agent stamps
+	// every press it injects; if one happened in the last ~250ms, this firing is
+	// that injected click — ignore it. A physical host click has no recent
+	// injection. So only the real host can kick / flip control, not the client.
+	async function fromRemote(): Promise<boolean> {
+		const age = await invoke<number>("host_injection_age_ms").catch(() => Number.MAX_SAFE_INTEGER);
+		return age < 250;
+	}
+
+	// Start the kick confirmation — host-physical only.
+	async function startKick(): Promise<void> {
+		if (await fromRemote()) {
+			return;
+		}
+		confirming.value = true;
+	}
+
 	// Kick the helper. The backend drops the viewer and closes this window, so
-	// there's nothing to clean up here.
+	// there's nothing to clean up here. Host-physical only.
 	async function doKick(): Promise<void> {
+		if (await fromRemote()) {
+			return;
+		}
 		await invoke("host_disconnect").catch(() => { /* already gone */ });
 	}
 
 	// Grant or revoke the helper's mouse/keyboard control. Optimistic; the backend
 	// echoes "host://control" to confirm and keep every host surface in sync.
+	// Host-physical only — the client can't flip its own control off/on.
 	async function toggleControl(): Promise<void> {
+		if (await fromRemote()) {
+			return;
+		}
 		const next = !controlGranted.value;
 		controlGranted.value = next;
 		await invoke("host_set_control", { value: next }).catch(() => {
