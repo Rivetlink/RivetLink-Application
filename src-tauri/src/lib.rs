@@ -659,8 +659,12 @@ fn primary_logical_rect(app: &tauri::AppHandle) -> Option<(f64, f64, f64, f64)> 
 fn show_host_overlay(app: &tauri::AppHandle) {
     // Shield the badge's buttons from the controlling client's injected clicks.
     // Done on every show (the window is reused, so its onMounted may not refire).
+    // Only set when we actually have a monitor — never clobber a good rect with
+    // None on a transient miss (place_badge re-arms it on mount regardless).
     #[cfg(target_os = "linux")]
-    rivetlink_agent::input::set_overlay_protect(overlay_protect_rect(app));
+    if let Some(r) = overlay_protect_rect(app) {
+        rivetlink_agent::input::set_overlay_protect(Some(r));
+    }
 
     // Reuse the window across sessions. Closing it on disconnect and rebuilding
     // it on the next connect races on GNOME/Wayland — the closing window lingers
@@ -729,6 +733,13 @@ fn place_badge(app: tauri::AppHandle) {
         let (px, py) = badge_origin(mx, my, mw, mh, BADGE_EXPANDED_W);
         let _ = win.set_position(tauri::LogicalPosition::new(px, py));
     }
+    // Re-arm the click shield here too: this runs on the overlay's onMounted with
+    // the monitor reliably available, in case it wasn't yet when the session
+    // connected (show_host_overlay also sets it).
+    #[cfg(target_os = "linux")]
+    if let Some(r) = overlay_protect_rect(&app) {
+        rivetlink_agent::input::set_overlay_protect(Some(r));
+    }
 }
 
 /// Hide the host "being viewed" badge (the viewing session ended). Hidden, not
@@ -756,13 +767,16 @@ fn overlay_protect_rect(app: &tauri::AppHandle) -> Option<(u16, u16, u16, u16)> 
     }
     let nx = |v: f64| (v / mw * 10_000.0).clamp(0.0, 10_000.0).round() as u16;
     let ny = |v: f64| (v / mh * 10_000.0).clamp(0.0, 10_000.0).round() as u16;
-    // The control + kick + collapse buttons live in the right-most ~180px of the
-    // pill (the pill hugs the window's right edge, BADGE_MARGIN off the screen).
-    let x_min = nx(mw - 180.0);
-    let x_max = nx(mw - BADGE_MARGIN);
-    // Badge sits with its bottom at 90% of the screen height (raised 10%).
-    let y_min = ny(mh * 0.90 - BADGE_H - 4.0);
-    let y_max = ny(mh * 0.90 + 4.0);
+    // The pill's buttons (control / kick / collapse) are right-anchored in the
+    // rightmost ~156 logical px. Protect the rightmost 240px band — generous so an
+    // injected click is caught even if a button sits a few px off the predicted
+    // spot, without over-blocking the transparent-left part of the window (which
+    // shows real content). The badge occludes this corner anyway. Cost: the client
+    // can't click-collapse the badge. Slop on every edge.
+    let x_min = nx(mw - 240.0);
+    let x_max = nx(mw - BADGE_MARGIN + 8.0);
+    let y_min = ny(mh * 0.90 - BADGE_H - 8.0);
+    let y_max = ny(mh * 0.90 + 8.0);
     Some((x_min, y_min, x_max, y_max))
 }
 

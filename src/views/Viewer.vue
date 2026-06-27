@@ -191,10 +191,13 @@
 		zoom.value = 1;
 	}
 
-	// End the session from the viewer side. The backend stops the stream and
-	// closes this window, so no local cleanup is needed here.
+	// End the session from the viewer side and fully close this window, so a later
+	// reconnect builds a brand-new window — GNOME/Wayland only reliably honours
+	// always_on_top on a fresh window, so a reused one comes back up behind other
+	// apps. The CloseRequested handler stops the stream on the backend.
 	async function disconnect(): Promise<void> {
 		await invoke("lan_disconnect").catch(() => { /* already gone */ });
+		await getCurrentWindow().close().catch(() => { /* already gone */ });
 	}
 
 	function onResize(): void {
