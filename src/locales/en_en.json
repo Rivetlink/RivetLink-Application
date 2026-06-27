@@ -220,6 +220,7 @@
     "consent": {
         "title": "Allow this connection?",
         "body": "{name} wants to view this screen.",
+        "controlNote": "Allowing also grants mouse and keyboard control.",
         "someone": "Someone",
         "key": "Key:",
         "remember": "Remember this device",

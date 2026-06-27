@@ -1,105 +1,103 @@
 <template>
 	<div class="viewer">
-		<div class="scroll">
-			<canvas
-				ref="canvasEl"
-				class="screen"
-				:class="{ hidden: !hasFrame }"
-				:style="canvasStyle"
+		<!-- The screen stage: the share fills it and every floating overlay (chips,
+		     display picker, waiting state) sits over it. The toolbar below is a
+		     separate row, so it never covers the shared screen. -->
+		<div class="stage">
+			<div class="scroll">
+				<canvas
+					ref="canvasEl"
+					class="screen"
+					:class="{ hidden: !hasFrame }"
+					:style="canvasStyle"
+				/>
+			</div>
+			<VSelect
+				v-if="displays.length > 1 && hasFrame"
+				v-model="currentDisplay"
+				:items="displays"
+				item-title="name"
+				item-value="id"
+				density="compact"
+				variant="solo"
+				hide-details
+				prepend-inner-icon="mdi-monitor-multiple"
+				class="display-picker"
+				@update:model-value="switchDisplay"
 			/>
-		</div>
-		<VSelect
-			v-if="displays.length > 1 && hasFrame"
-			v-model="currentDisplay"
-			:items="displays"
-			item-title="name"
-			item-value="id"
-			density="compact"
-			variant="solo"
-			hide-details
-			prepend-inner-icon="mdi-monitor-multiple"
-			class="display-picker"
-			@update:model-value="switchDisplay"
-		/>
-		<div v-if="!hasFrame" class="waiting">
-			<VProgressCircular
-				indeterminate
+			<div v-if="!hasFrame" class="waiting">
+				<VProgressCircular
+					indeterminate
+					color="primary"
+					size="48"
+					class="mb-3"
+				/>
+				<p>{{ ended ? t("viewer.ended") : t("viewer.connecting") }}</p>
+			</div>
+			<VChip
+				v-if="slow && hasFrame"
+				class="poor"
+				color="warning"
+				size="small"
+				variant="flat"
+				prepend-icon="mdi-wifi-alert"
+			>
+				{{ t("viewer.poor") }}
+			</VChip>
+			<VChip
+				v-if="controlling"
+				class="controlling-chip"
 				color="primary"
-				size="48"
-				class="mb-3"
-			/>
-			<p>{{ ended ? t("viewer.ended") : t("viewer.connecting") }}</p>
+				size="small"
+				variant="flat"
+				prepend-icon="mdi-mouse"
+			>
+				{{ t("viewer.controlling") }}
+			</VChip>
 		</div>
-		<VChip
-			v-if="slow && hasFrame"
-			class="poor"
-			color="warning"
-			size="small"
-			variant="flat"
-			prepend-icon="mdi-wifi-alert"
-		>
-			{{ t("viewer.poor") }}
-		</VChip>
-		<VChip
-			v-if="controlling"
-			class="controlling-chip"
-			color="primary"
-			size="small"
-			variant="flat"
-			prepend-icon="mdi-mouse"
-		>
-			{{ t("viewer.controlling") }}
-		</VChip>
+		<!-- Always-on toolbar — never folds, so zoom/control/disconnect stay one
+		     click away. Docked in its own row below the stage (no overlap). -->
 		<div v-if="hasFrame" class="zoom-controls">
 			<VBtn
-				:icon="panelOpen ? 'mdi-chevron-right' : 'mdi-chevron-left'"
+				icon="mdi-minus"
 				size="small"
 				variant="text"
-				:title="panelOpen ? t('viewer.collapse') : t('viewer.expand')"
-				@click="panelOpen = !panelOpen"
+				:disabled="zoom <= MIN_ZOOM"
+				@click="zoomBy(-ZOOM_STEP)"
 			/>
-			<template v-if="panelOpen">
-				<VBtn
-					icon="mdi-minus"
-					size="small"
-					variant="text"
-					:disabled="zoom <= MIN_ZOOM"
-					@click="zoomBy(-ZOOM_STEP)"
-				/>
-				<button
-					type="button"
-					class="zoom-label"
-					:title="t('viewer.resetZoom')"
-					@click="resetZoom"
-				>
-					{{ Math.round(zoom * 100) }}%
-				</button>
-				<VBtn
-					icon="mdi-plus"
-					size="small"
-					variant="text"
-					:disabled="zoom >= MAX_ZOOM"
-					@click="zoomBy(ZOOM_STEP)"
-				/>
-				<div class="sep" />
-				<VBtn
-					:icon="controlling ? 'mdi-mouse' : 'mdi-mouse-off'"
-					size="small"
-					variant="text"
-					:color="controlling ? 'primary' : undefined"
-					:title="controlling ? t('viewer.releaseControl') : t('viewer.takeControl')"
-					@click="toggleControl"
-				/>
-				<div class="sep" />
-				<VBtn
-					icon="mdi-close-circle-outline"
-					size="small"
-					variant="text"
-					color="error"
-					:title="t('viewer.disconnect')"
-					@click="disconnect"
-				/>
-			</template>
+			<button
+				type="button"
+				class="zoom-label"
+				:title="t('viewer.resetZoom')"
+				@click="resetZoom"
+			>
+				{{ Math.round(zoom * 100) }}%
+			</button>
+			<VBtn
+				icon="mdi-plus"
+				size="small"
+				variant="text"
+				:disabled="zoom >= MAX_ZOOM"
+				@click="zoomBy(ZOOM_STEP)"
+			/>
+			<div class="sep" />
+			<VBtn
+				:icon="controlling ? 'mdi-mouse' : 'mdi-mouse-off'"
+				size="small"
+				variant="text"
+				:color="controlling ? 'primary' : undefined"
+				:title="controlling ? t('viewer.releaseControl') : t('viewer.takeControl')"
+				@click="toggleControl"
+			/>
+			<div class="sep" />
+			<VBtn
+				icon="mdi-close-circle-outline"
+				size="small"
+				variant="text"
+				color="error"
+				:title="t('viewer.disconnect')"
+				@click="disconnect"
+			/>
 		</div>
 	</div>
 </template>
@@ -150,8 +148,9 @@
 	const MAX_ZOOM = 5;
 	const ZOOM_STEP = 0.25;
 	const zoom = ref(1);
-	// The floating control bar can be folded to a single chevron, TeamViewer-style.
-	const panelOpen = ref(true);
+	// Height of the docked toolbar row, subtracted from the window when fitting the
+	// frame so the screen share sits fully above it (the bar never overlaps it).
+	const TOOLBAR_H = 52;
 	// Remote control: when on, local mouse/keyboard over the canvas is captured and
 	// forwarded to the host (which only acts on it if it granted control). The host
 	// maps the platform command modifier itself, so we just flag ours as such.
@@ -175,7 +174,8 @@
 		if (!frameW.value || !frameH.value) {
 			return {};
 		}
-		const fit = Math.min(winW.value / frameW.value, winH.value / frameH.value);
+		const stageH = Math.max(1, winH.value - TOOLBAR_H);
+		const fit = Math.min(winW.value / frameW.value, stageH / frameH.value);
 		const scale = fit * zoom.value;
 		return {
 			width: `${Math.round(frameW.value * scale)}px`,
@@ -502,14 +502,24 @@
 
 <style scoped>
 	.viewer {
-		position: relative;
+		display: flex;
+		flex-direction: column;
 		width: 100vw;
 		height: 100vh;
 		background: #000;
 		overflow: hidden;
 	}
 
-	/* The scroll layer pans the canvas when it's zoomed past the window. As a
+	/* The screen stage takes all the height the toolbar doesn't. Positioning
+	   context for the floating overlays (chips, picker, waiting) so they sit over
+	   the share and never over the toolbar. */
+	.stage {
+		position: relative;
+		flex: 1;
+		min-height: 0;
+	}
+
+	/* The scroll layer pans the canvas when it's zoomed past the stage. As a
 	   flex container it centers the canvas via the child's `margin: auto`, which
 	   (unlike justify-content) collapses to 0 on overflow so panning never clips
 	   the top/left edge. */
@@ -533,18 +543,16 @@
 		opacity: 0.9;
 	}
 
+	/* Docked toolbar row below the stage — a real layout row, not an overlay, so
+	   it can never cover the shared screen. */
 	.zoom-controls {
-		position: absolute;
-		bottom: 12px;
-		left: 50%;
-		transform: translateX(-50%);
+		flex: none;
 		display: flex;
 		align-items: center;
+		justify-content: center;
 		gap: 2px;
-		padding: 2px 4px;
-		border-radius: 8px;
-		background: rgba(0, 0, 0, 0.55);
-		opacity: 0.85;
+		padding: 4px;
+		background: rgba(0, 0, 0, 0.85);
 	}
 
 	.sep {

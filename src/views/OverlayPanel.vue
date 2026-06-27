@@ -79,8 +79,9 @@
 	const peer = ref<string | null>(null);
 	const collapsed = ref(false);
 	const confirming = ref(false);
-	// Whether the helper is allowed to drive this device's mouse/keyboard. Off by
-	// default — being viewed never implies being controlled.
+	// Whether the helper is allowed to drive this device's mouse/keyboard. The host
+	// grants it by default (set from host_active on mount); the client's own
+	// takeover still starts off, so viewing never silently becomes controlling.
 	const controlGranted = ref(false);
 
 	let unlistenConnected: UnlistenFn | null = null;

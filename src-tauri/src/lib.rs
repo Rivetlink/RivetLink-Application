@@ -1042,9 +1042,10 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     // host can flip this off to restrict it to the primary screen. (A future
     // internet/session-code transport would start this at `false`.)
     let (share_tx, share_rx) = tokio::sync::watch::channel(true);
-    // Remote-control gate: OFF by default — being viewed never implies being
-    // controlled. The host flips it on explicitly to hand over mouse/keyboard.
-    let (control_tx, control_rx) = tokio::sync::watch::channel(false);
+    // Remote-control gate: ON by default on the host — the host opts in to being
+    // a controllable machine by running the app. The client side still defaults
+    // its own takeover OFF, so viewing never silently becomes controlling.
+    let (control_tx, control_rx) = tokio::sync::watch::channel(true);
     // Consent channel: the agent asks before letting a not-yet-trusted (PIN)
     // client view; the drain task below turns each request into a UI prompt.
     let (consent_tx, mut consent_rx) = tokio::sync::mpsc::channel::<ConsentRequest>(8);
@@ -1212,7 +1213,7 @@ async fn host_active(state: State<'_, AppState>) -> Result<HostState, String> {
             *session.control.borrow(),
             session.current_client.lock().ok().and_then(|c| c.as_ref().map(|(k, _)| k.clone())),
         ),
-        None => (None, None, true, false, None),
+        None => (None, None, true, true, None),
     };
     let client_trusted = client_key.as_ref().is_some_and(|k| {
         state.trusted_keys.lock().is_ok_and(|t| t.iter().any(|x| x == k))

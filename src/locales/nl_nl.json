@@ -220,6 +220,7 @@
     "consent": {
         "title": "Deze verbinding toestaan?",
         "body": "{name} wil dit scherm bekijken.",
+        "controlNote": "Toestaan geeft ook muis- en toetsenbordbesturing.",
         "someone": "Iemand",
         "key": "Sleutel:",
         "remember": "Onthoud dit apparaat",

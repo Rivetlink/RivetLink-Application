@@ -13,6 +13,13 @@
 				<p class="mb-3">
 					{{ t("consent.body", { name: req?.name || t("consent.someone") }) }}
 				</p>
+				<VAlert
+					type="warning"
+					variant="tonal"
+					density="compact"
+					class="mb-3"
+					:text="t('consent.controlNote')"
+				/>
 				<div v-if="req?.key" class="text-caption text-medium-emphasis mb-3">
 					{{ t("consent.key") }} <code>{{ fingerprint }}</code>
 				</div>
