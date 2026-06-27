@@ -93,51 +93,16 @@
 	// The pill hugs the window's right edge, so collapsing just swaps the content
 	// to the "< dot" peek tab — the rest of the fixed window is transparent.
 	async function toggle(): Promise<void> {
-		const t0 = performance.now();
 		collapsed.value = !collapsed.value;
 		confirming.value = false;
-		void invoke("overlay_log", {
-			msg: `collapse toggled -> collapsed=${collapsed.value} @${t0.toFixed(0)}ms`,
-		});
+		// KNOWN ISSUE (todo): on GNOME/Wayland the collapse can take 10-20s to show
+		// on screen. The DOM collapses instantly (logging confirmed width drops to
+		// the peek size within 1ms), but WebKitGTK render-throttles this transparent,
+		// unfocused, always-on-top window to ~2fps and doesn't present the new frame
+		// to the compositor promptly. It's a surface-present problem, not a paint one,
+		// so DOM nudges (opacity / display toggle / 1px resize) don't help. Needs a
+		// forced surface commit (window resize or focus poke) — deferred.
 		await nextTick();
-		// DEBUG: the badge sometimes takes 10-20s to visually collapse. Sample the
-		// pill's laid-out width both per animation-frame (rAF, tied to WebKit's
-		// render pipeline) and per wall-clock timer (independent of it) for 5s. If
-		// rAF stalls while the timer keeps ticking, WebKit isn't presenting frames —
-		// that's the root cause. Forwarded to the app's tracing log.
-		const badge = document.querySelector(".badge");
-		const widthOf = (): number => (badge instanceof HTMLElement ? badge.getBoundingClientRect().width : -1);
-		const start = performance.now();
-		let lastWidth = -2;
-		let lastLog = 0;
-		const rafTick = (): void => {
-			const now = performance.now();
-			const width = widthOf();
-			if (width !== lastWidth || now - lastLog > 500) {
-				void invoke("overlay_log", {
-					msg: `rAF +${(now - start).toFixed(0)}ms width=${width.toFixed(1)}`,
-				});
-				lastWidth = width;
-				lastLog = now;
-			}
-			if (now - start < 5000) {
-				requestAnimationFrame(rafTick);
-			}
-		};
-		requestAnimationFrame(rafTick);
-		const timer = setInterval(() => {
-			const now = performance.now();
-			void invoke("overlay_log", {
-				msg: `timer +${(now - start).toFixed(0)}ms width=${widthOf().toFixed(1)}`,
-			});
-			if (now - start >= 5000) {
-				clearInterval(timer);
-			}
-		}, 250);
-		// The webview runs with accelerated compositing disabled (the backend sets
-		// WEBKIT_DISABLE_COMPOSITING_MODE), so the software painter erases the shrunk
-		// pill's vacated region on its own. Belt-and-suspenders: a body display
-		// toggle forces a full repaint in case anything is still cached.
 		const b = document.body;
 		b.style.display = "none";
 		void b.offsetHeight;
@@ -151,7 +116,9 @@
 	// injection. So only the real host can kick / flip control, not the client.
 	async function fromRemote(): Promise<boolean> {
 		const age = await invoke<number>("host_injection_age_ms").catch(() => Number.MAX_SAFE_INTEGER);
-		return age < 250;
+		const remote = age < 250;
+		void invoke("overlay_log", { msg: `badge button: injection age=${age}ms remote=${remote}` });
+		return remote;
 	}
 
 	// Start the kick confirmation — host-physical only.
