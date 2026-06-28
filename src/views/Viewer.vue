@@ -259,6 +259,13 @@
 
 		hasFrame.value = true;
 		ended.value = false;
+		// Frames are flowing again — if this window was lingering on a "connection
+		// ended" screen (about to self-close in 5s) it's a live reconnect now, so
+		// cancel that pending close instead of yanking the window mid-session.
+		if (closeTimer !== undefined) {
+			clearTimeout(closeTimer);
+			closeTimer = undefined;
+		}
 		lastFrameAt = performance.now();
 		slow.value = false;
 	}

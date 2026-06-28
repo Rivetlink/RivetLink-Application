@@ -95,18 +95,14 @@
 	async function toggle(): Promise<void> {
 		collapsed.value = !collapsed.value;
 		confirming.value = false;
-		// KNOWN ISSUE (todo): on GNOME/Wayland the collapse can take 10-20s to show
-		// on screen. The DOM collapses instantly (logging confirmed width drops to
-		// the peek size within 1ms), but WebKitGTK render-throttles this transparent,
-		// unfocused, always-on-top window to ~2fps and doesn't present the new frame
-		// to the compositor promptly. It's a surface-present problem, not a paint one,
-		// so DOM nudges (opacity / display toggle / 1px resize) don't help. Needs a
-		// forced surface commit (window resize or focus poke) — deferred.
+		// WebKitGTK render-throttles this unfocused, transparent, always-on-top
+		// window to ~2fps and won't present the just-collapsed frame for 10-20s. DOM
+		// nudges (opacity / display toggle / paint) don't help — it's a surface-
+		// present stall, not a paint one. Once the DOM has reflowed, ask the native
+		// side to nudge the window geometry, which forces an immediate compositor
+		// commit of the new frame. See `overlay_poke` in lib.rs.
 		await nextTick();
-		const b = document.body;
-		b.style.display = "none";
-		void b.offsetHeight;
-		b.style.display = "";
+		void invoke("overlay_poke").catch(() => { /* window gone */ });
 	}
 
 	// True when this click is one the controlling client injected onto the badge

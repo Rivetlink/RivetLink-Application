@@ -600,10 +600,9 @@ async fn lan_screenshot(
 /// Closing the window stops the stream.
 fn open_viewer(app: &tauri::AppHandle, title: &str) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("viewer") {
-        // Re-assert on-top + raise: a reused viewer (reconnect) can drop behind
-        // other apps, and GNOME only honours always_on_top when it's (re)set.
-        let _ = win.set_always_on_top(true);
-        let _ = win.set_focus();
+        // Re-assert on-top: a reused viewer (reconnect) drifts behind other apps,
+        // and GNOME ignores a redundant set_always_on_top — toggle to restack.
+        raise_above_all(&win);
         return Ok(());
     }
     let window = tauri::WebviewWindowBuilder::new(
@@ -678,7 +677,10 @@ fn show_host_overlay(app: &tauri::AppHandle) {
     .always_on_top(true)
     .skip_taskbar(true)
     .shadow(false)
-    .resizable(false)
+    // Resizable so `overlay_poke` can nudge the size to force a surface present
+    // (collapse fix). It's borderless + decorationless, so there's no user-facing
+    // resize handle — only our code ever changes the size.
+    .resizable(true)
     .inner_size(BADGE_EXPANDED_W, BADGE_H)
     .focused(false);
     if let Some((x, y, w, h)) = rect {
@@ -724,6 +726,26 @@ fn place_badge(app: tauri::AppHandle) {
         let (px, py) = badge_origin(mx, my, mw, mh, BADGE_EXPANDED_W);
         let _ = win.set_position(tauri::LogicalPosition::new(px, py));
     }
+}
+
+/// Force the always-on-top transparent overlay to present its latest (collapsed
+/// or expanded) frame *now*. WebKitGTK render-throttles this unfocused, occluded
+/// overlay to ~2fps and won't commit a new surface for 10-20s — the DOM collapses
+/// in 1ms but the screen lags. A window-geometry change forces a configure→commit
+/// that isn't gated on compositor frame callbacks, so the new frame presents at
+/// once. We alternate the height a few px each call (invisible on a corner badge,
+/// position untouched) so every poke is a *distinct* size = a real configure.
+/// ponytail: resize nudge; escalate to hide()/show() if GNOME ever still stalls.
+#[tauri::command]
+fn overlay_poke(app: tauri::AppHandle) {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static TALL: AtomicBool = AtomicBool::new(false);
+    let Some(win) = app.get_webview_window("hostpanel") else {
+        return;
+    };
+    let was_tall = TALL.fetch_xor(true, Ordering::Relaxed);
+    let h = if was_tall { BADGE_H } else { BADGE_H + 4.0 };
+    let _ = win.set_size(tauri::LogicalSize::new(BADGE_EXPANDED_W, h));
 }
 
 /// Hide the host "being viewed" badge (the viewing session ended). Hidden, not
@@ -1285,9 +1307,19 @@ async fn host_control(state: State<'_, AppState>) -> Result<bool, String> {
 #[tauri::command]
 fn viewer_raise(app: tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("viewer") {
-        let _ = win.set_always_on_top(true);
-        let _ = win.set_focus();
+        raise_above_all(&win);
     }
+}
+
+/// Force a window to the top of the always-on-top layer. A plain
+/// `set_always_on_top(true)` is a no-op on GNOME when the hint is already set
+/// (Tauri caches the state), so a reused/reconnected window keeps whatever
+/// stacking it drifted to (behind the app the user alt-tabbed to). Toggling
+/// off→on re-applies `_NET_WM_STATE_ABOVE`, which restacks it to the top of the
+/// above-layer without stealing focus (GNOME blocks programmatic focus anyway).
+fn raise_above_all(win: &tauri::WebviewWindow) {
+    let _ = win.set_always_on_top(false);
+    let _ = win.set_always_on_top(true);
 }
 
 /// Debug sink for the overlay badge's collapse timing: the overlay forwards
@@ -1758,6 +1790,7 @@ pub fn run() {
             overlay_log,
             host_injection_age_ms,
             place_badge,
+            overlay_poke,
             trust_client,
             respond_consent,
             network_info,
