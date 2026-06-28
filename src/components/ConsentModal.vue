@@ -69,7 +69,7 @@
 	const req = ref<ConsentRequest | null>(null);
 	const fingerprint = computed(() => (req.value?.key ?? "").slice(0, 12));
 
-	let unlisten: UnlistenFn | null = null;
+	const unlisten = ref<UnlistenFn | null>(null);
 
 	async function decide(accept: boolean): Promise<void> {
 		const current = req.value;
@@ -82,7 +82,7 @@
 	}
 
 	onMounted(async () => {
-		unlisten = await listen<ConsentRequest>("host://consent-request", (e) => {
+		unlisten.value = await listen<ConsentRequest>("host://consent-request", (e) => {
 			req.value = e.payload;
 			remember.value = false; // default off, fresh each time
 			open.value = true;
@@ -90,6 +90,6 @@
 	});
 
 	onUnmounted(() => {
-		unlisten?.();
+		unlisten.value?.();
 	});
 </script>

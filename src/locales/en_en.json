@@ -215,7 +215,8 @@
         "expand": "Expand",
         "collapse": "Collapse",
         "controlOff": "Allow mouse + keyboard control",
-        "controlOn": "Stop allowing control"
+        "controlOn": "Stop allowing control",
+        "hostOnly": "Host only"
     },
     "consent": {
         "title": "Allow this connection?",

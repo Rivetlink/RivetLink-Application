@@ -449,7 +449,7 @@
 		});
 	}
 
-	let netTimer: ReturnType<typeof setInterval> | undefined;
+	const netTimer = ref<ReturnType<typeof setInterval>>();
 
 	async function refreshNet() {
 		try {
@@ -474,15 +474,15 @@
 		await refreshNet();
 		await pingDevices();
 		// Re-check periodically so the network + device status stay current.
-		netTimer = setInterval(() => {
+		netTimer.value = setInterval(() => {
 			refreshNet();
 			pingDevices();
 		}, 5000);
 	});
 
 	onUnmounted(() => {
-		if (netTimer) {
-			clearInterval(netTimer);
+		if (netTimer.value) {
+			clearInterval(netTimer.value);
 		}
 	});
 

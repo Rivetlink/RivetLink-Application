@@ -196,11 +196,11 @@
 	// Short, human-comparable fingerprint of the connected client's key.
 	const fingerprint = computed(() => (store.hostClientKey ?? "").slice(0, 12));
 
-	let unlistenConnected: UnlistenFn | null = null;
-	let unlistenDisconnected: UnlistenFn | null = null;
-	let unlistenStopped: UnlistenFn | null = null;
-	let unlistenIdentity: UnlistenFn | null = null;
-	let netTimer: ReturnType<typeof setInterval> | undefined;
+	const unlistenConnected = ref<UnlistenFn | null>(null);
+	const unlistenDisconnected = ref<UnlistenFn | null>(null);
+	const unlistenStopped = ref<UnlistenFn | null>(null);
+	const unlistenIdentity = ref<UnlistenFn | null>(null);
+	const netTimer = ref<ReturnType<typeof setInterval>>();
 
 	async function refreshNet() {
 		try {
@@ -230,7 +230,7 @@
 		}
 		await refreshNet();
 		// Re-check periodically so the shown network follows Wi-Fi switches.
-		netTimer = setInterval(refreshNet, 5000);
+		netTimer.value = setInterval(refreshNet, 5000);
 		await refreshHostState();
 		// The host runs as a daemon: if it isn't up yet (e.g. first open on this
 		// page), start it so the device is always reachable — no manual toggle.
@@ -241,20 +241,20 @@
 				// Backend unavailable (e.g. Windows) — the page shows a retry.
 			}
 		}
-		unlistenConnected = await listen<string>("host://connected", (e) => {
+		unlistenConnected.value = await listen<string>("host://connected", (e) => {
 			store.hostPeer = e.payload;
 		});
-		unlistenDisconnected = await listen("host://disconnected", () => {
+		unlistenDisconnected.value = await listen("host://disconnected", () => {
 			store.hostPeer = null;
 			store.hostClientKey = null;
 			store.hostClientTrusted = false;
 		});
 		// The connected client's verified identity (for the "remember" prompt).
-		unlistenIdentity = await listen<ClientIdentity>("host://client-identity", (e) => {
+		unlistenIdentity.value = await listen<ClientIdentity>("host://client-identity", (e) => {
 			store.hostClientKey = e.payload.key;
 			store.hostClientTrusted = e.payload.trusted;
 		});
-		unlistenStopped = await listen("host://stopped", () => {
+		unlistenStopped.value = await listen("host://stopped", () => {
 			store.hosting = false;
 			store.hostPin = "";
 			store.hostPeer = null;
@@ -262,12 +262,12 @@
 	});
 
 	onUnmounted(() => {
-		unlistenConnected?.();
-		unlistenDisconnected?.();
-		unlistenStopped?.();
-		unlistenIdentity?.();
-		if (netTimer) {
-			clearInterval(netTimer);
+		unlistenConnected.value?.();
+		unlistenDisconnected.value?.();
+		unlistenStopped.value?.();
+		unlistenIdentity.value?.();
+		if (netTimer.value) {
+			clearInterval(netTimer.value);
 		}
 	});
 

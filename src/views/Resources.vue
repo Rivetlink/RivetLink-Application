@@ -61,7 +61,7 @@
 
 	const { t } = useI18n();
 	const usage = ref<ResourceUsage | null>(null);
-	let timer: ReturnType<typeof setInterval> | undefined;
+	const timer = ref<ReturnType<typeof setInterval>>();
 
 	const memPercent = computed(() => {
 		if (!usage.value || usage.value.total_mem_bytes === 0) {
@@ -90,12 +90,12 @@
 		await sample();
 		// Poll a touch slower than a second — sysinfo needs a gap between samples
 		// to compute CPU use, and this is a glanceable readout, not a profiler.
-		timer = setInterval(sample, 1500);
+		timer.value = setInterval(sample, 1500);
 	});
 
 	onUnmounted(() => {
-		if (timer) {
-			clearInterval(timer);
+		if (timer.value) {
+			clearInterval(timer.value);
 		}
 	});
 </script>

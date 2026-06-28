@@ -1,5 +1,11 @@
 <template>
-	<div class="badge" :class="{ collapsed }">
+	<div class="badge" :class="{ collapsed, blocked }">
+		<!-- Shield feedback: flashes over the badge when an injected (client) click
+		     on these buttons is swallowed, so the host can tell the shield worked. -->
+		<div v-if="blocked" class="shield-flash">
+			<i class="mdi mdi-shield-lock" />
+			<span>{{ t("overlay.hostOnly") }}</span>
+		</div>
 		<!-- Collapsed: expand chevron on the LEFT, live dot tucked to the right
 		     (against the screen edge). Explicit element order — no row-reverse. -->
 		<template v-if="collapsed">
@@ -79,14 +85,19 @@
 	const peer = ref<string | null>(null);
 	const collapsed = ref(false);
 	const confirming = ref(false);
+	// Briefly true right after the shield swallows an injected (client) click, so
+	// the badge can flash "host only" — otherwise a blocked click looks like
+	// nothing happened and you can't tell the shield is even working.
+	const blocked = ref(false);
+	const blockedTimer = ref<ReturnType<typeof setTimeout>>();
 	// Whether the helper is allowed to drive this device's mouse/keyboard. The host
 	// grants it by default (set from host_active on mount); the client's own
 	// takeover still starts off, so viewing never silently becomes controlling.
 	const controlGranted = ref(false);
 
-	let unlistenConnected: UnlistenFn | null = null;
-	let unlistenDisconnected: UnlistenFn | null = null;
-	let unlistenControl: UnlistenFn | null = null;
+	const unlistenConnected = ref<UnlistenFn | null>(null);
+	const unlistenDisconnected = ref<UnlistenFn | null>(null);
+	const unlistenControl = ref<UnlistenFn | null>(null);
 
 	// Collapse is pure CSS now: the window stays at a fixed size/position (runtime
 	// resize+reposition desync on GNOME/Wayland and flung the badge off-screen).
@@ -111,7 +122,18 @@
 	// lands in the app log) and we ignore an injected click. A physical host click
 	// has no recent injection. So only the real host can kick / flip control.
 	async function fromRemote(button: string): Promise<boolean> {
-		return invoke<boolean>("host_overlay_block_click", { button }).catch(() => false);
+		const block = await invoke<boolean>("host_overlay_block_click", { button }).catch(() => false);
+		if (block) {
+			// Flash the badge so the host sees the client's click was rejected.
+			blocked.value = true;
+			if (blockedTimer.value !== undefined) {
+				clearTimeout(blockedTimer.value);
+			}
+			blockedTimer.value = setTimeout(() => {
+				blocked.value = false;
+			}, 900);
+		}
+		return block;
 	}
 
 	// Start the kick confirmation — host-physical only.
@@ -177,29 +199,33 @@
 		} catch {
 			// Backend unavailable — the badge still shows the generic label.
 		}
-		unlistenConnected = await listen<string>("host://connected", (e) => {
+		unlistenConnected.value = await listen<string>("host://connected", (e) => {
 			peer.value = e.payload;
 			// The window is reused across sessions, so start each one expanded.
 			collapsed.value = false;
 			confirming.value = false;
 		});
-		unlistenDisconnected = await listen("host://disconnected", () => {
+		unlistenDisconnected.value = await listen("host://disconnected", () => {
 			peer.value = null;
 		});
-		unlistenControl = await listen<boolean>("host://control", (e) => {
+		unlistenControl.value = await listen<boolean>("host://control", (e) => {
 			controlGranted.value = e.payload;
 		});
 	});
 
 	onUnmounted(() => {
-		unlistenConnected?.();
-		unlistenDisconnected?.();
-		unlistenControl?.();
+		unlistenConnected.value?.();
+		unlistenDisconnected.value?.();
+		unlistenControl.value?.();
+		if (blockedTimer.value !== undefined) {
+			clearTimeout(blockedTimer.value);
+		}
 	});
 </script>
 
 <style scoped>
 	.badge {
+		position: relative; /* anchor the shield-flash overlay */
 		display: flex;
 		flex: none; /* size to content, hug the right edge — never fill the window */
 		align-items: center;
@@ -222,6 +248,45 @@
 	.badge.collapsed {
 		gap: 8px;
 		padding: 0 14px;
+	}
+
+	/* Shield rejected an injected client click — flash red + shake briefly. */
+	.badge.blocked {
+		animation: shake 0.4s ease-in-out;
+		box-shadow: 0 0 0 2px #ff1744, 0 0 14px rgba(255, 23, 68, 0.7);
+	}
+
+	@keyframes shake {
+		0%, 100% {
+			transform: translateX(0);
+		}
+		25% {
+			transform: translateX(-5px);
+		}
+		75% {
+			transform: translateX(5px);
+		}
+	}
+
+	/* The "host only" overlay covering the badge content during the flash. */
+	.shield-flash {
+		position: absolute;
+		inset: 0;
+		z-index: 2;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		border-radius: 12px;
+		background: rgba(20, 20, 22, 0.96);
+		color: #ff6b81;
+		font-size: 0.9rem;
+		font-weight: 600;
+		white-space: nowrap;
+	}
+
+	.shield-flash .mdi {
+		font-size: 1.3rem;
 	}
 
 	.dot {

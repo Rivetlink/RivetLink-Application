@@ -104,7 +104,7 @@
 
 <script setup lang="ts">
 	import {
-		computed, onMounted, onUnmounted, ref,
+		computed, onMounted, onUnmounted, ref, shallowRef,
 	} from "vue";
 	import { useI18n } from "vue-i18n";
 	import {
@@ -159,7 +159,7 @@
 	// Throttle pointer moves: only the latest position matters, and the host's
 	// control channel shouldn't be flooded. ~120 Hz is smooth and cheap.
 	const MOVE_INTERVAL_MS = 8;
-	let lastMoveAt = 0;
+	const lastMoveAt = ref(0);
 	// The source frame's pixel size and the live window size — together they give
 	// the "fit" scale that zoom multiplies.
 	const frameW = ref(0);
@@ -205,17 +205,20 @@
 		winH.value = window.innerHeight;
 	}
 
-	let ctx: CanvasRenderingContext2D | null = null;
-	let pending: Promise<void> = Promise.resolve();
-	let unlistenFrame: UnlistenFn | null = null;
-	let unlistenEnd: UnlistenFn | null = null;
-	let unlistenDisplays: UnlistenFn | null = null;
-	let unlistenBlur: UnlistenFn | null = null;
+	// shallowRef (not ref) for the canvas context and the frame-chain promise:
+	// a deep reactive proxy of a CanvasRenderingContext2D / Promise breaks their
+	// internal-slot methods (drawImage / .then). These never drive the template.
+	const ctx = shallowRef<CanvasRenderingContext2D | null>(null);
+	const pending = shallowRef<Promise<void>>(Promise.resolve());
+	const unlistenFrame = ref<UnlistenFn | null>(null);
+	const unlistenEnd = ref<UnlistenFn | null>(null);
+	const unlistenDisplays = ref<UnlistenFn | null>(null);
+	const unlistenBlur = ref<UnlistenFn | null>(null);
 	// The host sends a heartbeat frame ~every second; if nothing arrives for a
 	// while the link is slow/stalled rather than just a static screen.
-	let lastFrameAt = 0;
-	let slowTimer: ReturnType<typeof setInterval> | undefined;
-	let closeTimer: ReturnType<typeof setTimeout> | undefined;
+	const lastFrameAt = ref(0);
+	const slowTimer = ref<ReturnType<typeof setInterval>>();
+	const closeTimer = ref<ReturnType<typeof setTimeout>>();
 	const SLOW_AFTER_MS = 2000;
 
 	function base64ToBytes(b64: string): Uint8Array {
@@ -240,10 +243,10 @@
 			frameW.value = delta.w;
 			frameH.value = delta.h;
 		}
-		if (!ctx) {
-			ctx = canvas.getContext("2d");
+		if (!ctx.value) {
+			ctx.value = canvas.getContext("2d");
 		}
-		const context = ctx;
+		const context = ctx.value;
 		if (!context) {
 			return;
 		}
@@ -263,18 +266,18 @@
 		// Frames are flowing again — if this window was lingering on a "connection
 		// ended" screen (about to self-close in 5s) it's a live reconnect now, so
 		// cancel that pending close instead of yanking the window mid-session.
-		if (closeTimer !== undefined) {
-			clearTimeout(closeTimer);
-			closeTimer = undefined;
+		if (closeTimer.value !== undefined) {
+			clearTimeout(closeTimer.value);
+			closeTimer.value = undefined;
 		}
-		lastFrameAt = performance.now();
+		lastFrameAt.value = performance.now();
 		slow.value = false;
 	}
 
 	function clearCanvas(): void {
 		const canvas = canvasEl.value;
-		if (canvas && ctx) {
-			ctx.clearRect(0, 0, canvas.width, canvas.height);
+		if (canvas && ctx.value) {
+			ctx.value.clearRect(0, 0, canvas.width, canvas.height);
 		}
 	}
 
@@ -327,14 +330,14 @@
 
 	function onPointerMove(e: PointerEvent): void {
 		const now = performance.now();
-		if (now - lastMoveAt < MOVE_INTERVAL_MS) {
+		if (now - lastMoveAt.value < MOVE_INTERVAL_MS) {
 			return;
 		}
 		const point = framePoint(e);
 		if (point === null) {
 			return;
 		}
-		lastMoveAt = now;
+		lastMoveAt.value = now;
 		sendInput({
 			kind: "move",
 			x: point.x,
@@ -458,11 +461,11 @@
 	}
 
 	onMounted(async () => {
-		unlistenFrame = await listen<FrameDelta>("lan://frame", (e) => {
+		unlistenFrame.value = await listen<FrameDelta>("lan://frame", (e) => {
 			// Serialise frames so tile draws never interleave out of order.
-			pending = pending.then(() => applyDelta(e.payload)).catch(() => { /* drop */ });
+			pending.value = pending.value.then(() => applyDelta(e.payload)).catch(() => { /* drop */ });
 		});
-		unlistenEnd = await listen("lan://disconnected", () => {
+		unlistenEnd.value = await listen("lan://disconnected", () => {
 			ended.value = true;
 			hasFrame.value = false;
 			slow.value = false;
@@ -474,13 +477,13 @@
 			clearCanvas(); // drop the last frame instead of leaving it frozen
 			// Keep the "connection ended" message up briefly so the viewer sees
 			// what happened (e.g. the host hung up) before the window closes.
-			if (closeTimer === undefined) {
-				closeTimer = setTimeout(() => {
+			if (closeTimer.value === undefined) {
+				closeTimer.value = setTimeout(() => {
 					getCurrentWindow().close().catch(() => { /* already gone */ });
 				}, 5000);
 			}
 		});
-		unlistenDisplays = await listen<DisplayInfo[]>("lan://displays", (e) => {
+		unlistenDisplays.value = await listen<DisplayInfo[]>("lan://displays", (e) => {
 			displays.value = e.payload;
 			// The stream opens on the host's first screen, so reflect that.
 			if (e.payload.length > 0 && currentDisplay.value === null) {
@@ -488,9 +491,9 @@
 			}
 		});
 		// Flag a slow link when no frame (not even a heartbeat) arrives in time.
-		slowTimer = setInterval(() => {
+		slowTimer.value = setInterval(() => {
 			if (hasFrame.value && !ended.value) {
-				slow.value = performance.now() - lastFrameAt > SLOW_AFTER_MS;
+				slow.value = performance.now() - lastFrameAt.value > SLOW_AFTER_MS;
 			}
 		}, 500);
 		window.addEventListener("resize", onResize);
@@ -502,7 +505,7 @@
 		// Firefox) demotes this window in the stack, so re-assert always_on_top
 		// each time it loses focus. viewer_raise doesn't steal focus, so the other
 		// app keeps focus — the viewer just floats back above it.
-		unlistenBlur = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+		unlistenBlur.value = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
 			if (!focused) {
 				void invoke("viewer_raise").catch(() => { /* window gone */ });
 			}
@@ -510,17 +513,17 @@
 	});
 
 	onUnmounted(() => {
-		unlistenFrame?.();
-		unlistenEnd?.();
-		unlistenDisplays?.();
-		unlistenBlur?.();
+		unlistenFrame.value?.();
+		unlistenEnd.value?.();
+		unlistenDisplays.value?.();
+		unlistenBlur.value?.();
 		detachControl(canvasEl.value); // drop any input listeners
 		window.removeEventListener("resize", onResize);
-		if (slowTimer) {
-			clearInterval(slowTimer);
+		if (slowTimer.value) {
+			clearInterval(slowTimer.value);
 		}
-		if (closeTimer) {
-			clearTimeout(closeTimer);
+		if (closeTimer.value) {
+			clearTimeout(closeTimer.value);
 		}
 	});
 </script>

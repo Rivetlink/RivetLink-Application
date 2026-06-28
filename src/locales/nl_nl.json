@@ -215,7 +215,8 @@
         "expand": "Uitklappen",
         "collapse": "Inklappen",
         "controlOff": "Muis + toetsenbord laten overnemen",
-        "controlOn": "Overname stoppen"
+        "controlOn": "Overname stoppen",
+        "hostOnly": "Alleen de host"
     },
     "consent": {
         "title": "Deze verbinding toestaan?",

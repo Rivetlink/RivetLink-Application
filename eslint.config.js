@@ -145,6 +145,18 @@ export default tseslint.config(
     files: ["**/*.vue"],
     rules: {
       "@stylistic/indent": "off",
+      // House rule: never a bare top-level `let` in an SFC <script setup> —
+      // module-scope mutable state is a ref() (and a write-once value is const).
+      // Targets only Program-level declarations; `let` inside functions/loops is
+      // fine. Keeps reactive intent explicit and the top of every component
+      // uniform.
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "Program > VariableDeclaration[kind='let']",
+          message: "No top-level `let` in a Vue SFC — use ref() for mutable module-scope state (or const if it's never reassigned).",
+        },
+      ],
     },
   },
 );

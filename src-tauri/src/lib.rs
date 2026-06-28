@@ -313,9 +313,21 @@ fn install_menu(app: &tauri::App) -> tauri::Result<()> {
         .select_all()
         .build()?;
 
+    // "View" menu carries Reload — the only useful action from the WebKit
+    // right-click menu we suppress in the UI (the rest were Back/Forward/Stop/
+    // Inspect, which don't belong in a single-page desktop app).
+    let reload_item = MenuItemBuilder::new("Reload")
+        .id("reload")
+        .accelerator("CmdOrCtrl+R")
+        .build(app)?;
+    let view_menu = SubmenuBuilder::new(app, "View")
+        .item(&reload_item)
+        .build()?;
+
     let menu = MenuBuilder::new(app)
         .item(&rivetlink_menu)
         .item(&edit_menu)
+        .item(&view_menu)
         .build()?;
 
     app.set_menu(menu)?;
@@ -596,14 +608,32 @@ async fn lan_screenshot(
     Ok(format!("data:image/png;base64,{b64}"))
 }
 
-/// Open (or focus) the standalone viewer window that renders the live stream.
-/// Closing the window stops the stream.
-fn open_viewer(app: &tauri::AppHandle, title: &str) -> Result<(), String> {
+/// True while `open_viewer` is closing a stale viewer to rebuild a fresh one, so
+/// that close's `CloseRequested` handler skips the disconnect side-effects (the
+/// new stream is about to start — don't stop it / emit "disconnected").
+static VIEWER_REBUILDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Open the standalone viewer window that renders the live stream. Always builds
+/// a *fresh* window: a reused one's always_on_top doesn't reliably stay above
+/// newly-opened apps after a reconnect (it covers the current app once, but the
+/// next app to open maps over it), whereas a fresh window gets a sticky
+/// always_on_top at build — like the first connect. Closing the window stops the
+/// stream.
+async fn open_viewer(app: &tauri::AppHandle, title: &str) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
     if let Some(win) = app.get_webview_window("viewer") {
-        // Re-assert on-top: a reused viewer (reconnect) drifts behind other apps,
-        // and GNOME ignores a redundant set_always_on_top — toggle to restack.
-        raise_above_all(&win);
-        return Ok(());
+        // Tear the stale viewer down (don't reuse) — suppress its close handler's
+        // disconnect side-effects since we're mid-reconnect, then wait for it to
+        // actually go away so rebuilding "viewer" doesn't clash on the label.
+        VIEWER_REBUILDING.store(true, Ordering::SeqCst);
+        let _ = win.close();
+        for _ in 0..40 {
+            if app.get_webview_window("viewer").is_none() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+        VIEWER_REBUILDING.store(false, Ordering::SeqCst);
     }
     let window = tauri::WebviewWindowBuilder::new(
         app,
@@ -619,17 +649,20 @@ fn open_viewer(app: &tauri::AppHandle, title: &str) -> Result<(), String> {
     .build()
     .map_err(|e| e.to_string())?;
 
-    // GNOME/Wayland frequently ignores the builder's always_on_top on a fresh
-    // window, so re-assert it at runtime once built. The viewer also calls
-    // `viewer_raise` from its onMounted, which lands after the window is mapped —
-    // belt and suspenders so a reconnect always comes up above every app.
+    // Re-assert always_on_top + raise once mapped (the builder hint is sometimes
+    // ignored on a fresh window). The viewer also re-raises from its onMounted and
+    // on every focus-loss, so it floats back above whatever app the user switches to.
     let _ = window.set_always_on_top(true);
     let _ = window.set_focus();
 
-    // Closing the viewer disconnects the live stream.
+    // Closing the viewer disconnects the live stream — unless we closed it
+    // ourselves to rebuild (mid-reconnect), in which case leave the stream alone.
     let handle = app.clone();
     window.on_window_event(move |event| {
         if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+            if VIEWER_REBUILDING.load(Ordering::SeqCst) {
+                return;
+            }
             if let Some(state) = handle.try_state::<AppState>() {
                 stop_stream(&state);
             }
@@ -814,7 +847,7 @@ async fn lan_connect(
 
     // Stop any previous session before starting a new one.
     stop_stream(&state);
-    open_viewer(&app, &format!("RivetLink — {}", target.name))?;
+    open_viewer(&app, &format!("RivetLink — {}", target.name)).await?;
 
     // Ask the host which screens it can share and hand it to the viewer for a
     // screen picker. Bounded: an unresponsive host shouldn't stall the stream.
@@ -1755,6 +1788,15 @@ pub fn run() {
             app.on_menu_event(|app, event| {
                 if event.id() == "check_updates" {
                     let _ = app.emit("menu://check-updates", ());
+                } else if event.id() == "reload" {
+                    // Reload the focused window (View ▸ Reload / Cmd-R) — replaces
+                    // the suppressed WebKit right-click "Reload".
+                    for (_, win) in app.webview_windows() {
+                        if win.is_focused().unwrap_or(false) {
+                            let _ = win.eval("window.location.reload()");
+                            break;
+                        }
+                    }
                 }
             });
 

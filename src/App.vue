@@ -97,9 +97,9 @@
 	const overlayKind = ((): "panel" | null => {
 		return getCurrentWindow().label === "hostpanel" ? "panel" : null;
 	})();
-	let unlistenMenu: UnlistenFn | null = null;
-	let unlistenConnected: UnlistenFn | null = null;
-	let unlistenDisconnected: UnlistenFn | null = null;
+	const unlistenMenu = ref<UnlistenFn | null>(null);
+	const unlistenConnected = ref<UnlistenFn | null>(null);
+	const unlistenDisconnected = ref<UnlistenFn | null>(null);
 
 	// Developer console is off by default; toggle it with Ctrl/Cmd+Shift+I or F12.
 	function onKeydown(e: KeyboardEvent) {
@@ -118,12 +118,12 @@
 		}
 		window.addEventListener("keydown", onKeydown);
 		// The native "RivetLink -> Check for Updates" menu item fires this event.
-		unlistenMenu = await listen("menu://check-updates", () => checkForUpdates());
+		unlistenMenu.value = await listen("menu://check-updates", () => checkForUpdates());
 		// Track the active LAN live session for the "connected" badge.
-		unlistenConnected = await listen<string>("lan://connected", (e) => {
+		unlistenConnected.value = await listen<string>("lan://connected", (e) => {
 			store.connectedLanId = e.payload;
 		});
-		unlistenDisconnected = await listen("lan://disconnected", () => {
+		unlistenDisconnected.value = await listen("lan://disconnected", () => {
 			store.connectedLanId = null;
 		});
 		await loadSettings();
@@ -155,9 +155,9 @@
 
 	onUnmounted(() => {
 		window.removeEventListener("keydown", onKeydown);
-		unlistenMenu?.();
-		unlistenConnected?.();
-		unlistenDisconnected?.();
+		unlistenMenu.value?.();
+		unlistenConnected.value?.();
+		unlistenDisconnected.value?.();
 	});
 
 	// Nav items, filtered by the roles the user enabled during onboarding.
