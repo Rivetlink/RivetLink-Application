@@ -1348,6 +1348,21 @@ fn host_injection_age_ms() -> u64 {
     }
 }
 
+/// A badge button (kick / control) was clicked: should the overlay ignore it?
+/// True = the click was injected by the controlling client (it drove the host
+/// cursor onto the badge), so swallow it — only the physical host may kick or
+/// flip control. Decided + logged here on the Rust side so the verdict always
+/// lands in the app log (a JS `void invoke` log can be dropped). The window is
+/// generous (400ms) to cover D-Bus + compositor + IPC latency between the
+/// injected release and this call; a physical host click has no recent injection.
+#[tauri::command]
+fn host_overlay_block_click(button: String) -> bool {
+    let age = host_injection_age_ms();
+    let block = age < 400;
+    tracing::info!(target: "overlay_debug", "badge {button}: injection age={age}ms block={block}");
+    block
+}
+
 /// Hang up on the currently connected helper without stopping hosting: the
 /// listener and PIN stay live so a new helper can connect. No-op if nobody is
 /// connected. The host's "connected" badge clears immediately; the agent drops
@@ -1789,6 +1804,7 @@ pub fn run() {
             viewer_raise,
             overlay_log,
             host_injection_age_ms,
+            host_overlay_block_click,
             place_badge,
             overlay_poke,
             trust_client,

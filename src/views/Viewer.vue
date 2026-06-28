@@ -210,6 +210,7 @@
 	let unlistenFrame: UnlistenFn | null = null;
 	let unlistenEnd: UnlistenFn | null = null;
 	let unlistenDisplays: UnlistenFn | null = null;
+	let unlistenBlur: UnlistenFn | null = null;
 	// The host sends a heartbeat frame ~every second; if nothing arrives for a
 	// while the link is slow/stalled rather than just a static screen.
 	let lastFrameAt = 0;
@@ -493,16 +494,26 @@
 			}
 		}, 500);
 		window.addEventListener("resize", onResize);
-		// Raise above every app now the window is mapped — GNOME/Wayland honours
+		// Raise above every app now the window is mapped — the OS honours
 		// always_on_top reliably here but not always at build time, so a reconnect
 		// (fresh window) would otherwise come up behind other apps.
 		void invoke("viewer_raise").catch(() => { /* window gone */ });
+		// Keep it on top across app switches: switching to another app (Chrome →
+		// Firefox) demotes this window in the stack, so re-assert always_on_top
+		// each time it loses focus. viewer_raise doesn't steal focus, so the other
+		// app keeps focus — the viewer just floats back above it.
+		unlistenBlur = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
+			if (!focused) {
+				void invoke("viewer_raise").catch(() => { /* window gone */ });
+			}
+		});
 	});
 
 	onUnmounted(() => {
 		unlistenFrame?.();
 		unlistenEnd?.();
 		unlistenDisplays?.();
+		unlistenBlur?.();
 		detachControl(canvasEl.value); // drop any input listeners
 		window.removeEventListener("resize", onResize);
 		if (slowTimer) {

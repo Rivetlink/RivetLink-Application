@@ -107,19 +107,16 @@
 
 	// True when this click is one the controlling client injected onto the badge
 	// (it drives the host cursor, so it can reach these buttons). The agent stamps
-	// every press it injects; if one happened in the last ~250ms, this firing is
-	// that injected click — ignore it. A physical host click has no recent
-	// injection. So only the real host can kick / flip control, not the client.
-	async function fromRemote(): Promise<boolean> {
-		const age = await invoke<number>("host_injection_age_ms").catch(() => Number.MAX_SAFE_INTEGER);
-		const remote = age < 250;
-		void invoke("overlay_log", { msg: `badge button: injection age=${age}ms remote=${remote}` });
-		return remote;
+	// every press it injects; the backend decides + logs the verdict (so it always
+	// lands in the app log) and we ignore an injected click. A physical host click
+	// has no recent injection. So only the real host can kick / flip control.
+	async function fromRemote(button: string): Promise<boolean> {
+		return invoke<boolean>("host_overlay_block_click", { button }).catch(() => false);
 	}
 
 	// Start the kick confirmation — host-physical only.
 	async function startKick(): Promise<void> {
-		if (await fromRemote()) {
+		if (await fromRemote("kick")) {
 			return;
 		}
 		confirming.value = true;
@@ -128,7 +125,7 @@
 	// Kick the helper. The backend drops the viewer and closes this window, so
 	// there's nothing to clean up here. Host-physical only.
 	async function doKick(): Promise<void> {
-		if (await fromRemote()) {
+		if (await fromRemote("kick-confirm")) {
 			return;
 		}
 		await invoke("host_disconnect").catch(() => { /* already gone */ });
@@ -138,7 +135,7 @@
 	// echoes "host://control" to confirm and keep every host surface in sync.
 	// Host-physical only — the client can't flip its own control off/on.
 	async function toggleControl(): Promise<void> {
-		if (await fromRemote()) {
+		if (await fromRemote("control")) {
 			return;
 		}
 		const next = !controlGranted.value;
