@@ -111,6 +111,15 @@
 						>
 							{{ t("headless.refresh") }}
 						</VBtn>
+						<VBtn
+							v-if="headless.configured"
+							color="error"
+							variant="text"
+							prepend-icon="mdi-delete-outline"
+							@click="headlessRemoveDialog = true"
+						>
+							{{ t("headless.remove") }}
+						</VBtn>
 					</VCardText>
 				</VCard>
 			</VWindowItem>
@@ -271,6 +280,36 @@
 				</VCardActions>
 			</VCard>
 		</VDialog>
+		<VDialog v-model="headlessRemoveDialog" max-width="520" persistent>
+			<VCard>
+				<VCardTitle>{{ t("headless.removeTitle") }}</VCardTitle>
+				<VCardText>
+					<VAlert type="warning" variant="tonal" class="mb-4">
+						{{ t("headless.removeWarning") }}
+					</VAlert>
+					<p class="text-body-2 mb-0">
+						{{ t("headless.removeBody") }}
+					</p>
+					<VAlert
+						v-if="headlessRemoveError"
+						type="error"
+						variant="tonal"
+						class="mt-4"
+					>
+						{{ headlessRemoveError }}
+					</VAlert>
+				</VCardText>
+				<VCardActions>
+					<VSpacer />
+					<VBtn :disabled="headlessRemoveBusy" @click="closeHeadlessRemoveDialog">
+						{{ t("common.cancel") }}
+					</VBtn>
+					<VBtn color="error" :loading="headlessRemoveBusy" @click="removeHeadlessHost">
+						{{ t("headless.removeConfirm") }}
+					</VBtn>
+				</VCardActions>
+			</VCard>
+		</VDialog>
 	</VContainer>
 </template>
 
@@ -306,6 +345,9 @@
 	const headlessDialog = ref(false);
 	const headlessBusy = ref(false);
 	const headlessError = ref("");
+	const headlessRemoveDialog = ref(false);
+	const headlessRemoveBusy = ref(false);
+	const headlessRemoveError = ref("");
 	const headlessName = ref("");
 	const headlessTrustedClientKey = ref("");
 	const headlessResolution = ref("1920x1080");
@@ -348,6 +390,24 @@
 			headlessError.value = String(error);
 		} finally {
 			headlessBusy.value = false;
+		}
+	}
+
+	function closeHeadlessRemoveDialog() {
+		headlessRemoveDialog.value = false;
+		headlessRemoveError.value = "";
+	}
+
+	async function removeHeadlessHost() {
+		headlessRemoveBusy.value = true;
+		headlessRemoveError.value = "";
+		try {
+			headless.value = await invoke<typeof headless.value>("remove_headless_host");
+			closeHeadlessRemoveDialog();
+		} catch (error) {
+			headlessRemoveError.value = String(error);
+		} finally {
+			headlessRemoveBusy.value = false;
 		}
 	}
 

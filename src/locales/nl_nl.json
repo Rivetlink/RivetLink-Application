@@ -160,6 +160,7 @@
         "configuredHint": "Deze computer legt alleen zijn eigen virtuele monitor vast. De relay ziet het scherm nooit onversleuteld.",
         "setup": "Headless host instellen",
         "refresh": "Status vernieuwen",
+        "remove": "Headless host verwijderen",
         "running": "actief",
         "needsAttention": "aandacht nodig",
         "dialogTitle": "Headless Ubuntu-host instellen",
@@ -173,7 +174,11 @@
         "controllerKey": "Publieke sleutel van je bedienende apparaat",
         "controllerKeyHint": "Open op je laptop/telefoon RivetLink → Instellingen → Beveiliging en kopieer daar de publieke sleutel. Alleen dat apparaat wordt toegelaten.",
         "resolution": "Resolutie van virtuele monitor",
-        "confirm": "Installeren en inschakelen"
+        "confirm": "Installeren en inschakelen",
+        "removeTitle": "Headless host verwijderen",
+        "removeWarning": "Dit stopt de twee RivetLink-user-services en verwijdert de lokale headless-identiteit, sleutels en configuratie.",
+        "removeBody": "GNOME/PipeWire-pakketten, je opgeslagen toegelaten apparaten in deze app en een eventueel relay-apparaat blijven bestaan. Daarna kun je deze host opnieuw instellen.",
+        "removeConfirm": "Verwijderen"
     },
     "resources": {
         "title": "Bronnengebruik van de app",

@@ -384,9 +384,7 @@ fn headless_host_status() -> HeadlessHostStatus {
     #[cfg(target_os = "linux")]
     {
         let configured = rivetlink_home()
-            .map(|path| {
-                path.join("agent.json").is_file() || path.join("headless.json").is_file()
-            })
+            .map(|path| path.join("agent.json").is_file() || path.join("headless.json").is_file())
             .unwrap_or(false);
         return HeadlessHostStatus {
             supported: is_supported_ubuntu(),
@@ -402,6 +400,105 @@ fn headless_host_status() -> HeadlessHostStatus {
         gnome_active: false,
         agent_active: false,
     }
+}
+
+/// Remove an app-managed Ubuntu headless host so its owner can set it up
+/// again. This deliberately leaves the desktop app's settings alone: in
+/// particular, its controller allow-list is useful when recreating the host.
+/// It also does not remove packages, linger, or a relay-side device record.
+#[tauri::command]
+fn remove_headless_host() -> Result<HeadlessHostStatus, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let home = rivetlink_home()?;
+        let marker = home.join("headless.json");
+        let home_metadata = std::fs::symlink_metadata(&home)
+            .map_err(|error| format!("inspect local headless data: {error}"))?;
+        if home_metadata.file_type().is_symlink() || !home_metadata.is_dir() {
+            return Err("refusing to remove an unexpected local headless data path".to_string());
+        }
+        if !std::fs::symlink_metadata(&marker).is_ok_and(|metadata| metadata.file_type().is_file())
+        {
+            return Err("no RivetLink headless host installed by this app was found".to_string());
+        }
+
+        // Keep this destructive operation narrowly scoped, even if the
+        // process environment was unexpectedly modified.
+        if home.file_name() != Some(std::ffi::OsStr::new(".rivetlink")) {
+            return Err("refusing to remove an unexpected host data path".to_string());
+        }
+        let user_home = home
+            .parent()
+            .ok_or("cannot resolve the current user's home directory")?;
+        if !user_home.is_absolute() {
+            return Err("current user's home directory is invalid".to_string());
+        }
+
+        let units = user_home.join(".config/systemd/user");
+        let unit_paths = [
+            units.join("rivetlink-agent.service"),
+            units.join("rivetlink-headless-gnome.service"),
+        ];
+        for unit in &unit_paths {
+            match std::fs::symlink_metadata(unit) {
+                Ok(metadata) if metadata.file_type().is_file() => {}
+                Ok(_) => {
+                    return Err(format!(
+                        "refusing to remove unexpected service path {}",
+                        unit.display()
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("inspect {}: {error}", unit.display())),
+            }
+        }
+        // A missing or already stopped unit is normal during recovery. The
+        // files below are still removed so a following setup starts cleanly.
+        if let Err(error) = std::process::Command::new("/usr/bin/systemctl")
+            .args([
+                "--user",
+                "disable",
+                "--now",
+                "rivetlink-agent.service",
+                "rivetlink-headless-gnome.service",
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+        {
+            tracing::warn!(%error, "could not stop headless user services during removal");
+        }
+
+        for unit in unit_paths {
+            match std::fs::symlink_metadata(&unit) {
+                Ok(metadata) if metadata.file_type().is_file() => {
+                    std::fs::remove_file(&unit)
+                        .map_err(|error| format!("remove {}: {error}", unit.display()))?;
+                }
+                Ok(_) => {
+                    return Err(format!(
+                        "refusing to remove unexpected service path {}",
+                        unit.display()
+                    ));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(format!("inspect {}: {error}", unit.display())),
+            }
+        }
+        if let Err(error) = run_checked(
+            "/usr/bin/systemctl",
+            &["--user".into(), "daemon-reload".into()],
+        ) {
+            tracing::warn!(%error, "could not reload user systemd after headless removal");
+        }
+
+        std::fs::remove_dir_all(&home)
+            .map_err(|error| format!("remove local headless data: {error}"))?;
+        return Ok(headless_host_status());
+    }
+    #[cfg(not(target_os = "linux"))]
+    Err("headless screenshot hosting is currently available on Ubuntu Desktop only".to_string())
 }
 
 /// Install this AppImage (or the native app binary) as the screenshot-only
@@ -442,10 +539,9 @@ async fn setup_headless_host(
             HeadlessConnectionMode::Relay => {
                 let relay = {
                     let settings = state.settings.lock().await;
-                    settings
-                        .active_relay()
-                        .cloned()
-                        .ok_or("add and select a relay first, or choose Local network in this setup")?
+                    settings.active_relay().cloned().ok_or(
+                        "add and select a relay first, or choose Local network in this setup",
+                    )?
                 };
                 let authenticated = state
                     .client
@@ -460,7 +556,7 @@ async fn setup_headless_host(
                     );
                 }
                 Some(relay)
-            },
+            }
         };
         let home = rivetlink_home()?;
         let config = home.join("agent.json");
@@ -544,8 +640,8 @@ async fn setup_headless_host(
             // access token private, so no token is passed through the UI,
             // process arguments, configuration, or logs.
             let mut agent_config = AgentConfig::load(&config).map_err(|e| e.to_string())?;
-            let key_store = FileKeyStore::new(agent_config.keystore_path.clone())
-                .map_err(|e| e.to_string())?;
+            let key_store =
+                FileKeyStore::new(agent_config.keystore_path.clone()).map_err(|e| e.to_string())?;
             let signing = key_store
                 .ensure_signing_key()
                 .await
@@ -2451,6 +2547,7 @@ pub fn run() {
             is_appimage,
             headless_host_status,
             setup_headless_host,
+            remove_headless_host,
             toggle_devtools,
             add_relay,
             remove_relay,

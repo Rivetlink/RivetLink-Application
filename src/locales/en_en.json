@@ -160,6 +160,7 @@
         "configuredHint": "This computer captures only its dedicated virtual monitor. The relay never sees the screen unencrypted.",
         "setup": "Set up headless host",
         "refresh": "Refresh status",
+        "remove": "Remove headless host",
         "running": "running",
         "needsAttention": "needs attention",
         "dialogTitle": "Set up a headless Ubuntu host",
@@ -173,7 +174,11 @@
         "controllerKey": "Public key of your controller device",
         "controllerKeyHint": "On your laptop/phone, open RivetLink → Settings → Security and copy the public key. Only that device is allowed.",
         "resolution": "Virtual monitor resolution",
-        "confirm": "Install and enable"
+        "confirm": "Install and enable",
+        "removeTitle": "Remove headless host",
+        "removeWarning": "This stops the two RivetLink user services and removes the local headless identity, keys, and configuration.",
+        "removeBody": "GNOME/PipeWire packages, this app's saved allowed devices, and any relay-side device record remain. You can then set up this host again.",
+        "removeConfirm": "Remove"
     },
     "resources": {
         "title": "App resource usage",
