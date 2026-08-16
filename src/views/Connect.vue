@@ -293,6 +293,16 @@
 								</VBtn>
 								<VBtn
 									size="small"
+									variant="tonal"
+									prepend-icon="mdi-camera"
+									class="mr-2"
+									:loading="lanCaptureId === d.id"
+									@click="captureLan(d)"
+								>
+									{{ t("connect.capture") }}
+								</VBtn>
+								<VBtn
+									size="small"
 									variant="text"
 									icon="mdi-delete-outline"
 									@click="forget(d.id)"
@@ -300,6 +310,10 @@
 							</template>
 						</VListItem>
 					</VList>
+				</VCard>
+				<VCard v-if="lanScreenshotImage" class="mt-4">
+					<VCardTitle>{{ t("connect.screenshot") }}</VCardTitle>
+					<VImg :src="lanScreenshotImage" />
 				</VCard>
 			</VWindowItem>
 
@@ -360,6 +374,7 @@
 		lanConnect,
 		lanDisconnect,
 		lanPing,
+		lanScreenshot,
 		listDevices,
 		login,
 		type NetworkInfo,
@@ -395,6 +410,8 @@
 	// Id of the saved device a connection is currently being set up for, so its
 	// row can show "Connecting…" and disable its button.
 	const connectingId = ref<string | null>(null);
+	const lanCaptureId = ref<string | null>(null);
+	const lanScreenshotImage = ref<string | null>(null);
 	const net = ref<NetworkInfo | null>(null);
 	// Per-saved-device reachability (id -> online), refreshed on a timer.
 	const online = ref<Record<string, boolean>>({});
@@ -595,6 +612,24 @@
 			await lanDisconnect();
 		} catch (e) {
 			fail(e);
+		}
+	}
+
+	async function captureLan(device: SavedLanDevice) {
+		error.value = null;
+		lanCaptureId.value = device.id;
+		lanScreenshotImage.value = null;
+		try {
+			lanScreenshotImage.value = await lanScreenshot(
+				device.address,
+				device.port,
+				null,
+				device.public_key,
+			);
+		} catch (e) {
+			fail(e);
+		} finally {
+			lanCaptureId.value = null;
 		}
 	}
 </script>

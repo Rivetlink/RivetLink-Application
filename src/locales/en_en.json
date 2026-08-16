@@ -156,7 +156,7 @@
     },
     "headless": {
         "title": "Ubuntu headless host",
-        "intro": "Set up this Ubuntu computer for secure, monitorless screenshots after a reboot.",
+        "intro": "Set up this Ubuntu computer for secure, monitorless screenshots after a reboot. Choose Local network when both devices are at home on the same network.",
         "configuredHint": "This computer captures only its dedicated virtual monitor. The relay never sees the screen unencrypted.",
         "setup": "Set up headless host",
         "refresh": "Refresh status",
@@ -165,7 +165,13 @@
         "dialogTitle": "Set up a headless Ubuntu host",
         "warning": "This makes system changes: RivetLink installs the GNOME/PipeWire requirements and two non-root user services. Ubuntu will ask you to approve this with your system password.",
         "scope": "Only the RivetLink client on this device is pre-trusted. RivetLink uses your current signed-in session to register this Home Node securely, so you never need to copy a token. That client can request on-demand encrypted screenshots; it cannot control input, open a shell, access files, or stream live video.",
+        "localNetwork": "Local network",
+        "relay": "Via relay",
+        "localNetworkHint": "No server or account is needed. RivetLink discovers this Home Node on your local network; only this pre-trusted app can request screenshots.",
+        "relayHint": "Requires a selected relay and a signed-in session. Use this to connect when away from your local network.",
         "name": "Name for this Home Node",
+        "controllerKey": "Public key of your controller device",
+        "controllerKeyHint": "On your laptop/phone, open RivetLink → Settings → Security and copy the public key. Only that device is allowed.",
         "resolution": "Virtual monitor resolution",
         "confirm": "Install and enable"
     },

@@ -201,9 +201,38 @@
 					<p class="text-body-2 mb-4">
 						{{ t("headless.scope") }}
 					</p>
+					<VBtnToggle
+						v-model="headlessConnectionMode"
+						mandatory
+						color="primary"
+						class="mb-2"
+					>
+						<VBtn value="lan" prepend-icon="mdi-lan">
+							{{ t("headless.localNetwork") }}
+						</VBtn>
+						<VBtn value="relay" prepend-icon="mdi-server-network">
+							{{ t("headless.relay") }}
+						</VBtn>
+					</VBtnToggle>
+					<VAlert
+						type="info"
+						variant="tonal"
+						density="compact"
+						class="mb-4"
+					>
+						{{ headlessConnectionMode === "lan" ? t("headless.localNetworkHint") : t("headless.relayHint") }}
+					</VAlert>
 					<VTextField
 						v-model="headlessName"
 						:label="t('headless.name')"
+						density="comfortable"
+						class="mb-2"
+					/>
+					<VTextField
+						v-model="headlessTrustedClientKey"
+						:label="t('headless.controllerKey')"
+						:hint="t('headless.controllerKeyHint')"
+						persistent-hint
 						density="comfortable"
 						class="mb-2"
 					/>
@@ -234,7 +263,7 @@
 					<VBtn
 						color="primary"
 						:loading="headlessBusy"
-						:disabled="!headlessName.trim()"
+						:disabled="!headlessName.trim() || !headlessTrustedClientKey.trim()"
 						@click="installHeadlessHost"
 					>
 						{{ t("headless.confirm") }}
@@ -278,7 +307,9 @@
 	const headlessBusy = ref(false);
 	const headlessError = ref("");
 	const headlessName = ref("");
+	const headlessTrustedClientKey = ref("");
 	const headlessResolution = ref("1920x1080");
+	const headlessConnectionMode = ref<"lan" | "relay">("lan");
 	const headless = ref({
 		supported: false,
 		configured: false,
@@ -307,6 +338,8 @@
 				setup: {
 					deviceName: headlessName.value,
 					resolution: headlessResolution.value,
+					connectionMode: headlessConnectionMode.value,
+					trustedClientPublicKey: headlessTrustedClientKey.value,
 				},
 			});
 			closeHeadlessDialog();

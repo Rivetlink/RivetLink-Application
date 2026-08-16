@@ -29,6 +29,7 @@ use rivetlink_agent::lan::{serve_with_events, ConsentRequest, HostEvent, LanAuth
 use rivetlink_agent::{
     config::AgentConfig,
     keystore::{file::FileKeyStore, KeyStore},
+    trusted::{TrustedClients, TrustedEntry},
 };
 use rivetlink_sdk::{ClientConfig, Device, Identity, RivetClient};
 
@@ -252,6 +253,24 @@ struct HeadlessHostStatus {
 struct HeadlessHostSetup {
     device_name: String,
     resolution: String,
+    connection_mode: HeadlessConnectionMode,
+    trusted_client_public_key: String,
+}
+
+/// The transport selected by the local owner for this headless Home Node.
+/// Direct LAN never contacts a relay; relay mode keeps the existing device
+/// registration and E2E session rendezvous flow.
+#[derive(Clone, Copy, serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+enum HeadlessConnectionMode {
+    Lan,
+    Relay,
+}
+
+#[cfg(target_os = "linux")]
+#[derive(serde::Serialize)]
+struct HeadlessHostInstall {
+    connection_mode: HeadlessConnectionMode,
 }
 
 #[cfg(target_os = "linux")]
@@ -335,8 +354,13 @@ fn systemd_quote(value: &std::path::Path) -> Result<String, String> {
     let value = value
         .to_str()
         .ok_or("host-service path is not valid UTF-8")?;
+    systemd_quote_text(value)
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_quote_text(value: &str) -> Result<String, String> {
     if value.chars().any(|c| matches!(c, '\n' | '\r' | '\0')) {
-        return Err("host-service path contains an unsupported character".to_string());
+        return Err("host-service value contains an unsupported character".to_string());
     }
     Ok(format!(
         "\"{}\"",
@@ -360,7 +384,9 @@ fn headless_host_status() -> HeadlessHostStatus {
     #[cfg(target_os = "linux")]
     {
         let configured = rivetlink_home()
-            .map(|path| path.join("agent.json").is_file())
+            .map(|path| {
+                path.join("agent.json").is_file() || path.join("headless.json").is_file()
+            })
             .unwrap_or(false);
         return HeadlessHostStatus {
             supported: is_supported_ubuntu(),
@@ -397,6 +423,13 @@ async fn setup_headless_host(
         if setup.device_name.trim().is_empty() || setup.device_name.trim().len() > 100 {
             return Err("enter a device name of at most 100 characters".to_string());
         }
+        let trusted_client_public_key = setup.trusted_client_public_key.trim();
+        let trusted_key_bytes = base64::engine::general_purpose::STANDARD
+            .decode(trusted_client_public_key)
+            .map_err(|_| "enter the controller's valid RivetLink public key".to_string())?;
+        if trusted_key_bytes.len() != 32 {
+            return Err("enter the controller's valid RivetLink public key".to_string());
+        }
         if !matches!(
             setup.resolution.as_str(),
             "1280x720" | "1920x1080" | "2560x1440"
@@ -404,35 +437,39 @@ async fn setup_headless_host(
             return Err("choose a supported virtual-monitor resolution".to_string());
         }
 
-        let relay = {
-            let settings = state.settings.lock().await;
-            settings
-                .active_relay()
-                .cloned()
-                .ok_or("add and select a relay first")?
+        let relay = match setup.connection_mode {
+            HeadlessConnectionMode::Lan => None,
+            HeadlessConnectionMode::Relay => {
+                let relay = {
+                    let settings = state.settings.lock().await;
+                    settings
+                        .active_relay()
+                        .cloned()
+                        .ok_or("add and select a relay first, or choose Local network in this setup")?
+                };
+                let authenticated = state
+                    .client
+                    .lock()
+                    .await
+                    .as_ref()
+                    .is_some_and(RivetClient::is_authenticated);
+                if !authenticated {
+                    return Err(
+                        "sign in to the selected relay first, or choose Local network in this setup"
+                            .to_string(),
+                    );
+                }
+                Some(relay)
+            },
         };
-        let authenticated = state
-            .client
-            .lock()
-            .await
-            .as_ref()
-            .is_some_and(RivetClient::is_authenticated);
-        if !authenticated {
-            return Err(
-                "sign in to the selected relay first; RivetLink will register this Home Node with that session"
-                    .to_string(),
-            );
-        }
         let home = rivetlink_home()?;
         let config = home.join("agent.json");
-        if config.exists() {
+        if config.exists() || home.join("headless.json").exists() {
             return Err(
                 "this user already has a RivetLink headless host; use its service controls instead"
                     .to_string(),
             );
         }
-        let identity =
-            Identity::load_or_create(&state.identity_path()).map_err(|e| e.to_string())?;
         let executable = appimage_or_current_exe()?;
         let user = std::env::var("USER").map_err(|_| "cannot determine current user")?;
         if !user
@@ -487,57 +524,62 @@ async fn setup_headless_host(
                 &command,
             )
         };
-        agent(vec![
-            "--config".into(),
-            config.clone().into_os_string(),
-            "init".into(),
-            "--device-name".into(),
-            setup.device_name.trim().into(),
-            "--relay-url".into(),
-            relay.ws_url.into(),
-            "--relay-http-url".into(),
-            relay.http_url.into(),
-            "--keystore-path".into(),
-            home.join("keys").into_os_string(),
-            "--headless".into(),
-            "--allow-trusted-headless".into(),
-        ])?;
-        // Enrol with the active desktop-client session. The SDK keeps its
-        // access token private, so no token is passed through the UI, process
-        // arguments, configuration, or logs.
-        let mut agent_config = AgentConfig::load(&config).map_err(|e| e.to_string())?;
-        let key_store =
-            FileKeyStore::new(agent_config.keystore_path.clone()).map_err(|e| e.to_string())?;
-        let signing = key_store
-            .ensure_signing_key()
-            .await
-            .map_err(|e| e.to_string())?;
-        let host_public_key = base64::engine::general_purpose::STANDARD.encode(signing.public);
-        let device_id = {
-            let client = state.client.lock().await;
-            let client = client
-                .as_ref()
-                .filter(|client| client.is_authenticated())
-                .ok_or("your RivetLink session expired; sign in again and retry setup")?;
-            client
-                .register_device(&host_public_key, &agent_config.device_name, Some("linux"))
+        if let Some(relay) = relay {
+            agent(vec![
+                "--config".into(),
+                config.clone().into_os_string(),
+                "init".into(),
+                "--device-name".into(),
+                setup.device_name.trim().into(),
+                "--relay-url".into(),
+                relay.ws_url.into(),
+                "--relay-http-url".into(),
+                relay.http_url.into(),
+                "--keystore-path".into(),
+                home.join("keys").into_os_string(),
+                "--headless".into(),
+                "--allow-trusted-headless".into(),
+            ])?;
+            // Enrol with the active desktop-client session. The SDK keeps its
+            // access token private, so no token is passed through the UI,
+            // process arguments, configuration, or logs.
+            let mut agent_config = AgentConfig::load(&config).map_err(|e| e.to_string())?;
+            let key_store = FileKeyStore::new(agent_config.keystore_path.clone())
+                .map_err(|e| e.to_string())?;
+            let signing = key_store
+                .ensure_signing_key()
                 .await
-                .map_err(|e| e.to_string())?
-        };
-        agent_config.device_id = Some(
-            uuid::Uuid::parse_str(&device_id)
-                .map_err(|e| format!("relay returned an invalid device id: {e}"))?,
-        );
-        agent_config.save(&config).map_err(|e| e.to_string())?;
-        agent(vec![
-            "--config".into(),
-            config.clone().into_os_string(),
-            "trust-client".into(),
-            "--public-key".into(),
-            identity.public_key_b64().into(),
-            "--name".into(),
-            "This RivetLink client".into(),
-        ])?;
+                .map_err(|e| e.to_string())?;
+            let host_public_key = base64::engine::general_purpose::STANDARD.encode(signing.public);
+            let device_id = {
+                let client = state.client.lock().await;
+                let client = client
+                    .as_ref()
+                    .filter(|client| client.is_authenticated())
+                    .ok_or("your RivetLink session expired; sign in again and retry setup")?;
+                client
+                    .register_device(&host_public_key, &agent_config.device_name, Some("linux"))
+                    .await
+                    .map_err(|e| e.to_string())?
+            };
+            agent_config.device_id = Some(
+                uuid::Uuid::parse_str(&device_id)
+                    .map_err(|e| format!("relay returned an invalid device id: {e}"))?,
+            );
+            agent_config.save(&config).map_err(|e| e.to_string())?;
+        }
+        let mut trusted = TrustedClients::load_or_empty(&home.join("keys/trusted_clients.json"))
+            .map_err(|e| e.to_string())?;
+        trusted
+            .trust(
+                trusted_client_public_key,
+                TrustedEntry {
+                    name: "Headless Home Node controller".to_string(),
+                    can_view: true,
+                    can_control: false,
+                },
+            )
+            .map_err(|e| e.to_string())?;
 
         let units = home
             .parent()
@@ -547,12 +589,22 @@ async fn setup_headless_host(
             .map_err(|e| format!("create user service directory: {e}"))?;
         let quoted_executable = systemd_quote(&executable)?;
         let quoted_config = systemd_quote(&config)?;
+        let quoted_keys = systemd_quote(&home.join("keys"))?;
+        let quoted_name = systemd_quote_text(setup.device_name.trim())?;
         write_private(&units.join("rivetlink-headless-gnome.service"), &format!(
             "[Unit]\nDescription=RivetLink dedicated headless GNOME virtual monitor\nAfter=default.target\n\n[Service]\nType=simple\nExecStart=/usr/bin/gnome-shell --headless --virtual-monitor {}\nRestart=on-failure\nRestartSec=5\nNoNewPrivileges=yes\nPrivateTmp=yes\n\n[Install]\nWantedBy=default.target\n",
             setup.resolution,
         ))?;
+        let agent_command = match setup.connection_mode {
+            HeadlessConnectionMode::Relay => format!(
+                "{quoted_executable} --rivetlink-headless-agent --config {quoted_config} run --headless"
+            ),
+            HeadlessConnectionMode::Lan => format!(
+                "{quoted_executable} --rivetlink-headless-agent lan-headless --port 47823 --device-name {quoted_name} --keystore-path {quoted_keys}"
+            ),
+        };
         write_private(&units.join("rivetlink-agent.service"), &format!(
-            "[Unit]\nDescription=RivetLink screenshot-only headless host agent\nRequires=rivetlink-headless-gnome.service\nAfter=rivetlink-headless-gnome.service\n\n[Service]\nType=simple\nExecStart={quoted_executable} --rivetlink-headless-agent --config {quoted_config} run --headless\nRestart=always\nRestartSec=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nLockPersonality=yes\nRestrictSUIDSGID=yes\nEnvironment=RUST_LOG=info\n\n[Install]\nWantedBy=default.target\n"
+            "[Unit]\nDescription=RivetLink screenshot-only headless host agent\nRequires=rivetlink-headless-gnome.service\nAfter=rivetlink-headless-gnome.service\n\n[Service]\nType=simple\nExecStart={agent_command}\nRestart=always\nRestartSec=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nLockPersonality=yes\nRestrictSUIDSGID=yes\nEnvironment=RUST_LOG=info\n\n[Install]\nWantedBy=default.target\n"
         ))?;
         run_checked(
             "/usr/bin/systemctl",
@@ -567,6 +619,13 @@ async fn setup_headless_host(
                 "rivetlink-headless-gnome.service".into(),
                 "rivetlink-agent.service".into(),
             ],
+        )?;
+        write_private(
+            &home.join("headless.json"),
+            &serde_json::to_string_pretty(&HeadlessHostInstall {
+                connection_mode: setup.connection_mode,
+            })
+            .map_err(|e| format!("serialize headless setup state: {e}"))?,
         )?;
         return Ok(headless_host_status());
     }

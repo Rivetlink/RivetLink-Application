@@ -18,9 +18,10 @@ On **Ubuntu Desktop 24.04 LTS or newer**, the AppImage also offers an explicit
 **Settings → General → Headless Ubuntu-host** flow. After the owner confirms
 and approves Ubuntu's system-password prompt, it creates a non-root,
 reboot-persistent GNOME virtual-monitor host. It permits only encrypted
-on-demand screenshots from this app's pre-trusted client identity. The app
-uses the currently signed-in relay session to register the Home Node, so no
-registration token is shown, copied, or stored. Ordinary
+on-demand screenshots from an owner-selected controller identity. The app
+offers a **Local network** option that needs no server or account, as well as
+an optional relay mode that uses the currently signed-in relay session to
+register the Home Node without showing, copying, or storing a token. Ordinary
 AppImage updates never run this setup automatically or change trusted access.
 See the main repository's `docs/ubuntu-headless-host.md` for recovery and CLI
 provisioning details.
