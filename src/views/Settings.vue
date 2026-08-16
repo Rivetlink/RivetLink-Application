@@ -103,7 +103,12 @@
 						>
 							{{ t("headless.setup") }}
 						</VBtn>
-						<VBtn v-else variant="text" prepend-icon="mdi-refresh" @click="refreshHeadlessStatus">
+						<VBtn
+							v-else
+							variant="text"
+							prepend-icon="mdi-refresh"
+							@click="refreshHeadlessStatus"
+						>
 							{{ t("headless.refresh") }}
 						</VBtn>
 					</VCardText>
@@ -193,7 +198,9 @@
 					<VAlert type="warning" variant="tonal" class="mb-4">
 						{{ t("headless.warning") }}
 					</VAlert>
-					<p class="text-body-2 mb-4">{{ t("headless.scope") }}</p>
+					<p class="text-body-2 mb-4">
+						{{ t("headless.scope") }}
+					</p>
 					<VTextField
 						v-model="headlessName"
 						:label="t('headless.name')"
@@ -212,18 +219,28 @@
 						:label="t('headless.token')"
 						:type="showToken ? 'text' : 'password'"
 						:append-inner-icon="showToken ? 'mdi-eye-off' : 'mdi-eye'"
-						@click:append-inner="showToken = !showToken"
 						:hint="t('headless.tokenHint')"
 						persistent-hint
 						density="comfortable"
+						@click:append-inner="showToken = !showToken"
 					/>
-					<VAlert v-if="headlessError" type="error" variant="tonal" class="mt-4">
+					<VAlert
+						v-if="headlessError"
+						type="error"
+						variant="tonal"
+						class="mt-4"
+					>
 						{{ headlessError }}
 					</VAlert>
 				</VCardText>
 				<VCardActions>
 					<VSpacer />
-					<VBtn :disabled="headlessBusy" @click="closeHeadlessDialog">{{ t("common.cancel") }}</VBtn>
+					<VBtn
+						:disabled="headlessBusy"
+						@click="closeHeadlessDialog"
+					>
+						{{ t("common.cancel") }}
+					</VBtn>
 					<VBtn
 						color="primary"
 						:loading="headlessBusy"

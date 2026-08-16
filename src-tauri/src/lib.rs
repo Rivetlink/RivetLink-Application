@@ -300,7 +300,10 @@ fn appimage_or_current_exe() -> Result<PathBuf, String> {
     let executable = std::env::var_os("APPIMAGE")
         .map(PathBuf::from)
         .map(Ok)
-        .unwrap_or_else(std::env::current_exe)?;
+        .unwrap_or_else(|| {
+            std::env::current_exe()
+                .map_err(|error| format!("resolve RivetLink executable: {error}"))
+        })?;
     if !executable.is_absolute() || !executable.is_file() {
         return Err(
             "RivetLink executable is unavailable for the persistent host service".to_string(),
