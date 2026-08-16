@@ -186,7 +186,7 @@
     },
     "access": {
         "title": "Toegang tot dit apparaat",
-        "subtitle": "Apparaten die mogen verbinden en dit scherm mogen zien zonder de sessiecode.",
+        "subtitle": "Apparaten die mogen verbinden en dit scherm mogen zien zonder de sessiecode. Bij een geconfigureerde Ubuntu headless host wordt deze lijst automatisch toegepast.",
         "empty": "Nog geen apparaten toegelaten.",
         "addBtn": "Apparaat toelaten",
         "addTitle": "Apparaat toelaten",

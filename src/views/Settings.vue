@@ -284,7 +284,7 @@
 	} from "@tauri-apps/plugin-autostart";
 	import { useI18n } from "vue-i18n";
 	import {
-		isClient, isHost, loadPublicKey, store, type TrustedKey,
+		isClient, isHost, loadPublicKey, loadSettings, store, type TrustedKey,
 	} from "../store";
 	import {
 		SUPPORTED, setLocale,
@@ -342,6 +342,7 @@
 					trustedClientPublicKey: headlessTrustedClientKey.value,
 				},
 			});
+			await loadSettings();
 			closeHeadlessDialog();
 		} catch (error) {
 			headlessError.value = String(error);

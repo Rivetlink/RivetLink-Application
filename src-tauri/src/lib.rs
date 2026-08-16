@@ -568,18 +568,24 @@ async fn setup_headless_host(
             );
             agent_config.save(&config).map_err(|e| e.to_string())?;
         }
-        let mut trusted = TrustedClients::load_or_empty(&home.join("keys/trusted_clients.json"))
-            .map_err(|e| e.to_string())?;
-        trusted
-            .trust(
-                trusted_client_public_key,
-                TrustedEntry {
-                    name: "Headless Home Node controller".to_string(),
-                    can_view: true,
-                    can_control: false,
-                },
-            )
-            .map_err(|e| e.to_string())?;
+        let (trusted_keys, settings_snapshot) = {
+            let mut settings = state.settings.lock().await;
+            if !settings
+                .trusted_keys
+                .iter()
+                .any(|key| key.public_key == trusted_client_public_key)
+            {
+                push_trusted_key(
+                    &mut settings,
+                    "Headless Home Node controller",
+                    trusted_client_public_key,
+                )?;
+                settings.save(&state.data_dir)?;
+            }
+            (settings.trusted_keys.clone(), settings.clone())
+        };
+        sync_trusted_live(&state, &settings_snapshot);
+        write_headless_trusted_keys(&home, &trusted_keys)?;
 
         let units = home
             .parent()
@@ -2053,8 +2059,11 @@ async fn add_trusted_key(
     let mut settings = state.settings.lock().await;
     push_trusted_key(&mut settings, &name, &public_key)?;
     settings.save(&state.data_dir)?;
-    sync_trusted_live(&state, &settings);
-    Ok(settings.clone())
+    let result = settings.clone();
+    drop(settings);
+    sync_trusted_live(&state, &result);
+    sync_headless_trusted_keys(&result.trusted_keys)?;
+    Ok(result)
 }
 
 /// Add a trusted key to `settings` (validate non-empty, dedupe by key). Shared
@@ -2102,14 +2111,19 @@ async fn trust_client(
         .ok_or_else(|| "no connected client to trust".to_string())?;
 
     let mut settings = state.settings.lock().await;
+    let mut changed = false;
     // Already trusted (e.g. double-click) is success, not an error.
     if !settings.trusted_keys.iter().any(|k| k.public_key == key) {
         push_trusted_key(&mut settings, &name, &key)?;
         settings.save(&state.data_dir)?;
         sync_trusted_live(&state, &settings);
+        changed = true;
     }
     let result = settings.clone();
     drop(settings);
+    if changed {
+        sync_headless_trusted_keys(&result.trusted_keys)?;
+    }
     // Reflect the new trusted state in the host UI.
     let _ = app.emit(
         "host://client-identity",
@@ -2152,11 +2166,18 @@ async fn respond_consent(
     if accept && remember {
         if let Some(key) = key {
             let mut settings = state.settings.lock().await;
+            let mut changed = false;
             if !settings.trusted_keys.iter().any(|k| k.public_key == key) {
                 // Best-effort: ignore empty/dup since the host explicitly accepted.
                 let _ = push_trusted_key(&mut settings, &name, &key);
                 settings.save(&state.data_dir)?;
                 sync_trusted_live(&state, &settings);
+                changed = true;
+            }
+            let result = settings.clone();
+            drop(settings);
+            if changed {
+                sync_headless_trusted_keys(&result.trusted_keys)?;
             }
         }
     }
@@ -2176,6 +2197,80 @@ fn sync_trusted_live(state: &AppState, settings: &AppSettings) {
     }
 }
 
+/// Mirror the app's controller allow-list into a configured Ubuntu headless
+/// host. `lan_devices` are intentionally excluded: they identify *hosts* that
+/// this app may call, not controllers allowed to call this host.
+#[cfg(target_os = "linux")]
+fn write_headless_trusted_keys(home: &std::path::Path, keys: &[TrustedKey]) -> Result<(), String> {
+    let path = home.join("keys/trusted_clients.json");
+    let mut trusted = TrustedClients::load_or_empty(&path).map_err(|e| e.to_string())?;
+    for key in keys {
+        trusted
+            .trust(
+                &key.public_key,
+                TrustedEntry {
+                    name: key.name.clone(),
+                    can_view: true,
+                    can_control: false,
+                },
+            )
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn sync_headless_trusted_keys(keys: &[TrustedKey]) -> Result<(), String> {
+    let home = rivetlink_home()?;
+    if !home.join("headless.json").is_file() {
+        return Ok(());
+    }
+    write_headless_trusted_keys(&home, keys)?;
+    if let Err(error) = run_checked(
+        "/usr/bin/systemctl",
+        &[
+            "--user".into(),
+            "restart".into(),
+            "rivetlink-agent.service".into(),
+        ],
+    ) {
+        tracing::warn!(%error, "headless trusted-key update needs a manual agent restart");
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn revoke_headless_trusted_key(public_key: &str) -> Result<(), String> {
+    let home = rivetlink_home()?;
+    if !home.join("headless.json").is_file() {
+        return Ok(());
+    }
+    let mut trusted = TrustedClients::load_or_empty(&home.join("keys/trusted_clients.json"))
+        .map_err(|e| e.to_string())?;
+    trusted.revoke(public_key).map_err(|e| e.to_string())?;
+    if let Err(error) = run_checked(
+        "/usr/bin/systemctl",
+        &[
+            "--user".into(),
+            "restart".into(),
+            "rivetlink-agent.service".into(),
+        ],
+    ) {
+        tracing::warn!(%error, "headless trusted-key revocation needs a manual agent restart");
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn sync_headless_trusted_keys(_keys: &[TrustedKey]) -> Result<(), String> {
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+fn revoke_headless_trusted_key(_public_key: &str) -> Result<(), String> {
+    Ok(())
+}
+
 /// Remove a trusted client, after the owner confirms with their OS password.
 #[tauri::command]
 async fn remove_trusted_key(
@@ -2187,10 +2282,20 @@ async fn remove_trusted_key(
         return Err("wrong-os-password".to_string());
     }
     let mut settings = state.settings.lock().await;
+    let removed_key = settings
+        .trusted_keys
+        .iter()
+        .find(|key| key.id == id)
+        .map(|key| key.public_key.clone());
     settings.trusted_keys.retain(|k| k.id != id);
     settings.save(&state.data_dir)?;
-    sync_trusted_live(&state, &settings);
-    Ok(settings.clone())
+    let result = settings.clone();
+    drop(settings);
+    sync_trusted_live(&state, &result);
+    if let Some(public_key) = removed_key {
+        revoke_headless_trusted_key(&public_key)?;
+    }
+    Ok(result)
 }
 
 /// Install a `tracing` subscriber that writes to **stderr** (visible when the

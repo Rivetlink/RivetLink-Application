@@ -186,7 +186,7 @@
     },
     "access": {
         "title": "Access to this device",
-        "subtitle": "Devices allowed to connect and view this screen without the session code.",
+        "subtitle": "Devices allowed to connect and view this screen without the session code. For a configured Ubuntu headless host, this list is applied automatically.",
         "empty": "No devices are allowed yet.",
         "addBtn": "Allow a device",
         "addTitle": "Allow a device",
