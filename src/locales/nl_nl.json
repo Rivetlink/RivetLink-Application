@@ -154,6 +154,23 @@
             "about": "Over"
         }
     },
+    "headless": {
+        "title": "Headless Ubuntu-host",
+        "intro": "Stel deze Ubuntu-computer in voor veilige screenshots zonder monitor, ook na een herstart.",
+        "configuredHint": "Deze computer legt alleen zijn eigen virtuele monitor vast. De relay ziet het scherm nooit onversleuteld.",
+        "setup": "Headless host instellen",
+        "refresh": "Status vernieuwen",
+        "running": "actief",
+        "needsAttention": "aandacht nodig",
+        "dialogTitle": "Headless Ubuntu-host instellen",
+        "warning": "Dit wijzigt het systeem: RivetLink installeert GNOME/PipeWire-vereisten en twee user-services zonder rootrechten. Ubuntu vraagt je dit met je systeemwachtwoord goed te keuren.",
+        "scope": "Alleen de RivetLink-client op dit apparaat wordt vooraf vertrouwd. Die kan versleutelde screenshots op aanvraag ophalen; geen invoer besturen, shell openen, bestanden benaderen of live video streamen.",
+        "name": "Naam voor deze Home Node",
+        "resolution": "Resolutie van virtuele monitor",
+        "token": "Eenmalig registratietoken",
+        "tokenHint": "Wordt één keer gebruikt om deze Home Node aan de actieve server toe te voegen. Het wordt niet bewaard.",
+        "confirm": "Installeren en inschakelen"
+    },
     "resources": {
         "title": "Bronnengebruik van de app",
         "subtitle": "Live CPU- en geheugengebruik van RivetLink op dit apparaat.",

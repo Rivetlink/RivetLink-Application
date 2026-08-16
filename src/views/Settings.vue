@@ -82,6 +82,32 @@
 						</p>
 					</VCardText>
 				</VCard>
+
+				<VCard v-if="headless.supported" variant="tonal" class="mt-4">
+					<VCardTitle class="d-flex align-center">
+						{{ t("headless.title") }}
+						<VSpacer />
+						<VChip v-if="headless.configured" :color="headless.agentActive && headless.gnomeActive ? 'success' : 'warning'" size="small">
+							{{ headless.agentActive && headless.gnomeActive ? t("headless.running") : t("headless.needsAttention") }}
+						</VChip>
+					</VCardTitle>
+					<VCardText>
+						<p class="text-body-2 mb-3">
+							{{ headless.configured ? t("headless.configuredHint") : t("headless.intro") }}
+						</p>
+						<VBtn
+							v-if="!headless.configured"
+							color="primary"
+							prepend-icon="mdi-monitor-lock"
+							@click="headlessDialog = true"
+						>
+							{{ t("headless.setup") }}
+						</VBtn>
+						<VBtn v-else variant="text" prepend-icon="mdi-refresh" @click="refreshHeadlessStatus">
+							{{ t("headless.refresh") }}
+						</VBtn>
+					</VCardText>
+				</VCard>
 			</VWindowItem>
 
 			<VWindowItem value="security">
@@ -160,6 +186,55 @@
 
 		<EditDeviceModal v-model="editOpen" />
 		<TrustedKeyModal v-model="accessOpen" :target="accessTarget" />
+		<VDialog v-model="headlessDialog" max-width="580" persistent>
+			<VCard>
+				<VCardTitle>{{ t("headless.dialogTitle") }}</VCardTitle>
+				<VCardText>
+					<VAlert type="warning" variant="tonal" class="mb-4">
+						{{ t("headless.warning") }}
+					</VAlert>
+					<p class="text-body-2 mb-4">{{ t("headless.scope") }}</p>
+					<VTextField
+						v-model="headlessName"
+						:label="t('headless.name')"
+						density="comfortable"
+						class="mb-2"
+					/>
+					<VSelect
+						v-model="headlessResolution"
+						:items="['1280x720', '1920x1080', '2560x1440']"
+						:label="t('headless.resolution')"
+						density="comfortable"
+						class="mb-2"
+					/>
+					<VTextField
+						v-model="headlessToken"
+						:label="t('headless.token')"
+						:type="showToken ? 'text' : 'password'"
+						:append-inner-icon="showToken ? 'mdi-eye-off' : 'mdi-eye'"
+						@click:append-inner="showToken = !showToken"
+						:hint="t('headless.tokenHint')"
+						persistent-hint
+						density="comfortable"
+					/>
+					<VAlert v-if="headlessError" type="error" variant="tonal" class="mt-4">
+						{{ headlessError }}
+					</VAlert>
+				</VCardText>
+				<VCardActions>
+					<VSpacer />
+					<VBtn :disabled="headlessBusy" @click="closeHeadlessDialog">{{ t("common.cancel") }}</VBtn>
+					<VBtn
+						color="primary"
+						:loading="headlessBusy"
+						:disabled="!headlessToken.trim() || !headlessName.trim()"
+						@click="installHeadlessHost"
+					>
+						{{ t("headless.confirm") }}
+					</VBtn>
+				</VCardActions>
+			</VCard>
+		</VDialog>
 	</VContainer>
 </template>
 
@@ -192,6 +267,53 @@
 	const accessTarget = ref<TrustedKey | null>(null);
 	const autostart = ref(false);
 	const autostartBusy = ref(false);
+	const headlessDialog = ref(false);
+	const headlessBusy = ref(false);
+	const headlessError = ref("");
+	const headlessToken = ref("");
+	const headlessName = ref("");
+	const headlessResolution = ref("1920x1080");
+	const showToken = ref(false);
+	const headless = ref({
+		supported: false,
+		configured: false,
+		gnomeActive: false,
+		agentActive: false,
+	});
+
+	async function refreshHeadlessStatus() {
+		try {
+			headless.value = await invoke<typeof headless.value>("headless_host_status");
+		} catch {
+			// The setup card is optional; leave it hidden if the OS cannot report.
+		}
+	}
+
+	function closeHeadlessDialog() {
+		headlessDialog.value = false;
+		headlessError.value = "";
+		headlessToken.value = "";
+		showToken.value = false;
+	}
+
+	async function installHeadlessHost() {
+		headlessBusy.value = true;
+		headlessError.value = "";
+		try {
+			headless.value = await invoke<typeof headless.value>("setup_headless_host", {
+				setup: {
+					registrationToken: headlessToken.value,
+					deviceName: headlessName.value,
+					resolution: headlessResolution.value,
+				},
+			});
+			closeHeadlessDialog();
+		} catch (error) {
+			headlessError.value = String(error);
+		} finally {
+			headlessBusy.value = false;
+		}
+	}
 
 	async function onAutostartChange(value: boolean | null) {
 		autostartBusy.value = true;
@@ -232,6 +354,8 @@
 		} catch {
 			// Autostart unsupported on this platform — leave the toggle off.
 		}
+		headlessName.value = store.settings.device_name || "RivetLink Home Node";
+		await refreshHeadlessStatus();
 	});
 
 	function onLocaleChange(code: string) {

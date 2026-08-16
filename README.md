@@ -14,6 +14,15 @@ Client-mode MVP: configure a relay → sign in → list devices → capture one
 screenshot from a host (the host may prompt its operator to approve). Live
 video, input control, and Host mode are on the roadmap.
 
+On **Ubuntu Desktop 24.04 LTS or newer**, the AppImage also offers an explicit
+**Settings → General → Headless Ubuntu-host** flow. After the owner confirms
+and approves Ubuntu's system-password prompt, it creates a non-root,
+reboot-persistent GNOME virtual-monitor host. It permits only encrypted
+on-demand screenshots from this app's pre-trusted client identity. Ordinary
+AppImage updates never run this setup automatically or change trusted access.
+See the main repository's `docs/ubuntu-headless-host.md` for recovery and CLI
+provisioning details.
+
 ## Prerequisites
 
 - [Node.js](https://nodejs.org/) 20+ and npm

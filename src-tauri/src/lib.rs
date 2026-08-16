@@ -228,6 +228,323 @@ fn is_appimage() -> bool {
     cfg!(target_os = "linux") && std::env::var_os("APPIMAGE").is_some()
 }
 
+// ---- Ubuntu headless screenshot host --------------------------------------
+
+/// Public, non-sensitive state for the Ubuntu headless-host setup card.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct HeadlessHostStatus {
+    supported: bool,
+    configured: bool,
+    gnome_active: bool,
+    agent_active: bool,
+}
+
+/// Input from the explicit owner-confirmed setup dialog. The registration
+/// token is used only by the one-shot child process and is never persisted,
+/// returned, or logged.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+struct HeadlessHostSetup {
+    registration_token: String,
+    device_name: String,
+    resolution: String,
+}
+
+#[cfg(target_os = "linux")]
+fn rivetlink_home() -> Result<PathBuf, String> {
+    let home =
+        std::env::var_os("HOME").ok_or("cannot determine the current user's home directory")?;
+    let home = PathBuf::from(home);
+    if !home.is_absolute() {
+        return Err("current user's home directory is invalid".to_string());
+    }
+    Ok(home.join(".rivetlink"))
+}
+
+#[cfg(target_os = "linux")]
+fn is_supported_ubuntu() -> bool {
+    let Ok(os_release) = std::fs::read_to_string("/etc/os-release") else {
+        return false;
+    };
+    let mut id = None;
+    let mut version = None;
+    for line in os_release.lines() {
+        if let Some(value) = line.strip_prefix("ID=") {
+            id = Some(value.trim_matches('"'));
+        }
+        if let Some(value) = line.strip_prefix("VERSION_ID=") {
+            version = Some(value.trim_matches('"'));
+        }
+    }
+    let Ok((major, minor)) = version.unwrap_or_default().split_once('.').ok_or(()) else {
+        return false;
+    };
+    id == Some("ubuntu")
+        && major.parse::<u16>().is_ok_and(|major| {
+            major > 24 || (major == 24 && minor.parse::<u16>().is_ok_and(|minor| minor >= 4))
+        })
+}
+
+#[cfg(target_os = "linux")]
+fn systemctl_user_active(unit: &str) -> bool {
+    std::process::Command::new("/usr/bin/systemctl")
+        .args(["--user", "is-active", "--quiet", unit])
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
+#[cfg(target_os = "linux")]
+fn appimage_or_current_exe() -> Result<PathBuf, String> {
+    let executable = std::env::var_os("APPIMAGE")
+        .map(PathBuf::from)
+        .map(Ok)
+        .unwrap_or_else(std::env::current_exe)?;
+    if !executable.is_absolute() || !executable.is_file() {
+        return Err(
+            "RivetLink executable is unavailable for the persistent host service".to_string(),
+        );
+    }
+    Ok(executable)
+}
+
+#[cfg(target_os = "linux")]
+fn run_checked(program: &str, args: &[std::ffi::OsString]) -> Result<(), String> {
+    let status = std::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|_| format!("could not start required system command: {program}"))?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(format!("required system command failed: {program}"))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn systemd_quote(value: &std::path::Path) -> Result<String, String> {
+    let value = value
+        .to_str()
+        .ok_or("host-service path is not valid UTF-8")?;
+    if value.chars().any(|c| matches!(c, '\n' | '\r' | '\0')) {
+        return Err("host-service path contains an unsupported character".to_string());
+    }
+    Ok(format!(
+        "\"{}\"",
+        value.replace('\\', "\\\\").replace('"', "\\\"")
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn write_private(path: &std::path::Path, body: &str) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::write(path, body).map_err(|e| format!("write {}: {e}", path.display()))?;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|e| format!("secure {}: {e}", path.display()))
+}
+
+/// Report whether the current machine can use, and currently runs, the
+/// dedicated Ubuntu GNOME virtual-monitor host. No secrets are read.
+#[tauri::command]
+fn headless_host_status() -> HeadlessHostStatus {
+    #[cfg(target_os = "linux")]
+    {
+        let configured = rivetlink_home()
+            .map(|path| path.join("agent.json").is_file())
+            .unwrap_or(false);
+        return HeadlessHostStatus {
+            supported: is_supported_ubuntu(),
+            configured,
+            gnome_active: systemctl_user_active("rivetlink-headless-gnome.service"),
+            agent_active: systemctl_user_active("rivetlink-agent.service"),
+        };
+    }
+    #[cfg(not(target_os = "linux"))]
+    HeadlessHostStatus {
+        supported: false,
+        configured: false,
+        gnome_active: false,
+        agent_active: false,
+    }
+}
+
+/// Install this AppImage (or the native app binary) as the screenshot-only
+/// worker for a dedicated virtual GNOME monitor. This is called solely from a
+/// visible owner-confirmation dialog; normal updates never call it.
+#[tauri::command]
+async fn setup_headless_host(
+    state: State<'_, AppState>,
+    setup: HeadlessHostSetup,
+) -> Result<HeadlessHostStatus, String> {
+    #[cfg(target_os = "linux")]
+    {
+        if !is_supported_ubuntu() {
+            return Err(
+                "headless screenshot hosting requires Ubuntu Desktop 24.04 LTS or newer"
+                    .to_string(),
+            );
+        }
+        if setup.registration_token.trim().is_empty() {
+            return Err("a one-time registration token is required".to_string());
+        }
+        if setup.device_name.trim().is_empty() || setup.device_name.trim().len() > 100 {
+            return Err("enter a device name of at most 100 characters".to_string());
+        }
+        if !matches!(
+            setup.resolution.as_str(),
+            "1280x720" | "1920x1080" | "2560x1440"
+        ) {
+            return Err("choose a supported virtual-monitor resolution".to_string());
+        }
+
+        let relay = {
+            let settings = state.settings.lock().await;
+            settings
+                .active_relay()
+                .cloned()
+                .ok_or("add and select a relay first")?
+        };
+        let home = rivetlink_home()?;
+        let config = home.join("agent.json");
+        if config.exists() {
+            return Err(
+                "this user already has a RivetLink headless host; use its service controls instead"
+                    .to_string(),
+            );
+        }
+        let identity =
+            Identity::load_or_create(&state.identity_path()).map_err(|e| e.to_string())?;
+        let executable = appimage_or_current_exe()?;
+        let user = std::env::var("USER").map_err(|_| "cannot determine current user")?;
+        if !user
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-'))
+        {
+            return Err("current user name is unsupported".to_string());
+        }
+
+        // Both privileged commands cause the desktop's PolicyKit password
+        // dialog. No password or token is ever sent through the frontend.
+        run_checked(
+            "/usr/bin/pkexec",
+            &["/usr/bin/apt-get".into(), "update".into()],
+        )?;
+        run_checked(
+            "/usr/bin/pkexec",
+            &[
+                "/usr/bin/apt-get".into(),
+                "install".into(),
+                "-y".into(),
+                "gnome-shell".into(),
+                "pipewire".into(),
+                "gstreamer1.0-tools".into(),
+                "gstreamer1.0-pipewire".into(),
+            ],
+        )?;
+        run_checked(
+            "/usr/bin/pkexec",
+            &[
+                "/usr/bin/loginctl".into(),
+                "enable-linger".into(),
+                user.into(),
+            ],
+        )?;
+
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(home.join("keys"))
+            .map_err(|e| format!("create host data directory: {e}"))?;
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("secure host data directory: {e}"))?;
+        std::fs::set_permissions(home.join("keys"), std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| format!("secure host key directory: {e}"))?;
+
+        let agent = |arguments: Vec<std::ffi::OsString>| -> Result<(), String> {
+            let mut command = vec![std::ffi::OsString::from("--rivetlink-headless-agent")];
+            command.extend(arguments);
+            run_checked(
+                executable
+                    .to_str()
+                    .ok_or("RivetLink executable path is invalid")?,
+                &command,
+            )
+        };
+        agent(vec![
+            "--config".into(),
+            config.clone().into_os_string(),
+            "init".into(),
+            "--device-name".into(),
+            setup.device_name.trim().into(),
+            "--relay-url".into(),
+            relay.ws_url.into(),
+            "--relay-http-url".into(),
+            relay.http_url.into(),
+            "--keystore-path".into(),
+            home.join("keys").into_os_string(),
+            "--headless".into(),
+            "--allow-trusted-headless".into(),
+        ])?;
+        agent(vec![
+            "--config".into(),
+            config.clone().into_os_string(),
+            "register".into(),
+            "--token".into(),
+            setup.registration_token.into(),
+            "--platform".into(),
+            "linux".into(),
+        ])?;
+        agent(vec![
+            "--config".into(),
+            config.clone().into_os_string(),
+            "trust-client".into(),
+            "--public-key".into(),
+            identity.public_key_b64().into(),
+            "--name".into(),
+            "This RivetLink client".into(),
+        ])?;
+
+        let units = home
+            .parent()
+            .ok_or("cannot resolve user configuration directory")?
+            .join(".config/systemd/user");
+        std::fs::create_dir_all(&units)
+            .map_err(|e| format!("create user service directory: {e}"))?;
+        let quoted_executable = systemd_quote(&executable)?;
+        let quoted_config = systemd_quote(&config)?;
+        write_private(&units.join("rivetlink-headless-gnome.service"), &format!(
+            "[Unit]\nDescription=RivetLink dedicated headless GNOME virtual monitor\nAfter=default.target\n\n[Service]\nType=simple\nExecStart=/usr/bin/gnome-shell --headless --virtual-monitor {}\nRestart=on-failure\nRestartSec=5\nNoNewPrivileges=yes\nPrivateTmp=yes\n\n[Install]\nWantedBy=default.target\n",
+            setup.resolution,
+        ))?;
+        write_private(&units.join("rivetlink-agent.service"), &format!(
+            "[Unit]\nDescription=RivetLink screenshot-only headless host agent\nRequires=rivetlink-headless-gnome.service\nAfter=rivetlink-headless-gnome.service\n\n[Service]\nType=simple\nExecStart={quoted_executable} --rivetlink-headless-agent --config {quoted_config} run --headless\nRestart=always\nRestartSec=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nLockPersonality=yes\nRestrictSUIDSGID=yes\nEnvironment=RUST_LOG=info\n\n[Install]\nWantedBy=default.target\n"
+        ))?;
+        run_checked(
+            "/usr/bin/systemctl",
+            &["--user".into(), "daemon-reload".into()],
+        )?;
+        run_checked(
+            "/usr/bin/systemctl",
+            &[
+                "--user".into(),
+                "enable".into(),
+                "--now".into(),
+                "rivetlink-headless-gnome.service".into(),
+                "rivetlink-agent.service".into(),
+            ],
+        )?;
+        return Ok(headless_host_status());
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (state, setup);
+        Err("headless screenshot hosting is currently available on Ubuntu Desktop only".to_string())
+    }
+}
+
 /// Register the running AppImage in the desktop menu so it shows up in GNOME /
 /// app-search. A bare AppImage is just an executable file — unlike the .deb/.rpm
 /// install it ships no system `.desktop` entry, so nothing indexes it. We write a
@@ -1818,6 +2135,8 @@ pub fn run() {
             public_key,
             app_version,
             is_appimage,
+            headless_host_status,
+            setup_headless_host,
             toggle_devtools,
             add_relay,
             remove_relay,
