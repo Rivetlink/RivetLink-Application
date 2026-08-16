@@ -25,6 +25,11 @@ use tokio::sync::Mutex;
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 use rivetlink_agent::lan::{serve_with_events, ConsentRequest, HostEvent, LanAuth};
+#[cfg(target_os = "linux")]
+use rivetlink_agent::{
+    config::AgentConfig,
+    keystore::{file::FileKeyStore, KeyStore},
+};
 use rivetlink_sdk::{ClientConfig, Device, Identity, RivetClient};
 
 use settings::{AppSettings, Relay, TrustedKey};
@@ -240,14 +245,11 @@ struct HeadlessHostStatus {
     agent_active: bool,
 }
 
-/// Input from the explicit owner-confirmed setup dialog. The registration
-/// token is used only by the one-shot child process and is never persisted,
-/// returned, or logged.
+/// Input from the explicit owner-confirmed setup dialog.
 #[derive(serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 struct HeadlessHostSetup {
-    registration_token: String,
     device_name: String,
     resolution: String,
 }
@@ -392,9 +394,6 @@ async fn setup_headless_host(
                     .to_string(),
             );
         }
-        if setup.registration_token.trim().is_empty() {
-            return Err("a one-time registration token is required".to_string());
-        }
         if setup.device_name.trim().is_empty() || setup.device_name.trim().len() > 100 {
             return Err("enter a device name of at most 100 characters".to_string());
         }
@@ -412,6 +411,18 @@ async fn setup_headless_host(
                 .cloned()
                 .ok_or("add and select a relay first")?
         };
+        let authenticated = state
+            .client
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(RivetClient::is_authenticated);
+        if !authenticated {
+            return Err(
+                "sign in to the selected relay first; RivetLink will register this Home Node with that session"
+                    .to_string(),
+            );
+        }
         let home = rivetlink_home()?;
         let config = home.join("agent.json");
         if config.exists() {
@@ -491,15 +502,33 @@ async fn setup_headless_host(
             "--headless".into(),
             "--allow-trusted-headless".into(),
         ])?;
-        agent(vec![
-            "--config".into(),
-            config.clone().into_os_string(),
-            "register".into(),
-            "--token".into(),
-            setup.registration_token.into(),
-            "--platform".into(),
-            "linux".into(),
-        ])?;
+        // Enrol with the active desktop-client session. The SDK keeps its
+        // access token private, so no token is passed through the UI, process
+        // arguments, configuration, or logs.
+        let mut agent_config = AgentConfig::load(&config).map_err(|e| e.to_string())?;
+        let key_store =
+            FileKeyStore::new(agent_config.keystore_path.clone()).map_err(|e| e.to_string())?;
+        let signing = key_store
+            .ensure_signing_key()
+            .await
+            .map_err(|e| e.to_string())?;
+        let host_public_key = base64::engine::general_purpose::STANDARD.encode(signing.public);
+        let device_id = {
+            let client = state.client.lock().await;
+            let client = client
+                .as_ref()
+                .filter(|client| client.is_authenticated())
+                .ok_or("your RivetLink session expired; sign in again and retry setup")?;
+            client
+                .register_device(&host_public_key, &agent_config.device_name, Some("linux"))
+                .await
+                .map_err(|e| e.to_string())?
+        };
+        agent_config.device_id = Some(
+            uuid::Uuid::parse_str(&device_id)
+                .map_err(|e| format!("relay returned an invalid device id: {e}"))?,
+        );
+        agent_config.save(&config).map_err(|e| e.to_string())?;
         agent(vec![
             "--config".into(),
             config.clone().into_os_string(),
@@ -572,8 +601,8 @@ fn integrate_appimage_desktop() {
     // entry keeps an icon after the app exits (the mount disappears).
     let icon = "rivetlink-app";
     for size in ["256x256@2", "128x128", "32x32"] {
-        let src = PathBuf::from(&appdir)
-            .join(format!("usr/share/icons/hicolor/{size}/apps/{icon}.png"));
+        let src =
+            PathBuf::from(&appdir).join(format!("usr/share/icons/hicolor/{size}/apps/{icon}.png"));
         let dst_dir = data.join(format!("icons/hicolor/{size}/apps"));
         if src.exists() && std::fs::create_dir_all(&dst_dir).is_ok() {
             let _ = std::fs::copy(&src, dst_dir.join(format!("{icon}.png")));
@@ -668,8 +697,12 @@ fn show_main_window(app: &tauri::AppHandle) {
 /// serving in the background), so the tray is how you re-open the app or quit it
 /// for real.
 fn install_tray(app: &tauri::App) -> tauri::Result<()> {
-    let open = MenuItemBuilder::new("Open RivetLink").id("tray_open").build(app)?;
-    let quit = MenuItemBuilder::new("Quit RivetLink").id("tray_quit").build(app)?;
+    let open = MenuItemBuilder::new("Open RivetLink")
+        .id("tray_open")
+        .build(app)?;
+    let quit = MenuItemBuilder::new("Quit RivetLink")
+        .id("tray_quit")
+        .build(app)?;
     let menu = MenuBuilder::new(app).item(&open).item(&quit).build()?;
 
     let mut builder = tauri::tray::TrayIconBuilder::with_id("main")
@@ -743,25 +776,37 @@ async fn add_relay(
 /// Remove a saved relay (clears the active selection if it was active).
 #[tauri::command]
 async fn remove_relay(state: State<'_, AppState>, id: String) -> Result<AppSettings, String> {
-    let mut settings = state.settings.lock().await;
-    settings.relays.retain(|r| r.id != id);
-    if settings.active_relay_id.as_deref() == Some(id.as_str()) {
-        settings.active_relay_id = settings.relays.first().map(|r| r.id.clone());
-    }
-    settings.save(&state.data_dir)?;
-    Ok(settings.clone())
+    let result = {
+        let mut settings = state.settings.lock().await;
+        settings.relays.retain(|r| r.id != id);
+        if settings.active_relay_id.as_deref() == Some(id.as_str()) {
+            settings.active_relay_id = settings.relays.first().map(|r| r.id.clone());
+        }
+        settings.save(&state.data_dir)?;
+        settings.clone()
+    };
+    // A saved token belongs to a relay endpoint. Never reuse it after the
+    // selected relay has changed or been removed.
+    *state.client.lock().await = None;
+    Ok(result)
 }
 
 /// Select which saved relay is active.
 #[tauri::command]
 async fn set_active_relay(state: State<'_, AppState>, id: String) -> Result<AppSettings, String> {
-    let mut settings = state.settings.lock().await;
-    if !settings.relays.iter().any(|r| r.id == id) {
-        return Err("unknown relay".to_string());
-    }
-    settings.active_relay_id = Some(id);
-    settings.save(&state.data_dir)?;
-    Ok(settings.clone())
+    let result = {
+        let mut settings = state.settings.lock().await;
+        if !settings.relays.iter().any(|r| r.id == id) {
+            return Err("unknown relay".to_string());
+        }
+        settings.active_relay_id = Some(id);
+        settings.save(&state.data_dir)?;
+        settings.clone()
+    };
+    // A future setup must authenticate against the newly selected relay, not
+    // accidentally enrol a host with the previous relay's session.
+    *state.client.lock().await = None;
+    Ok(result)
 }
 
 // ---- Client session --------------------------------------------------------
@@ -792,7 +837,10 @@ async fn connect(state: State<'_, AppState>) -> Result<String, String> {
 async fn login(state: State<'_, AppState>, email: String, password: String) -> Result<(), String> {
     let mut guard = state.client.lock().await;
     let client = guard.as_mut().ok_or("not connected — call connect first")?;
-    client.login(&email, &password).await.map_err(|e| e.to_string())
+    client
+        .login(&email, &password)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// List the devices visible to the authenticated user.
@@ -814,7 +862,10 @@ async fn capture_screenshot(
     let guard = state.client.lock().await;
     let client = guard.as_ref().ok_or("not connected")?;
 
-    let device = client.find_device(&device_id).await.map_err(|e| e.to_string())?;
+    let device = client
+        .find_device(&device_id)
+        .await
+        .map_err(|e| e.to_string())?;
 
     let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
@@ -835,9 +886,7 @@ async fn capture_screenshot(
 /// Browse the local network for RivetLink hosts (~3s), excluding this device's
 /// own advertisement (matched by identity public key).
 #[tauri::command]
-async fn discover_lan(
-    state: State<'_, AppState>,
-) -> Result<Vec<rivetlink_sdk::LanDevice>, String> {
+async fn discover_lan(state: State<'_, AppState>) -> Result<Vec<rivetlink_sdk::LanDevice>, String> {
     let own_key = Identity::load_or_create(&state.identity_path())
         .map(|id| id.public_key_b64())
         .ok();
@@ -914,14 +963,14 @@ async fn lan_screenshot(
             rivetlink_sdk::lan::screenshot_password(addr, pin.trim())
                 .await
                 .map_err(|e| e.to_string())?
-        },
+        }
         _ => {
             let identity =
                 Identity::load_or_create(&state.identity_path()).map_err(|e| e.to_string())?;
             rivetlink_sdk::lan::screenshot_key_pinned(addr, &identity, host_public_key.as_deref())
                 .await
                 .map_err(|e| e.to_string())?
-        },
+        }
     };
 
     let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
@@ -1045,7 +1094,7 @@ fn show_host_overlay(app: &tauri::AppHandle) {
         // renders inside the window and would clip the badge row.
         Ok(win) => {
             let _ = win.remove_menu();
-        },
+        }
         Err(e) => tracing::warn!(error = %e, "overlay: panel window failed"),
     }
 }
@@ -1062,7 +1111,10 @@ const BADGE_MARGIN: f64 = 16.0;
 /// Top-left for a badge of `width` on the primary screen: bottom-right corner,
 /// lifted 10% of the screen height clear of the dock.
 fn badge_origin(mx: f64, my: f64, mw: f64, mh: f64, width: f64) -> (f64, f64) {
-    (mx + mw - width - BADGE_MARGIN, my + mh - BADGE_H - mh * 0.10)
+    (
+        mx + mw - width - BADGE_MARGIN,
+        my + mh - BADGE_H - mh * 0.10,
+    )
 }
 
 /// Place the host badge bottom-right of the primary screen. Called once from the
@@ -1129,7 +1181,10 @@ async fn lan_connect(
         .parse()
         .map_err(|_| format!("bad address: {}", target.address))?;
     let addr = std::net::SocketAddr::new(ip, target.port);
-    let has_pin = pin.as_deref().map(|p| !p.trim().is_empty()).unwrap_or(false);
+    let has_pin = pin
+        .as_deref()
+        .map(|p| !p.trim().is_empty())
+        .unwrap_or(false);
     tracing::info!(
         name = %target.name,
         %addr,
@@ -1149,20 +1204,23 @@ async fn lan_connect(
             _ => {
                 let identity =
                     Identity::load_or_create(&state.identity_path()).map_err(|e| e.to_string())?;
-                rivetlink_sdk::lan::connect_key_pinned(addr, &identity, target.public_key.as_deref())
-                    .await
-                    .map_err(|e| e.to_string())
-            },
+                rivetlink_sdk::lan::connect_key_pinned(
+                    addr,
+                    &identity,
+                    target.public_key.as_deref(),
+                )
+                .await
+                .map_err(|e| e.to_string())
+            }
         }
     };
-    let (mut stream, channel) =
-        tokio::time::timeout(std::time::Duration::from_secs(15), connect)
-            .await
-            .map_err(|_| {
-                tracing::warn!(%addr, "lan_connect: timed out after 15s");
-                "connection timed out".to_string()
-            })?
-            .inspect_err(|e| tracing::warn!(%addr, error = %e, "lan_connect: handshake failed"))?;
+    let (mut stream, channel) = tokio::time::timeout(std::time::Duration::from_secs(15), connect)
+        .await
+        .map_err(|_| {
+            tracing::warn!(%addr, "lan_connect: timed out after 15s");
+            "connection timed out".to_string()
+        })?
+        .inspect_err(|e| tracing::warn!(%addr, error = %e, "lan_connect: handshake failed"))?;
     tracing::info!(%addr, "lan_connect: channel established, opening viewer");
 
     // Stop any previous session before starting a new one.
@@ -1191,8 +1249,7 @@ async fn lan_connect(
     }
     // The viewer's input capture pushes mouse/keyboard events here when it has
     // control. Sized for high-frequency pointer moves bursting between frames.
-    let (input_tx, input_rx) =
-        tokio::sync::mpsc::channel::<rivetlink_sdk::lan::LanRequest>(256);
+    let (input_tx, input_rx) = tokio::sync::mpsc::channel::<rivetlink_sdk::lan::LanRequest>(256);
     if let Ok(mut guard) = state.input_tx.lock() {
         *guard = Some(input_tx);
     }
@@ -1202,7 +1259,11 @@ async fn lan_connect(
     let my_name = {
         let s = state.settings.lock().await;
         let n = s.device_name.trim();
-        if n.is_empty() { None } else { Some(n.to_string()) }
+        if n.is_empty() {
+            None
+        } else {
+            Some(n.to_string())
+        }
     };
     // Announce our identity (signed) with the stream so a host we reached by PIN
     // can offer to remember this device (trust-on-connect). Same identity the
@@ -1264,9 +1325,15 @@ async fn lan_connect(
 #[tauri::command]
 async fn lan_switch_display(state: State<'_, AppState>, display: u32) -> Result<(), String> {
     // Clone the sender out and drop the (sync) lock before awaiting the send.
-    let sender = state.switch_tx.lock().ok().and_then(|g| g.as_ref().cloned());
+    let sender = state
+        .switch_tx
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().cloned());
     if let Some(tx) = sender {
-        tx.send(display).await.map_err(|_| "stream is not running".to_string())?;
+        tx.send(display)
+            .await
+            .map_err(|_| "stream is not running".to_string())?;
     }
     Ok(())
 }
@@ -1276,13 +1343,22 @@ async fn lan_switch_display(state: State<'_, AppState>, display: u32) -> Result<
 #[derive(serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 enum ClientInput {
-    Move { x: u16, y: u16 },
+    Move {
+        x: u16,
+        y: u16,
+    },
     Button {
         button: rivetlink_sdk::lan::PtrButton,
         down: bool,
     },
-    Scroll { dx: i16, dy: i16 },
-    Key { code: String, down: bool },
+    Scroll {
+        dx: i16,
+        dy: i16,
+    },
+    Key {
+        code: String,
+        down: bool,
+    },
 }
 
 /// Forward one captured input event to the host over the live stream's control
@@ -1329,7 +1405,10 @@ fn resource_usage(state: State<'_, AppState>) -> Result<ResourceUsage, String> {
     let pid = sysinfo::get_current_pid().map_err(|e| e.to_string())?;
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
 
-    let mut sys = state.sys.lock().map_err(|_| "resource lock poisoned".to_string())?;
+    let mut sys = state
+        .sys
+        .lock()
+        .map_err(|_| "resource lock poisoned".to_string())?;
     sys.refresh_process(pid);
     sys.refresh_memory();
 
@@ -1395,7 +1474,10 @@ async fn start_host(_app: tauri::AppHandle, _state: State<'_, AppState>) -> Resu
 async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     // A 6-digit PIN. SPAKE2 makes a wrong PIN fail the handshake, and resists
     // offline guessing, so 6 digits is enough for a short-lived LAN session.
-    let pin = format!("{:06}", rand::Rng::gen_range(&mut rand::thread_rng(), 0..1_000_000));
+    let pin = format!(
+        "{:06}",
+        rand::Rng::gen_range(&mut rand::thread_rng(), 0..1_000_000)
+    );
 
     let device_name = {
         let s = state.settings.lock().await;
@@ -1467,9 +1549,18 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
     let consent_fwd = tokio::spawn(async move {
         while let Some(ConsentRequest { key, name, reply }) = consent_rx.recv().await {
             let st = app_for_consent.state::<AppState>();
-            let id = st.consent_seq.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let id = st
+                .consent_seq
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if let Ok(mut map) = st.pending_consents.lock() {
-                map.insert(id, ConsentPending { reply, key: key.clone(), name: name.clone() });
+                map.insert(
+                    id,
+                    ConsentPending {
+                        reply,
+                        key: key.clone(),
+                        name: name.clone(),
+                    },
+                );
             }
             // Bring the host's window forward so the prompt isn't missed.
             if let Some(win) = app_for_consent.get_webview_window("main") {
@@ -1477,7 +1568,10 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
                 let _ = win.unminimize();
                 let _ = win.set_focus();
             }
-            let _ = app_for_consent.emit("host://consent-request", ConsentRequestDto { id, key, name });
+            let _ = app_for_consent.emit(
+                "host://consent-request",
+                ConsentRequestDto { id, key, name },
+            );
         }
     });
 
@@ -1507,15 +1601,20 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
                     let _ = app_for_fwd.emit("host://connected", &label);
                     // Tell the UI whether this device can be remembered (it isn't
                     // already trusted, and it proved an identity).
-                    let trusted = key
-                        .as_ref()
-                        .is_some_and(|k| trusted_for_fwd.lock().is_ok_and(|t| t.iter().any(|x| x == k)));
-                    let _ = app_for_fwd.emit("host://client-identity", ClientIdentityDto {
-                        key,
-                        name: Some(label),
-                        trusted,
+                    let trusted = key.as_ref().is_some_and(|k| {
+                        trusted_for_fwd
+                            .lock()
+                            .is_ok_and(|t| t.iter().any(|x| x == k))
                     });
-                },
+                    let _ = app_for_fwd.emit(
+                        "host://client-identity",
+                        ClientIdentityDto {
+                            key,
+                            name: Some(label),
+                            trusted,
+                        },
+                    );
+                }
                 HostEvent::ClientDisconnected => {
                     if let Ok(mut p) = peer_for_fwd.lock() {
                         *p = None;
@@ -1525,7 +1624,7 @@ async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result
                     }
                     hide_host_overlay(&app_for_fwd);
                     let _ = app_for_fwd.emit("host://disconnected", ());
-                },
+                }
             }
         }
     });
@@ -1586,21 +1685,38 @@ struct HostState {
 
 #[tauri::command]
 async fn host_active(state: State<'_, AppState>) -> Result<HostState, String> {
-    let guard = state.host.lock().map_err(|_| "host lock poisoned".to_string())?;
+    let guard = state
+        .host
+        .lock()
+        .map_err(|_| "host lock poisoned".to_string())?;
     let (pin, peer, share_all, control, client_key) = match guard.as_ref() {
         Some(session) => (
             Some(session.pin.clone()),
             session.peer.lock().ok().and_then(|p| p.clone()),
             *session.share_all.borrow(),
             *session.control.borrow(),
-            session.current_client.lock().ok().and_then(|c| c.as_ref().map(|(k, _)| k.clone())),
+            session
+                .current_client
+                .lock()
+                .ok()
+                .and_then(|c| c.as_ref().map(|(k, _)| k.clone())),
         ),
         None => (None, None, true, true, None),
     };
     let client_trusted = client_key.as_ref().is_some_and(|k| {
-        state.trusted_keys.lock().is_ok_and(|t| t.iter().any(|x| x == k))
+        state
+            .trusted_keys
+            .lock()
+            .is_ok_and(|t| t.iter().any(|x| x == k))
     });
-    Ok(HostState { pin, peer, share_all, control, client_key, client_trusted })
+    Ok(HostState {
+        pin,
+        peer,
+        share_all,
+        control,
+        client_key,
+        client_trusted,
+    })
 }
 
 /// Toggle "share all screens" on the live host session. The agent picks it up
@@ -1625,7 +1741,10 @@ async fn host_set_share_all(
 /// Current "share all screens" state (defaults to `true` when not hosting).
 #[tauri::command]
 async fn host_share_all(state: State<'_, AppState>) -> Result<bool, String> {
-    let guard = state.host.lock().map_err(|_| "host lock poisoned".to_string())?;
+    let guard = state
+        .host
+        .lock()
+        .map_err(|_| "host lock poisoned".to_string())?;
     Ok(guard.as_ref().is_none_or(|s| *s.share_all.borrow()))
 }
 
@@ -1650,7 +1769,10 @@ async fn host_set_control(
 /// Current "allow remote control" state (defaults to `false` when not hosting).
 #[tauri::command]
 async fn host_control(state: State<'_, AppState>) -> Result<bool, String> {
-    let guard = state.host.lock().map_err(|_| "host lock poisoned".to_string())?;
+    let guard = state
+        .host
+        .lock()
+        .map_err(|_| "host lock poisoned".to_string())?;
     Ok(guard.as_ref().is_some_and(|s| *s.control.borrow()))
 }
 
@@ -1846,7 +1968,7 @@ fn os_password_ok(password: &str) -> bool {
         Ok(mut client) => {
             client.conversation_mut().set_credentials(user, password);
             client.authenticate().is_ok()
-        },
+        }
         Err(_) => false,
     }
 }
@@ -1879,7 +2001,11 @@ async fn add_trusted_key(
 /// Add a trusted key to `settings` (validate non-empty, dedupe by key). Shared
 /// by the manual add (OS-password gated) and trust-on-connect (gated by the live
 /// PIN connection instead). Does NOT persist — the caller saves + syncs.
-fn push_trusted_key(settings: &mut AppSettings, name: &str, public_key: &str) -> Result<(), String> {
+fn push_trusted_key(
+    settings: &mut AppSettings,
+    name: &str,
+    public_key: &str,
+) -> Result<(), String> {
     let key = public_key.trim().to_string();
     if key.is_empty() {
         return Err("empty-key".to_string());
@@ -1909,7 +2035,10 @@ async fn trust_client(
         .host
         .lock()
         .ok()
-        .and_then(|g| g.as_ref().and_then(|s| s.current_client.lock().ok().and_then(|c| c.clone())))
+        .and_then(|g| {
+            g.as_ref()
+                .and_then(|s| s.current_client.lock().ok().and_then(|c| c.clone()))
+        })
         .map(|(k, _label)| k)
         .ok_or_else(|| "no connected client to trust".to_string())?;
 
@@ -1923,11 +2052,14 @@ async fn trust_client(
     let result = settings.clone();
     drop(settings);
     // Reflect the new trusted state in the host UI.
-    let _ = app.emit("host://client-identity", ClientIdentityDto {
-        key: Some(key),
-        name: Some(name),
-        trusted: true,
-    });
+    let _ = app.emit(
+        "host://client-identity",
+        ClientIdentityDto {
+            key: Some(key),
+            name: Some(name),
+            trusted: true,
+        },
+    );
     Ok(result)
 }
 
@@ -1950,7 +2082,11 @@ async fn respond_consent(
     accept: bool,
     remember: bool,
 ) -> Result<(), String> {
-    let pending = state.pending_consents.lock().ok().and_then(|mut m| m.remove(&id));
+    let pending = state
+        .pending_consents
+        .lock()
+        .ok()
+        .and_then(|mut m| m.remove(&id));
     let Some(ConsentPending { reply, key, name }) = pending else {
         return Ok(());
     };
@@ -1973,7 +2109,11 @@ async fn respond_consent(
 /// reads, so an add/remove applies without restarting the host.
 fn sync_trusted_live(state: &AppState, settings: &AppSettings) {
     if let Ok(mut live) = state.trusted_keys.lock() {
-        *live = settings.trusted_keys.iter().map(|k| k.public_key.clone()).collect();
+        *live = settings
+            .trusted_keys
+            .iter()
+            .map(|k| k.public_key.clone())
+            .collect();
     }
 }
 
@@ -2024,7 +2164,11 @@ fn init_logging(log_dir: &std::path::Path) -> Option<PathBuf> {
 
     tracing_subscriber::registry()
         .with(filter)
-        .with(tracing_subscriber::fmt::layer().with_ansi(false).with_writer(writer))
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(writer),
+        )
         .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
         .try_init()
         .ok()?;
@@ -2085,8 +2229,11 @@ pub fn run() {
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
             let settings = AppSettings::load(&data_dir);
-            let trusted: Vec<String> =
-                settings.trusted_keys.iter().map(|k| k.public_key.clone()).collect();
+            let trusted: Vec<String> = settings
+                .trusted_keys
+                .iter()
+                .map(|k| k.public_key.clone())
+                .collect();
             app.manage(AppState {
                 data_dir,
                 settings: Mutex::new(settings),

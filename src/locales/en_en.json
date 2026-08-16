@@ -164,11 +164,9 @@
         "needsAttention": "needs attention",
         "dialogTitle": "Set up a headless Ubuntu host",
         "warning": "This makes system changes: RivetLink installs the GNOME/PipeWire requirements and two non-root user services. Ubuntu will ask you to approve this with your system password.",
-        "scope": "Only the RivetLink client on this device is pre-trusted. It can request on-demand encrypted screenshots; it cannot control input, open a shell, access files, or stream live video.",
+        "scope": "Only the RivetLink client on this device is pre-trusted. RivetLink uses your current signed-in session to register this Home Node securely, so you never need to copy a token. That client can request on-demand encrypted screenshots; it cannot control input, open a shell, access files, or stream live video.",
         "name": "Name for this Home Node",
         "resolution": "Virtual monitor resolution",
-        "token": "One-time registration token",
-        "tokenHint": "Used once to add this Home Node to the active server. It is not saved.",
         "confirm": "Install and enable"
     },
     "resources": {

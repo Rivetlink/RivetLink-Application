@@ -164,11 +164,9 @@
         "needsAttention": "aandacht nodig",
         "dialogTitle": "Headless Ubuntu-host instellen",
         "warning": "Dit wijzigt het systeem: RivetLink installeert GNOME/PipeWire-vereisten en twee user-services zonder rootrechten. Ubuntu vraagt je dit met je systeemwachtwoord goed te keuren.",
-        "scope": "Alleen de RivetLink-client op dit apparaat wordt vooraf vertrouwd. Die kan versleutelde screenshots op aanvraag ophalen; geen invoer besturen, shell openen, bestanden benaderen of live video streamen.",
+        "scope": "Alleen de RivetLink-client op dit apparaat wordt vooraf vertrouwd. RivetLink gebruikt je huidige ingelogde sessie om deze Home Node veilig te registreren; je hoeft geen token te kopiëren. Die client kan versleutelde screenshots op aanvraag ophalen; geen invoer besturen, shell openen, bestanden benaderen of live video streamen.",
         "name": "Naam voor deze Home Node",
         "resolution": "Resolutie van virtuele monitor",
-        "token": "Eenmalig registratietoken",
-        "tokenHint": "Wordt één keer gebruikt om deze Home Node aan de actieve server toe te voegen. Het wordt niet bewaard.",
         "confirm": "Installeren en inschakelen"
     },
     "resources": {

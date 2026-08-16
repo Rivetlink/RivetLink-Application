@@ -214,16 +214,6 @@
 						density="comfortable"
 						class="mb-2"
 					/>
-					<VTextField
-						v-model="headlessToken"
-						:label="t('headless.token')"
-						:type="showToken ? 'text' : 'password'"
-						:append-inner-icon="showToken ? 'mdi-eye-off' : 'mdi-eye'"
-						:hint="t('headless.tokenHint')"
-						persistent-hint
-						density="comfortable"
-						@click:append-inner="showToken = !showToken"
-					/>
 					<VAlert
 						v-if="headlessError"
 						type="error"
@@ -244,7 +234,7 @@
 					<VBtn
 						color="primary"
 						:loading="headlessBusy"
-						:disabled="!headlessToken.trim() || !headlessName.trim()"
+						:disabled="!headlessName.trim()"
 						@click="installHeadlessHost"
 					>
 						{{ t("headless.confirm") }}
@@ -287,10 +277,8 @@
 	const headlessDialog = ref(false);
 	const headlessBusy = ref(false);
 	const headlessError = ref("");
-	const headlessToken = ref("");
 	const headlessName = ref("");
 	const headlessResolution = ref("1920x1080");
-	const showToken = ref(false);
 	const headless = ref({
 		supported: false,
 		configured: false,
@@ -309,8 +297,6 @@
 	function closeHeadlessDialog() {
 		headlessDialog.value = false;
 		headlessError.value = "";
-		headlessToken.value = "";
-		showToken.value = false;
 	}
 
 	async function installHeadlessHost() {
@@ -319,7 +305,6 @@
 		try {
 			headless.value = await invoke<typeof headless.value>("setup_headless_host", {
 				setup: {
-					registrationToken: headlessToken.value,
 					deviceName: headlessName.value,
 					resolution: headlessResolution.value,
 				},
