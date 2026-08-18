@@ -83,42 +83,33 @@
 					</VCardText>
 				</VCard>
 
-				<VCard v-if="headless.supported" variant="tonal" class="mt-4">
+				<VCard v-if="physicalConsole.supported" variant="tonal" class="mt-4">
 					<VCardTitle class="d-flex align-center">
-						{{ t("headless.title") }}
+						{{ t("physicalConsole.title") }}
 						<VSpacer />
-						<VChip v-if="headless.configured" :color="headless.agentActive && headless.gnomeActive ? 'success' : 'warning'" size="small">
-							{{ headless.agentActive && headless.gnomeActive ? t("headless.running") : t("headless.needsAttention") }}
+						<VChip v-if="physicalConsole.configured" :color="physicalConsole.brokerActive ? 'success' : 'warning'" size="small">
+							{{ physicalConsole.brokerActive ? t("physicalConsole.running") : t("physicalConsole.needsAttention") }}
 						</VChip>
 					</VCardTitle>
 					<VCardText>
 						<p class="text-body-2 mb-3">
-							{{ headless.configured ? t("headless.configuredHint") : t("headless.intro") }}
+							{{ physicalConsole.configured ? t("physicalConsole.configuredHint") : t("physicalConsole.intro") }}
 						</p>
 						<VBtn
-							v-if="!headless.configured"
+							v-if="!physicalConsole.configured"
 							color="primary"
 							prepend-icon="mdi-monitor-lock"
-							@click="headlessDialog = true"
+							@click="physicalConsoleDialog = true"
 						>
-							{{ t("headless.setup") }}
+							{{ t("physicalConsole.setup") }}
 						</VBtn>
 						<VBtn
 							v-else
 							variant="text"
 							prepend-icon="mdi-refresh"
-							@click="refreshHeadlessStatus"
+							@click="refreshPhysicalConsoleStatus"
 						>
-							{{ t("headless.refresh") }}
-						</VBtn>
-						<VBtn
-							v-if="headless.configured"
-							color="error"
-							variant="text"
-							prepend-icon="mdi-delete-outline"
-							@click="headlessRemoveDialog = true"
-						>
-							{{ t("headless.remove") }}
+							{{ t("physicalConsole.refresh") }}
 						</VBtn>
 					</VCardText>
 				</VCard>
@@ -200,112 +191,54 @@
 
 		<EditDeviceModal v-model="editOpen" />
 		<TrustedKeyModal v-model="accessOpen" :target="accessTarget" />
-		<VDialog v-model="headlessDialog" max-width="580" persistent>
+		<VDialog v-model="physicalConsoleDialog" max-width="580" persistent>
 			<VCard>
-				<VCardTitle>{{ t("headless.dialogTitle") }}</VCardTitle>
+				<VCardTitle>{{ t("physicalConsole.dialogTitle") }}</VCardTitle>
 				<VCardText>
-					<VAlert type="warning" variant="tonal" class="mb-4">
-						{{ t("headless.warning") }}
+					<VAlert type="info" variant="tonal" class="mb-4">
+						{{ t("physicalConsole.warning") }}
 					</VAlert>
 					<p class="text-body-2 mb-4">
-						{{ t("headless.scope") }}
+						{{ t("physicalConsole.scope") }}
 					</p>
-					<VBtnToggle
-						v-model="headlessConnectionMode"
-						mandatory
-						color="primary"
-						class="mb-2"
-					>
-						<VBtn value="lan" prepend-icon="mdi-lan">
-							{{ t("headless.localNetwork") }}
-						</VBtn>
-						<VBtn value="relay" prepend-icon="mdi-server-network">
-							{{ t("headless.relay") }}
-						</VBtn>
-					</VBtnToggle>
-					<VAlert
-						type="info"
-						variant="tonal"
-						density="compact"
-						class="mb-4"
-					>
-						{{ headlessConnectionMode === "lan" ? t("headless.localNetworkHint") : t("headless.relayHint") }}
-					</VAlert>
 					<VTextField
-						v-model="headlessName"
-						:label="t('headless.name')"
+						v-model="physicalConsoleName"
+						:label="t('physicalConsole.name')"
 						density="comfortable"
 						class="mb-2"
 					/>
 					<VTextField
-						v-model="headlessTrustedClientKey"
-						:label="t('headless.controllerKey')"
-						:hint="t('headless.controllerKeyHint')"
+						v-model="physicalConsoleControllerKey"
+						:label="t('physicalConsole.controllerKey')"
+						:hint="t('physicalConsole.controllerKeyHint')"
 						persistent-hint
 						density="comfortable"
 						class="mb-2"
 					/>
-					<VSelect
-						v-model="headlessResolution"
-						:items="['1280x720', '1920x1080', '2560x1440']"
-						:label="t('headless.resolution')"
-						density="comfortable"
-						class="mb-2"
-					/>
 					<VAlert
-						v-if="headlessError"
+						v-if="physicalConsoleError"
 						type="error"
 						variant="tonal"
 						class="mt-4"
 					>
-						{{ headlessError }}
+						{{ physicalConsoleError }}
 					</VAlert>
 				</VCardText>
 				<VCardActions>
 					<VSpacer />
 					<VBtn
-						:disabled="headlessBusy"
-						@click="closeHeadlessDialog"
+						:disabled="physicalConsoleBusy"
+						@click="closePhysicalConsoleDialog"
 					>
 						{{ t("common.cancel") }}
 					</VBtn>
 					<VBtn
 						color="primary"
-						:loading="headlessBusy"
-						:disabled="!headlessName.trim() || !headlessTrustedClientKey.trim()"
-						@click="installHeadlessHost"
+						:loading="physicalConsoleBusy"
+						:disabled="!physicalConsoleName.trim() || !physicalConsoleControllerKey.trim()"
+						@click="installPhysicalConsole"
 					>
-						{{ t("headless.confirm") }}
-					</VBtn>
-				</VCardActions>
-			</VCard>
-		</VDialog>
-		<VDialog v-model="headlessRemoveDialog" max-width="520" persistent>
-			<VCard>
-				<VCardTitle>{{ t("headless.removeTitle") }}</VCardTitle>
-				<VCardText>
-					<VAlert type="warning" variant="tonal" class="mb-4">
-						{{ t("headless.removeWarning") }}
-					</VAlert>
-					<p class="text-body-2 mb-0">
-						{{ t("headless.removeBody") }}
-					</p>
-					<VAlert
-						v-if="headlessRemoveError"
-						type="error"
-						variant="tonal"
-						class="mt-4"
-					>
-						{{ headlessRemoveError }}
-					</VAlert>
-				</VCardText>
-				<VCardActions>
-					<VSpacer />
-					<VBtn :disabled="headlessRemoveBusy" @click="closeHeadlessRemoveDialog">
-						{{ t("common.cancel") }}
-					</VBtn>
-					<VBtn color="error" :loading="headlessRemoveBusy" @click="removeHeadlessHost">
-						{{ t("headless.removeConfirm") }}
+						{{ t("physicalConsole.confirm") }}
 					</VBtn>
 				</VCardActions>
 			</VCard>
@@ -323,7 +256,7 @@
 	} from "@tauri-apps/plugin-autostart";
 	import { useI18n } from "vue-i18n";
 	import {
-		isClient, isHost, loadPublicKey, loadSettings, store, type TrustedKey,
+		isClient, isHost, loadPublicKey, store, type TrustedKey,
 	} from "../store";
 	import {
 		SUPPORTED, setLocale,
@@ -342,72 +275,45 @@
 	const accessTarget = ref<TrustedKey | null>(null);
 	const autostart = ref(false);
 	const autostartBusy = ref(false);
-	const headlessDialog = ref(false);
-	const headlessBusy = ref(false);
-	const headlessError = ref("");
-	const headlessRemoveDialog = ref(false);
-	const headlessRemoveBusy = ref(false);
-	const headlessRemoveError = ref("");
-	const headlessName = ref("");
-	const headlessTrustedClientKey = ref("");
-	const headlessResolution = ref("1920x1080");
-	const headlessConnectionMode = ref<"lan" | "relay">("lan");
-	const headless = ref({
+	const physicalConsoleDialog = ref(false);
+	const physicalConsoleBusy = ref(false);
+	const physicalConsoleError = ref("");
+	const physicalConsoleName = ref("");
+	const physicalConsoleControllerKey = ref("");
+	const physicalConsole = ref({
 		supported: false,
 		configured: false,
-		gnomeActive: false,
-		agentActive: false,
+		brokerActive: false,
 	});
 
-	async function refreshHeadlessStatus() {
+	async function refreshPhysicalConsoleStatus() {
 		try {
-			headless.value = await invoke<typeof headless.value>("headless_host_status");
+			physicalConsole.value = await invoke<typeof physicalConsole.value>("physical_console_status");
 		} catch {
 			// The setup card is optional; leave it hidden if the OS cannot report.
 		}
 	}
 
-	function closeHeadlessDialog() {
-		headlessDialog.value = false;
-		headlessError.value = "";
+	function closePhysicalConsoleDialog() {
+		physicalConsoleDialog.value = false;
+		physicalConsoleError.value = "";
 	}
 
-	async function installHeadlessHost() {
-		headlessBusy.value = true;
-		headlessError.value = "";
+	async function installPhysicalConsole() {
+		physicalConsoleBusy.value = true;
+		physicalConsoleError.value = "";
 		try {
-			headless.value = await invoke<typeof headless.value>("setup_headless_host", {
+			physicalConsole.value = await invoke<typeof physicalConsole.value>("setup_physical_console", {
 				setup: {
-					deviceName: headlessName.value,
-					resolution: headlessResolution.value,
-					connectionMode: headlessConnectionMode.value,
-					trustedClientPublicKey: headlessTrustedClientKey.value,
+					deviceName: physicalConsoleName.value,
+					controllerPublicKey: physicalConsoleControllerKey.value,
 				},
 			});
-			await loadSettings();
-			closeHeadlessDialog();
+			closePhysicalConsoleDialog();
 		} catch (error) {
-			headlessError.value = String(error);
+			physicalConsoleError.value = String(error);
 		} finally {
-			headlessBusy.value = false;
-		}
-	}
-
-	function closeHeadlessRemoveDialog() {
-		headlessRemoveDialog.value = false;
-		headlessRemoveError.value = "";
-	}
-
-	async function removeHeadlessHost() {
-		headlessRemoveBusy.value = true;
-		headlessRemoveError.value = "";
-		try {
-			headless.value = await invoke<typeof headless.value>("remove_headless_host");
-			closeHeadlessRemoveDialog();
-		} catch (error) {
-			headlessRemoveError.value = String(error);
-		} finally {
-			headlessRemoveBusy.value = false;
+			physicalConsoleBusy.value = false;
 		}
 	}
 
@@ -450,8 +356,9 @@
 		} catch {
 			// Autostart unsupported on this platform — leave the toggle off.
 		}
-		headlessName.value = store.settings.device_name || "RivetLink Home Node";
-		await refreshHeadlessStatus();
+		physicalConsoleName.value = store.settings.device_name || "RivetLink Home Node";
+		physicalConsoleControllerKey.value = store.publicKey;
+		await refreshPhysicalConsoleStatus();
 	});
 
 	function onLocaleChange(code: string) {

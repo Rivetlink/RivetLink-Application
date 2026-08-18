@@ -2,25 +2,29 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    // A configured headless host is a user systemd service, so it needs a
-    // durable executable. For an AppImage that is the AppImage itself: this
-    // private argument starts only the screenshot-only agent and never opens a
-    // webview. It is intentionally not exposed as a normal application action.
+    // RivetLink's system and session services need a durable executable.  This
+    // private argument starts only the agent and never opens a webview.  It is
+    // intentionally not exposed as a normal application action.
     #[cfg(target_os = "linux")]
-    if std::env::args_os().nth(1).as_deref()
-        == Some(std::ffi::OsStr::new("--rivetlink-headless-agent"))
-    {
+    if matches!(
+        std::env::args_os().nth(1).as_deref(),
+        Some(arg)
+            if arg == std::ffi::OsStr::new("--rivetlink-agent")
+                // Compatibility for an already installed pre-physical-console
+                // service. New units exclusively use --rivetlink-agent.
+                || arg == std::ffi::OsStr::new("--rivetlink-headless-agent")
+    ) {
         let args = std::env::args_os()
             .enumerate()
             .filter_map(|(index, arg)| (index != 1).then_some(arg));
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
-            .expect("create RivetLink headless-agent runtime");
+            .expect("create RivetLink agent runtime");
         let exit_code = match runtime.block_on(rivetlink_agent::runner::run_from(args)) {
             Ok(()) => 0,
             Err(error) => {
-                eprintln!("RivetLink headless agent failed: {error}");
+                eprintln!("RivetLink agent failed: {error}");
                 1
             }
         };

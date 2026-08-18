@@ -51,6 +51,7 @@ export type Device = {
 	hostname: string | null;
 	platform: string | null;
 	last_seen: string | null;
+	online: boolean;
 };
 
 /// The machine's current network, for confirming both devices share a subnet.
@@ -164,8 +165,47 @@ export async function listDevices(): Promise<Device[]> {
 	return invoke<Device[]>("list_devices");
 }
 
-export async function captureScreenshot(deviceId: string): Promise<string> {
-	return invoke<string>("capture_screenshot", { deviceId });
+export type ConsoleInput =
+	| {
+		type: "pointer_move";
+		x: number;
+		y: number
+	}
+	| {
+		type: "pointer_button";
+		button: "left" | "right" | "middle";
+		down: boolean
+	}
+	| {
+		type: "scroll";
+		dx: number;
+		dy: number
+	}
+	| {
+		type: "key";
+		code: string;
+		down: boolean
+	};
+
+export type ConsoleCapture = {
+	image: string;
+	consoleState: string | null;
+};
+
+export async function captureScreenshot(deviceId: string): Promise<ConsoleCapture> {
+	return invoke<ConsoleCapture>("capture_screenshot", { deviceId });
+}
+
+/// Send exactly one input event through an authorized relay console session and
+/// return its fresh screenshot. No event is saved in the app store or logs.
+export async function consoleInputAndCapture(
+	deviceId: string,
+	event: ConsoleInput,
+): Promise<ConsoleCapture> {
+	return invoke<ConsoleCapture>("console_input_and_capture", {
+		deviceId,
+		event,
+	});
 }
 
 // ---- Direct-LAN ------------------------------------------------------------

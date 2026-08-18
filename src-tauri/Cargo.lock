@@ -4139,6 +4139,7 @@ dependencies = [
  "pam",
  "rand 0.8.6",
  "rivetlink-agent",
+ "rivetlink-protocol",
  "rivetlink-sdk",
  "serde",
  "serde_json",

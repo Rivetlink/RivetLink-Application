@@ -14,17 +14,14 @@ Client-mode MVP: configure a relay → sign in → list devices → capture one
 screenshot from a host (the host may prompt its operator to approve). Live
 video, input control, and Host mode are on the roadmap.
 
-On **Ubuntu Desktop 24.04 LTS or newer**, the AppImage also offers an explicit
-**Settings → General → Headless Ubuntu-host** flow. After the owner confirms
-and approves Ubuntu's system-password prompt, it creates a non-root,
-reboot-persistent GNOME virtual-monitor host. It permits only encrypted
-on-demand screenshots from an owner-selected controller identity. The app
-offers a **Local network** option that needs no server or account, as well as
-an optional relay mode that uses the currently signed-in relay session to
-register the Home Node without showing, copying, or storing a token. Ordinary
-AppImage updates never run this setup automatically or change trusted access.
-See the main repository's `docs/ubuntu-headless-host.md` for recovery and CLI
-provisioning details.
+On **Ubuntu Desktop 24.04 LTS or newer**, use **Settings → Ubuntu physical
+console** with a permanent HDMI dummy/EDID emulator. After one owner-approved
+PolicyKit action, RivetLink starts a non-root broker before Ubuntu login and
+captures the real GDM/GNOME seat0 session through a narrowly scoped worker.
+Registration uses the current signed-in relay session; no relay token is
+shown, copied or stored in a service. It does not enable automatic login,
+remote shell, RDP/VNC or file access. See the main repository's
+`docs/ubuntu-physical-console-broker.md`.
 
 ## Prerequisites
 

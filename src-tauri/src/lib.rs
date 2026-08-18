@@ -31,6 +31,7 @@ use rivetlink_agent::{
     keystore::{file::FileKeyStore, KeyStore},
     trusted::{TrustedClients, TrustedEntry},
 };
+use rivetlink_protocol::ConsoleInputPacket;
 use rivetlink_sdk::{ClientConfig, Device, Identity, RivetClient};
 
 use settings::{AppSettings, Relay, TrustedKey};
@@ -151,6 +152,7 @@ struct DeviceDto {
     hostname: Option<String>,
     platform: Option<String>,
     last_seen: Option<String>,
+    online: bool,
 }
 
 impl From<Device> for DeviceDto {
@@ -160,6 +162,7 @@ impl From<Device> for DeviceDto {
             hostname: d.hostname,
             platform: d.platform,
             last_seen: d.last_seen,
+            online: d.online,
         }
     }
 }
@@ -350,6 +353,587 @@ fn run_checked(program: &str, args: &[std::ffi::OsString]) -> Result<(), String>
 }
 
 #[cfg(target_os = "linux")]
+fn run_checked_output(program: &str, args: &[std::ffi::OsString]) -> Result<String, String> {
+    let output = std::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|_| format!("could not start required system command: {program}"))?;
+    if !output.status.success() {
+        return Err(format!("required system command failed: {program}"));
+    }
+    String::from_utf8(output.stdout)
+        .map_err(|_| "required system command returned invalid UTF-8".to_string())
+}
+
+#[cfg(target_os = "linux")]
+fn command_status(
+    program: &str,
+    args: &[std::ffi::OsString],
+) -> Result<std::process::ExitStatus, String> {
+    std::process::Command::new(program)
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map_err(|_| format!("could not start required system command: {program}"))
+}
+
+/// Public state for the Ubuntu physical-console service. This intentionally
+/// reports only unit state, never a display, credential, key or socket detail.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PhysicalConsoleStatus {
+    supported: bool,
+    configured: bool,
+    broker_active: bool,
+}
+
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+struct PhysicalConsoleSetup {
+    device_name: String,
+    controller_public_key: String,
+}
+
+#[cfg(target_os = "linux")]
+#[tauri::command]
+fn physical_console_status() -> PhysicalConsoleStatus {
+    let configured = std::path::Path::new("/etc/systemd/system/rivetlink-console-broker.service")
+        .is_file()
+        && std::path::Path::new("/var/lib/rivetlink/agent.json").is_file();
+    let broker_active = std::process::Command::new("/usr/bin/systemctl")
+        .args(["is-active", "--quiet", "rivetlink-console-broker.service"])
+        .status()
+        .is_ok_and(|status| status.success());
+    PhysicalConsoleStatus {
+        supported: is_supported_ubuntu(),
+        configured,
+        broker_active,
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+#[tauri::command]
+fn physical_console_status() -> PhysicalConsoleStatus {
+    PhysicalConsoleStatus {
+        supported: false,
+        configured: false,
+        broker_active: false,
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn write_install_unit(
+    data_dir: &std::path::Path,
+    name: &str,
+    body: &str,
+) -> Result<PathBuf, String> {
+    use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+    let path = data_dir.join(format!("{name}-{}.service", uuid::Uuid::now_v7()));
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(|error| format!("create temporary service unit: {error}"))?;
+    use std::io::Write;
+    file.write_all(body.as_bytes())
+        .map_err(|error| format!("write temporary service unit: {error}"))?;
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
+        .map_err(|error| format!("secure temporary service unit: {error}"))?;
+    Ok(path)
+}
+
+#[cfg(target_os = "linux")]
+fn checked_linux_user_id(name: &str) -> Result<u32, String> {
+    let output = run_checked_output("/usr/bin/id", &["-u".into(), name.into()])?;
+    output
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| format!("could not determine UID for {name}"))
+}
+
+/// Retire only the two unit files written by the former virtual-monitor setup.
+/// Their data is deliberately left untouched: it may contain an identity an
+/// owner wants to inspect or remove explicitly, and must never be confused
+/// with the new system broker identity.
+#[cfg(target_os = "linux")]
+fn retire_legacy_virtual_monitor() -> Result<(), String> {
+    let Some(home) = std::env::var_os("HOME").map(PathBuf::from) else {
+        return Ok(());
+    };
+    let units = home.join(".config/systemd/user");
+    let names = [
+        "rivetlink-headless-gnome.service",
+        "rivetlink-agent.service",
+    ];
+    let known_unit_exists = names.iter().any(|name| units.join(name).is_file());
+    if !known_unit_exists {
+        return Ok(());
+    }
+    // Best effort: an offline/failed old user manager must not prevent the
+    // secure physical-console path from being installed.
+    let _ = run_checked(
+        "/usr/bin/systemctl",
+        &[
+            "--user".into(),
+            "disable".into(),
+            "--now".into(),
+            names[0].into(),
+            names[1].into(),
+        ],
+    );
+    for name in names {
+        let unit = units.join(name);
+        match std::fs::symlink_metadata(&unit) {
+            Ok(metadata) if metadata.file_type().is_file() => std::fs::remove_file(&unit)
+                .map_err(|error| format!("remove retired virtual-monitor unit: {error}"))?,
+            Ok(_) => return Err("refusing to remove an unexpected legacy unit path".to_string()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("inspect retired virtual-monitor unit: {error}")),
+        }
+    }
+    let _ = run_checked(
+        "/usr/bin/systemctl",
+        &["--user".into(), "daemon-reload".into()],
+    );
+    Ok(())
+}
+
+/// Installs the physical HDMI/GDM console broker from the desktop app. The
+/// only privileged operations are fixed local account, file and systemd-unit
+/// management. Registration uses the already authenticated SDK client, so its
+/// relay token never crosses the privilege boundary.
+#[tauri::command]
+async fn setup_physical_console(
+    state: State<'_, AppState>,
+    setup: PhysicalConsoleSetup,
+) -> Result<PhysicalConsoleStatus, String> {
+    #[cfg(target_os = "linux")]
+    {
+        if !is_supported_ubuntu() {
+            return Err(
+                "physical-console access requires Ubuntu Desktop 24.04 LTS or newer".to_string(),
+            );
+        }
+        if setup.device_name.trim().is_empty() || setup.device_name.trim().len() > 100 {
+            return Err("enter a device name of at most 100 characters".to_string());
+        }
+        let controller_key = setup.controller_public_key.trim();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(controller_key)
+            .map_err(|_| "enter the controller's valid RivetLink public key".to_string())?;
+        if decoded.len() != 32 {
+            return Err("enter the controller's valid RivetLink public key".to_string());
+        }
+        let relay = {
+            let settings = state.settings.lock().await;
+            settings
+                .active_relay()
+                .cloned()
+                .ok_or("add and select a relay first")?
+        };
+        if !state
+            .client
+            .lock()
+            .await
+            .as_ref()
+            .is_some_and(RivetClient::is_authenticated)
+        {
+            return Err(
+                "sign in to the selected relay before configuring the Ubuntu console".to_string(),
+            );
+        }
+        let owner = std::env::var("USER").map_err(|_| "cannot determine the local Ubuntu user")?;
+        if !owner
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+        {
+            return Err("current Ubuntu user name is unsupported".to_string());
+        }
+        let owner_uid = checked_linux_user_id(&owner)?;
+        let gdm_uid = checked_linux_user_id("gdm")
+            .map_err(|_| "GDM is required for physical-console access")?;
+        let executable = appimage_or_current_exe()?;
+
+        retire_legacy_virtual_monitor()?;
+
+        // All command arguments are fixed or locally validated. In particular,
+        // this never starts a shell and never sends relay credentials to pkexec.
+        if !command_status(
+            "/usr/bin/getent",
+            &["group".into(), "rivetlink-console".into()],
+        )?
+        .success()
+        {
+            run_checked(
+                "/usr/bin/pkexec",
+                &[
+                    "/usr/sbin/groupadd".into(),
+                    "--system".into(),
+                    "rivetlink-console".into(),
+                ],
+            )?;
+        }
+        if !command_status("/usr/bin/getent", &["passwd".into(), "rivetlink".into()])?.success() {
+            run_checked(
+                "/usr/bin/pkexec",
+                &[
+                    "/usr/sbin/useradd".into(),
+                    "--system".into(),
+                    "--home-dir".into(),
+                    "/var/lib/rivetlink".into(),
+                    "--create-home".into(),
+                    "--shell".into(),
+                    "/usr/sbin/nologin".into(),
+                    "--gid".into(),
+                    "rivetlink-console".into(),
+                    "rivetlink".into(),
+                ],
+            )?;
+        }
+        for user in ["gdm", owner.as_str()] {
+            run_checked(
+                "/usr/bin/pkexec",
+                &[
+                    "/usr/sbin/usermod".into(),
+                    "-a".into(),
+                    "-G".into(),
+                    "rivetlink-console".into(),
+                    user.into(),
+                ],
+            )?;
+        }
+        run_checked(
+            "/usr/bin/pkexec",
+            &[
+                "/usr/bin/install".into(),
+                "-d".into(),
+                "-o".into(),
+                "rivetlink".into(),
+                "-g".into(),
+                "rivetlink-console".into(),
+                "-m".into(),
+                "0710".into(),
+                "/var/lib/rivetlink".into(),
+                "/var/lib/rivetlink/keys".into(),
+            ],
+        )?;
+        run_checked(
+            "/usr/bin/pkexec",
+            &[
+                "/usr/bin/install".into(),
+                "-d".into(),
+                "-o".into(),
+                "root".into(),
+                "-g".into(),
+                "root".into(),
+                "-m".into(),
+                "0755".into(),
+                "/usr/local/lib/rivetlink".into(),
+                "/etc/systemd/user".into(),
+            ],
+        )?;
+        run_checked(
+            "/usr/bin/pkexec",
+            &[
+                "/usr/bin/install".into(),
+                "-o".into(),
+                "root".into(),
+                "-g".into(),
+                "root".into(),
+                "-m".into(),
+                "0755".into(),
+                executable.into_os_string(),
+                "/usr/local/lib/rivetlink/rivet-agent".into(),
+            ],
+        )?;
+        run_checked(
+            "/usr/bin/pkexec",
+            &[
+                "/usr/bin/apt-get".into(),
+                "install".into(),
+                "-y".into(),
+                "pipewire".into(),
+                "gstreamer1.0-tools".into(),
+                "gstreamer1.0-pipewire".into(),
+            ],
+        )?;
+
+        let config_exists = command_status(
+            "/usr/bin/pkexec",
+            &[
+                "/usr/bin/test".into(),
+                "-f".into(),
+                "/var/lib/rivetlink/agent.json".into(),
+            ],
+        )?
+        .success();
+        if !config_exists {
+            run_checked(
+                "/usr/bin/pkexec",
+                &[
+                    "/usr/sbin/runuser".into(),
+                    "-u".into(),
+                    "rivetlink".into(),
+                    "--".into(),
+                    "/usr/local/lib/rivetlink/rivet-agent".into(),
+                    "--rivetlink-agent".into(),
+                    "--config".into(),
+                    "/var/lib/rivetlink/agent.json".into(),
+                    "init".into(),
+                    "--device-name".into(),
+                    setup.device_name.trim().into(),
+                    "--relay-url".into(),
+                    relay.ws_url.into(),
+                    "--relay-http-url".into(),
+                    relay.http_url.into(),
+                    "--keystore-path".into(),
+                    "/var/lib/rivetlink/keys".into(),
+                    "--unattended-console".into(),
+                    "--allow-trusted-unattended-console".into(),
+                ],
+            )?;
+            run_checked(
+                "/usr/bin/pkexec",
+                &[
+                    "/usr/bin/chmod".into(),
+                    "0600".into(),
+                    "/var/lib/rivetlink/agent.json".into(),
+                ],
+            )?;
+        }
+
+        let broker_key = run_checked_output(
+            "/usr/bin/pkexec",
+            &[
+                "/usr/sbin/runuser".into(),
+                "-u".into(),
+                "rivetlink".into(),
+                "--".into(),
+                "/usr/local/lib/rivetlink/rivet-agent".into(),
+                "--rivetlink-agent".into(),
+                "--config".into(),
+                "/var/lib/rivetlink/agent.json".into(),
+                "public-key".into(),
+            ],
+        )?;
+        let broker_key = broker_key.trim();
+        let broker_key_raw = base64::engine::general_purpose::STANDARD
+            .decode(broker_key)
+            .map_err(|_| "installed broker returned an invalid public key".to_string())?;
+        if broker_key_raw.len() != 32 {
+            return Err("installed broker returned an invalid public key".to_string());
+        }
+        let already_registered = run_checked_output(
+            "/usr/bin/pkexec",
+            &[
+                "/usr/sbin/runuser".into(),
+                "-u".into(),
+                "rivetlink".into(),
+                "--".into(),
+                "/usr/local/lib/rivetlink/rivet-agent".into(),
+                "--rivetlink-agent".into(),
+                "--config".into(),
+                "/var/lib/rivetlink/agent.json".into(),
+                "device-id".into(),
+            ],
+        )
+        .is_ok();
+        if !already_registered {
+            let device_id = {
+                let client = state.client.lock().await;
+                client
+                    .as_ref()
+                    .filter(|client| client.is_authenticated())
+                    .ok_or("your RivetLink session expired; sign in again and retry setup")?
+                    .register_device(broker_key, setup.device_name.trim(), Some("linux"))
+                    .await
+                    .map_err(|error| error.to_string())?
+            };
+            run_checked(
+                "/usr/bin/pkexec",
+                &[
+                    "/usr/sbin/runuser".into(),
+                    "-u".into(),
+                    "rivetlink".into(),
+                    "--".into(),
+                    "/usr/local/lib/rivetlink/rivet-agent".into(),
+                    "--rivetlink-agent".into(),
+                    "--config".into(),
+                    "/var/lib/rivetlink/agent.json".into(),
+                    "set-device-id".into(),
+                    "--device-id".into(),
+                    device_id.into(),
+                ],
+            )?;
+        }
+        run_checked(
+            "/usr/bin/pkexec",
+            &[
+                "/usr/sbin/runuser".into(),
+                "-u".into(),
+                "rivetlink".into(),
+                "--".into(),
+                "/usr/local/lib/rivetlink/rivet-agent".into(),
+                "--rivetlink-agent".into(),
+                "--config".into(),
+                "/var/lib/rivetlink/agent.json".into(),
+                "trust-client".into(),
+                "--public-key".into(),
+                controller_key.into(),
+                "--name".into(),
+                "Owner controller".into(),
+                "--allow-unattended-console".into(),
+                "--allow-console-control".into(),
+            ],
+        )?;
+
+        let appimage_extract = std::env::var_os("APPIMAGE")
+            .is_some()
+            .then_some("Environment=APPIMAGE_EXTRACT_AND_RUN=1\n")
+            .unwrap_or("");
+        let broker_unit = format!(
+            "[Unit]\nDescription=RivetLink physical HDMI/GDM console broker\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=rivetlink\nGroup=rivetlink-console\nRuntimeDirectory=rivetlink\nRuntimeDirectoryMode=0710\nExecStart=/usr/local/lib/rivetlink/rivet-agent --rivetlink-agent --config /var/lib/rivetlink/agent.json console-broker --socket /run/rivetlink/console.sock --allowed-worker-uid {gdm_uid} --allowed-worker-uid {owner_uid}\nRestart=on-failure\nRestartSec=5\nStartLimitIntervalSec=60\nStartLimitBurst=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/rivetlink /run/rivetlink\nLockPersonality=yes\nRestrictSUIDSGID=yes\n{appimage_extract}Environment=RUST_LOG=info\n\n[Install]\nWantedBy=multi-user.target\n"
+        );
+        let worker_unit = format!(
+            "[Unit]\nDescription=RivetLink worker for the active GNOME/GDM console\nAfter=graphical-session.target\nPartOf=graphical-session.target\n\n[Service]\nType=simple\nExecStart=/usr/local/lib/rivetlink/rivet-agent --rivetlink-agent console-worker --socket /run/rivetlink/console.sock\nRestart=on-failure\nRestartSec=3\nNoNewPrivileges=yes\nPrivateTmp=yes\nLockPersonality=yes\nRestrictSUIDSGID=yes\n{appimage_extract}Environment=RUST_LOG=info\n\n[Install]\nWantedBy=graphical-session.target\n"
+        );
+        let broker_source =
+            write_install_unit(&state.data_dir, "rivetlink-console-broker", &broker_unit)?;
+        let worker_source =
+            write_install_unit(&state.data_dir, "rivetlink-console-worker", &worker_unit)?;
+        let install_result = (|| {
+            run_checked(
+                "/usr/bin/pkexec",
+                &[
+                    "/usr/bin/install".into(),
+                    "-o".into(),
+                    "root".into(),
+                    "-g".into(),
+                    "root".into(),
+                    "-m".into(),
+                    "0644".into(),
+                    broker_source.clone().into_os_string(),
+                    "/etc/systemd/system/rivetlink-console-broker.service".into(),
+                ],
+            )?;
+            run_checked(
+                "/usr/bin/pkexec",
+                &[
+                    "/usr/bin/install".into(),
+                    "-o".into(),
+                    "root".into(),
+                    "-g".into(),
+                    "root".into(),
+                    "-m".into(),
+                    "0644".into(),
+                    worker_source.clone().into_os_string(),
+                    "/etc/systemd/user/rivetlink-console-worker.service".into(),
+                ],
+            )?;
+            run_checked(
+                "/usr/bin/pkexec",
+                &["/usr/bin/systemctl".into(), "daemon-reload".into()],
+            )?;
+            run_checked(
+                "/usr/bin/pkexec",
+                &[
+                    "/usr/bin/systemctl".into(),
+                    "--global".into(),
+                    "enable".into(),
+                    "rivetlink-console-worker.service".into(),
+                ],
+            )?;
+            run_checked(
+                "/usr/bin/pkexec",
+                &[
+                    "/usr/bin/systemctl".into(),
+                    "enable".into(),
+                    "--now".into(),
+                    "rivetlink-console-broker.service".into(),
+                ],
+            )
+        })();
+        let _ = std::fs::remove_file(broker_source);
+        let _ = std::fs::remove_file(worker_source);
+        install_result?;
+        return Ok(physical_console_status());
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (state, setup);
+        Err("physical-console access is supported on Ubuntu only".to_string())
+    }
+}
+
+/// Enrol an already-installed non-root physical-console broker using the
+/// desktop app's authenticated relay session. No relay token is ever supplied
+/// to PolicyKit, `runuser`, a service unit, or process arguments.
+#[tauri::command]
+#[allow(dead_code)] // retained solely so an already-installed legacy unit can be removed by a future migration command
+async fn register_console_broker(state: State<'_, AppState>) -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let output = run_checked_output(
+            "/usr/bin/pkexec",
+            &[
+                "/usr/sbin/runuser".into(),
+                "-u".into(),
+                "rivetlink".into(),
+                "--".into(),
+                "/usr/local/lib/rivetlink/rivet-agent".into(),
+                "--config".into(),
+                "/var/lib/rivetlink/agent.json".into(),
+                "public-key".into(),
+            ],
+        )?;
+        let public_key = output.trim();
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(public_key)
+            .map_err(|_| "installed broker returned an invalid public key".to_string())?;
+        if decoded.len() != 32 {
+            return Err("installed broker returned an invalid public key".to_string());
+        }
+        let device_id = {
+            let client = state.client.lock().await;
+            let client = client
+                .as_ref()
+                .filter(|client| client.is_authenticated())
+                .ok_or("sign in to the selected relay before registering this broker")?;
+            client
+                .register_device(public_key, "Ubuntu Home Node", Some("linux"))
+                .await
+                .map_err(|error| error.to_string())?
+        };
+        run_checked(
+            "/usr/bin/pkexec",
+            &[
+                "/usr/sbin/runuser".into(),
+                "-u".into(),
+                "rivetlink".into(),
+                "--".into(),
+                "/usr/local/lib/rivetlink/rivet-agent".into(),
+                "--config".into(),
+                "/var/lib/rivetlink/agent.json".into(),
+                "set-device-id".into(),
+                "--device-id".into(),
+                device_id.clone().into(),
+            ],
+        )?;
+        return Ok(device_id);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = state;
+        Err("physical-console broker registration is supported on Ubuntu only".to_string())
+    }
+}
+
+#[cfg(target_os = "linux")]
 fn systemd_quote(value: &std::path::Path) -> Result<String, String> {
     let value = value
         .to_str()
@@ -380,6 +964,7 @@ fn write_private(path: &std::path::Path, body: &str) -> Result<(), String> {
 /// Report whether the current machine can use, and currently runs, the
 /// dedicated Ubuntu GNOME virtual-monitor host. No secrets are read.
 #[tauri::command]
+#[allow(dead_code)] // legacy virtual-monitor removal path; no longer exposed to the frontend
 fn headless_host_status() -> HeadlessHostStatus {
     #[cfg(target_os = "linux")]
     {
@@ -407,6 +992,7 @@ fn headless_host_status() -> HeadlessHostStatus {
 /// particular, its controller allow-list is useful when recreating the host.
 /// It also does not remove packages, linger, or a relay-side device record.
 #[tauri::command]
+#[allow(dead_code)] // legacy virtual-monitor removal path; no longer exposed to the frontend
 fn remove_headless_host() -> Result<HeadlessHostStatus, String> {
     #[cfg(target_os = "linux")]
     {
@@ -505,6 +1091,7 @@ fn remove_headless_host() -> Result<HeadlessHostStatus, String> {
 /// worker for a dedicated virtual GNOME monitor. This is called solely from a
 /// visible owner-confirmation dialog; normal updates never call it.
 #[tauri::command]
+#[allow(dead_code)] // retired virtual-monitor installer; no longer exposed to the frontend
 async fn setup_headless_host(
     state: State<'_, AppState>,
     setup: HeadlessHostSetup,
@@ -1019,7 +1606,7 @@ async fn capture_screenshot(
     app: tauri::AppHandle,
     state: State<'_, AppState>,
     device_id: String,
-) -> Result<String, String> {
+) -> Result<ConsoleCaptureDto, String> {
     let guard = state.client.lock().await;
     let client = guard.as_ref().ok_or("not connected")?;
 
@@ -1032,14 +1619,58 @@ async fn capture_screenshot(
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let out = dir.join("last_capture.png");
 
-    let path = client
-        .capture_screenshot(&device, out)
+    let outcome = client
+        .capture_screenshot_outcome(&device, out)
         .await
         .map_err(|e| e.to_string())?;
 
-    let bytes = std::fs::read(&path).map_err(|e| e.to_string())?;
+    let bytes = std::fs::read(&outcome.path).map_err(|e| e.to_string())?;
     let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
-    Ok(format!("data:image/png;base64,{b64}"))
+    Ok(ConsoleCaptureDto {
+        image: format!("data:image/png;base64,{b64}"),
+        console_state: outcome.console_state.map(|(state, _)| format!("{state:?}")),
+    })
+}
+
+/// Send one remote event to an explicitly authorized physical-console host and
+/// return the resulting encrypted screenshot. The event is forwarded as an
+/// opaque E2E payload; this backend neither logs nor persists it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ConsoleCaptureDto {
+    image: String,
+    console_state: Option<String>,
+}
+
+#[tauri::command]
+async fn console_input_and_capture(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    device_id: String,
+    event: ConsoleInputPacket,
+) -> Result<ConsoleCaptureDto, String> {
+    let guard = state.client.lock().await;
+    let client = guard.as_ref().ok_or("not connected")?;
+    let device = client
+        .find_device(&device_id)
+        .await
+        .map_err(|error| error.to_string())?;
+    let dir = app
+        .path()
+        .app_cache_dir()
+        .map_err(|error| error.to_string())?;
+    std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
+    let out = dir.join("console_capture.png");
+    let outcome = client
+        .console_input_and_capture_outcome(&device, event, out)
+        .await
+        .map_err(|error| error.to_string())?;
+    let bytes = std::fs::read(&outcome.path).map_err(|error| error.to_string())?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(&bytes);
+    Ok(ConsoleCaptureDto {
+        image: format!("data:image/png;base64,{b64}"),
+        console_state: outcome.console_state.map(|(state, _)| format!("{state:?}")),
+    })
 }
 
 // ---- Direct-LAN: discover, remember, connect -------------------------------
@@ -2308,6 +2939,10 @@ fn write_headless_trusted_keys(home: &std::path::Path, keys: &[TrustedKey]) -> R
                     name: key.name.clone(),
                     can_view: true,
                     can_control: false,
+                    // Imported app trust is deliberately insufficient for
+                    // pre-login console control. That capability needs its
+                    // own local owner opt-in in the Ubuntu installer.
+                    can_unattended_console: false,
                 },
             )
             .map_err(|e| e.to_string())?;
@@ -2545,9 +3180,8 @@ pub fn run() {
             public_key,
             app_version,
             is_appimage,
-            headless_host_status,
-            setup_headless_host,
-            remove_headless_host,
+            physical_console_status,
+            setup_physical_console,
             toggle_devtools,
             add_relay,
             remove_relay,
@@ -2556,6 +3190,7 @@ pub fn run() {
             login,
             list_devices,
             capture_screenshot,
+            console_input_and_capture,
             discover_lan,
             add_lan_device,
             remove_lan_device,

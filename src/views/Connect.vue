@@ -115,7 +115,9 @@
 										@click="selected = d.id"
 									>
 										<template #prepend>
-											<VIcon icon="mdi-monitor" />
+											<VBadge :color="d.online ? 'green' : 'grey'" dot location="bottom end">
+												<VIcon icon="mdi-monitor" />
+											</VBadge>
 										</template>
 										<VListItemTitle>{{ d.hostname || d.id }}</VListItemTitle>
 										<VListItemSubtitle>{{ deviceMeta(d) }}</VListItemSubtitle>
@@ -145,8 +147,23 @@
 						</VCard>
 
 						<VCard v-if="screenshot" class="mt-4">
-							<VCardTitle>{{ t("connect.screenshot") }}</VCardTitle>
-							<VImg :src="screenshot" />
+							<VCardTitle class="d-flex align-center">
+								{{ t("connect.screenshot") }}
+								<VSpacer />
+								<VChip v-if="consoleState" size="small" color="primary">
+									{{ consoleStateLabel }}
+								</VChip>
+							</VCardTitle>
+							<VCardSubtitle>{{ t("connect.consoleInputHint") }}</VCardSubtitle>
+							<VImg
+								:src="screenshot"
+								tabindex="0"
+								class="console-screen"
+								@contextmenu.prevent
+								@click="consoleClick"
+								@keydown.prevent="consoleKey($event, true)"
+								@keyup.prevent="consoleKey($event, false)"
+							/>
 						</VCard>
 					</template>
 				</template>
@@ -367,6 +384,7 @@
 		activeRelay,
 		addLanDevice,
 		captureScreenshot,
+		consoleInputAndCapture,
 		connect,
 		discoverLan,
 		type Device,
@@ -395,6 +413,19 @@
 	const devices = ref<Device[]>([]);
 	const selected = ref<string | null>(null);
 	const screenshot = ref<string | null>(null);
+	const consoleState = ref<string | null>(null);
+	const consoleStateLabel = computed(() => {
+		const labels: Record<string, string> = {
+			GdmLogin: "connect.consoleStateLogin",
+			DesktopReady: "connect.consoleStateDesktop",
+			SessionLocked: "connect.consoleStateLocked",
+			SessionStarting: "connect.consoleStateStarting",
+			SessionSwitching: "connect.consoleStateSwitching",
+			Booting: "connect.consoleStateBooting",
+			Offline: "connect.consoleStateOffline",
+		};
+		return consoleState.value ? t(labels[consoleState.value] || "connect.consoleStateBooting") : "";
+	});
 
 	const busy = ref(false);
 	const busyMsg = ref<string | null>(null);
@@ -460,10 +491,13 @@
 	}
 
 	function deviceMeta(d: Device): string {
-		return t("connect.deviceMeta", {
-			platform: d.platform || t("connect.unknown"),
-			seen: d.last_seen || t("connect.never"),
-		});
+		const platform = d.platform || t("connect.unknown");
+		return d.online
+			? t("connect.deviceMetaOnline", { platform })
+			: t("connect.deviceMetaOffline", {
+				platform,
+				seen: d.last_seen || t("connect.never"),
+			});
 	}
 
 	const netTimer = ref<ReturnType<typeof setInterval>>();
@@ -546,12 +580,64 @@
 		screenshot.value = null;
 		busyMsg.value = t("connect.requestingSession");
 		try {
-			screenshot.value = await captureScreenshot(selected.value);
+			const capture = await captureScreenshot(selected.value);
+			screenshot.value = capture.image;
+			consoleState.value = capture.consoleState;
 		} catch (e) {
 			fail(e);
 		} finally {
 			busyMsg.value = null;
 		}
+	}
+
+	async function sendConsoleInput(event: Parameters<typeof consoleInputAndCapture>[1]) {
+		if (!selected.value || busyMsg.value) {return;}
+		error.value = null;
+		busyMsg.value = t("connect.requestingSession");
+		try {
+			const capture = await consoleInputAndCapture(selected.value, event);
+			screenshot.value = capture.image;
+			consoleState.value = capture.consoleState;
+		} catch (e) {
+			fail(e);
+		} finally {
+			busyMsg.value = null;
+		}
+	}
+
+	function consoleKey(event: KeyboardEvent, down: boolean) {
+		// `code` is a physical key identifier. The key value (and therefore a
+		// password character) is never inspected or recorded by RivetLink.
+		void sendConsoleInput({
+			type: "key",
+			code: event.code,
+			down,
+		});
+	}
+
+	function consoleClick(event: MouseEvent) {
+		const target = event.currentTarget as HTMLElement;
+		const rect = target.getBoundingClientRect();
+		if (!rect.width || !rect.height) {return;}
+		const x = Math.max(0, Math.min(10000, Math.round((event.clientX - rect.left) / rect.width * 10000)));
+		const y = Math.max(0, Math.min(10000, Math.round((event.clientY - rect.top) / rect.height * 10000)));
+		void (async () => {
+			await sendConsoleInput({
+				type: "pointer_move",
+				x,
+				y,
+			});
+			await sendConsoleInput({
+				type: "pointer_button",
+				button: "left",
+				down: true,
+			});
+			await sendConsoleInput({
+				type: "pointer_button",
+				button: "left",
+				down: false,
+			});
+		})();
 	}
 
 	// --- LAN actions ---
