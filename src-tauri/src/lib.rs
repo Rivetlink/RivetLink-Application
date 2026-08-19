@@ -556,10 +556,12 @@ async fn setup_physical_console(
         }
         let relay = if setup.enable_relay {
             let settings = state.settings.lock().await;
-            settings
-                .active_relay()
-                .cloned()
-                .ok_or("add and select a relay before enabling relay access")?
+            Some(
+                settings
+                    .active_relay()
+                    .cloned()
+                    .ok_or("add and select a relay before enabling relay access")?,
+            )
         } else {
             None
         };
