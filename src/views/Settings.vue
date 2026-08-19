@@ -215,6 +215,20 @@
 						density="comfortable"
 						class="mb-2"
 					/>
+					<VCheckbox
+						v-model="physicalConsoleLan"
+						:label="t('physicalConsole.localNetwork')"
+						:hint="t('physicalConsole.localNetworkHint')"
+						persistent-hint
+						density="comfortable"
+					/>
+					<VCheckbox
+						v-model="physicalConsoleRelay"
+						:label="t('physicalConsole.relay')"
+						:hint="t('physicalConsole.relayHint')"
+						persistent-hint
+						density="comfortable"
+					/>
 					<VAlert
 						v-if="physicalConsoleError"
 						type="error"
@@ -235,7 +249,7 @@
 					<VBtn
 						color="primary"
 						:loading="physicalConsoleBusy"
-						:disabled="!physicalConsoleName.trim() || !physicalConsoleControllerKey.trim()"
+						:disabled="!physicalConsoleName.trim() || !physicalConsoleControllerKey.trim() || (!physicalConsoleLan && !physicalConsoleRelay)"
 						@click="installPhysicalConsole"
 					>
 						{{ t("physicalConsole.confirm") }}
@@ -280,10 +294,14 @@
 	const physicalConsoleError = ref("");
 	const physicalConsoleName = ref("");
 	const physicalConsoleControllerKey = ref("");
+	const physicalConsoleLan = ref(true);
+	const physicalConsoleRelay = ref(true);
 	const physicalConsole = ref({
 		supported: false,
 		configured: false,
 		brokerActive: false,
+		lanEnabled: false,
+		relayEnabled: false,
 	});
 
 	async function refreshPhysicalConsoleStatus() {
@@ -307,6 +325,8 @@
 				setup: {
 					deviceName: physicalConsoleName.value,
 					controllerPublicKey: physicalConsoleControllerKey.value,
+					enableLan: physicalConsoleLan.value,
+					enableRelay: physicalConsoleRelay.value,
 				},
 			});
 			closePhysicalConsoleDialog();

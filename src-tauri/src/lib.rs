@@ -388,6 +388,8 @@ struct PhysicalConsoleStatus {
     supported: bool,
     configured: bool,
     broker_active: bool,
+    lan_enabled: bool,
+    relay_enabled: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -396,6 +398,19 @@ struct PhysicalConsoleStatus {
 struct PhysicalConsoleSetup {
     device_name: String,
     controller_public_key: String,
+    #[serde(default)]
+    enable_lan: bool,
+    #[serde(default = "default_true")]
+    enable_relay: bool,
+    #[serde(default = "default_lan_port")]
+    lan_port: u16,
+}
+
+fn default_true() -> bool {
+    true
+}
+fn default_lan_port() -> u16 {
+    rivetlink_sdk::lan::DEFAULT_LAN_PORT
 }
 
 #[cfg(target_os = "linux")]
@@ -412,6 +427,8 @@ fn physical_console_status() -> PhysicalConsoleStatus {
         supported: is_supported_ubuntu(),
         configured,
         broker_active,
+        lan_enabled: false,
+        relay_enabled: false,
     }
 }
 
@@ -422,6 +439,8 @@ fn physical_console_status() -> PhysicalConsoleStatus {
         supported: false,
         configured: false,
         broker_active: false,
+        lan_enabled: false,
+        relay_enabled: false,
     }
 }
 
@@ -529,23 +548,30 @@ async fn setup_physical_console(
         if decoded.len() != 32 {
             return Err("enter the controller's valid RivetLink public key".to_string());
         }
-        let relay = {
+        if !setup.enable_lan && !setup.enable_relay {
+            return Err("select Local network, Via relay, or both".to_string());
+        }
+        if setup.enable_lan && setup.lan_port == 0 {
+            return Err("enter a valid LAN port".to_string());
+        }
+        let relay = if setup.enable_relay {
             let settings = state.settings.lock().await;
             settings
                 .active_relay()
                 .cloned()
-                .ok_or("add and select a relay first")?
+                .ok_or("add and select a relay before enabling relay access")?
+        } else {
+            None
         };
-        if !state
-            .client
-            .lock()
-            .await
-            .as_ref()
-            .is_some_and(RivetClient::is_authenticated)
+        if setup.enable_relay
+            && !state
+                .client
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(RivetClient::is_authenticated)
         {
-            return Err(
-                "sign in to the selected relay before configuring the Ubuntu console".to_string(),
-            );
+            return Err("sign in to the selected relay before enabling relay access".to_string());
         }
         let owner = std::env::var("USER").map_err(|_| "cannot determine the local Ubuntu user")?;
         if !owner
@@ -673,30 +699,40 @@ async fn setup_physical_console(
         )?
         .success();
         if !config_exists {
-            run_checked(
-                "/usr/bin/pkexec",
-                &[
-                    "/usr/sbin/runuser".into(),
-                    "-u".into(),
-                    "rivetlink".into(),
-                    "--".into(),
-                    "/usr/local/lib/rivetlink/rivet-agent".into(),
-                    "--rivetlink-agent".into(),
-                    "--config".into(),
-                    "/var/lib/rivetlink/agent.json".into(),
-                    "init".into(),
-                    "--device-name".into(),
-                    setup.device_name.trim().into(),
+            let mut init_args: Vec<std::ffi::OsString> = vec![
+                "/usr/sbin/runuser".into(),
+                "-u".into(),
+                "rivetlink".into(),
+                "--".into(),
+                "/usr/local/lib/rivetlink/rivet-agent".into(),
+                "--rivetlink-agent".into(),
+                "--config".into(),
+                "/var/lib/rivetlink/agent.json".into(),
+                "init".into(),
+                "--device-name".into(),
+                setup.device_name.trim().into(),
+                "--keystore-path".into(),
+                "/var/lib/rivetlink/keys".into(),
+                "--unattended-console".into(),
+                "--allow-trusted-unattended-console".into(),
+                "--lan-port".into(),
+                setup.lan_port.to_string().into(),
+            ];
+            if setup.enable_lan {
+                init_args.push("--enable-lan".into());
+            }
+            if !setup.enable_relay {
+                init_args.push("--disable-relay".into());
+            }
+            if let Some(relay) = &relay {
+                init_args.extend([
                     "--relay-url".into(),
-                    relay.ws_url.into(),
+                    relay.ws_url.clone().into(),
                     "--relay-http-url".into(),
-                    relay.http_url.into(),
-                    "--keystore-path".into(),
-                    "/var/lib/rivetlink/keys".into(),
-                    "--unattended-console".into(),
-                    "--allow-trusted-unattended-console".into(),
-                ],
-            )?;
+                    relay.http_url.clone().into(),
+                ]);
+            }
+            run_checked("/usr/bin/pkexec", &init_args)?;
             run_checked(
                 "/usr/bin/pkexec",
                 &[
@@ -706,6 +742,29 @@ async fn setup_physical_console(
                 ],
             )?;
         }
+
+        // Existing installations retain their identity/trusted keys. Their
+        // transport exposure is changed only by this explicit setup choice.
+        let mut transport_args = vec![
+            "/usr/sbin/runuser".into(),
+            "-u".into(),
+            "rivetlink".into(),
+            "--".into(),
+            "/usr/local/lib/rivetlink/rivet-agent".into(),
+            "--rivetlink-agent".into(),
+            "--config".into(),
+            "/var/lib/rivetlink/agent.json".into(),
+            "configure-console-transports".into(),
+            "--lan-port".into(),
+            setup.lan_port.to_string().into(),
+        ];
+        if setup.enable_lan {
+            transport_args.push("--lan".into());
+        }
+        if setup.enable_relay {
+            transport_args.push("--relay".into());
+        }
+        run_checked("/usr/bin/pkexec", &transport_args)?;
 
         let broker_key = run_checked_output(
             "/usr/bin/pkexec",
@@ -728,22 +787,23 @@ async fn setup_physical_console(
         if broker_key_raw.len() != 32 {
             return Err("installed broker returned an invalid public key".to_string());
         }
-        let already_registered = run_checked_output(
-            "/usr/bin/pkexec",
-            &[
-                "/usr/sbin/runuser".into(),
-                "-u".into(),
-                "rivetlink".into(),
-                "--".into(),
-                "/usr/local/lib/rivetlink/rivet-agent".into(),
-                "--rivetlink-agent".into(),
-                "--config".into(),
-                "/var/lib/rivetlink/agent.json".into(),
-                "device-id".into(),
-            ],
-        )
-        .is_ok();
-        if !already_registered {
+        let already_registered = setup.enable_relay
+            && run_checked_output(
+                "/usr/bin/pkexec",
+                &[
+                    "/usr/sbin/runuser".into(),
+                    "-u".into(),
+                    "rivetlink".into(),
+                    "--".into(),
+                    "/usr/local/lib/rivetlink/rivet-agent".into(),
+                    "--rivetlink-agent".into(),
+                    "--config".into(),
+                    "/var/lib/rivetlink/agent.json".into(),
+                    "device-id".into(),
+                ],
+            )
+            .is_ok();
+        if setup.enable_relay && !already_registered {
             let device_id = {
                 let client = state.client.lock().await;
                 client
@@ -861,7 +921,10 @@ async fn setup_physical_console(
         let _ = std::fs::remove_file(broker_source);
         let _ = std::fs::remove_file(worker_source);
         install_result?;
-        return Ok(physical_console_status());
+        let mut status = physical_console_status();
+        status.lan_enabled = setup.enable_lan;
+        status.relay_enabled = setup.enable_relay;
+        return Ok(status);
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -1707,6 +1770,7 @@ async fn add_lan_device(
     address: String,
     port: u16,
     public_key: Option<String>,
+    physical_console: bool,
 ) -> Result<AppSettings, String> {
     let mut settings = state.settings.lock().await;
     // De-duplicate on address:port; refresh the stored entry if it exists.
@@ -1719,6 +1783,7 @@ async fn add_lan_device(
         address,
         port,
         public_key,
+        physical_console,
     });
     settings.save(&state.data_dir)?;
     Ok(settings.clone())
@@ -1767,6 +1832,43 @@ async fn lan_screenshot(
 
     let b64 = base64::engine::general_purpose::STANDARD.encode(&png);
     Ok(format!("data:image/png;base64,{b64}"))
+}
+
+/// Direct encrypted physical-console transaction. A physical-console host is
+/// always host-key pinned: discovery metadata alone is never an authority, but
+/// accepting an unpinned key here would weaken this privileged pre-login path.
+#[tauri::command]
+async fn lan_console_capture(
+    state: State<'_, AppState>,
+    address: String,
+    port: u16,
+    host_public_key: Option<String>,
+    inputs: Vec<ConsoleInputPacket>,
+) -> Result<ConsoleCaptureDto, String> {
+    let ip: std::net::IpAddr = address
+        .parse()
+        .map_err(|_| format!("bad address: {address}"))?;
+    let key = host_public_key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())
+        .ok_or(
+            "physical-console LAN access requires the host identity from discovery or a saved key",
+        )?;
+    let identity =
+        Identity::load_or_create(&state.identity_path()).map_err(|error| error.to_string())?;
+    let capture = rivetlink_sdk::lan::console_capture_key_pinned(
+        std::net::SocketAddr::new(ip, port),
+        &identity,
+        Some(key),
+        inputs,
+    )
+    .await
+    .map_err(|error| error.to_string())?;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(capture.png);
+    Ok(ConsoleCaptureDto {
+        image: format!("data:image/png;base64,{b64}"),
+        console_state: capture.state.map(|state| format!("{state:?}")),
+    })
 }
 
 /// True while `open_viewer` is closing a stale viewer to rebuild a fresh one, so
@@ -3195,6 +3297,7 @@ pub fn run() {
             add_lan_device,
             remove_lan_device,
             lan_screenshot,
+            lan_console_capture,
             lan_connect,
             lan_switch_display,
             lan_send_input,

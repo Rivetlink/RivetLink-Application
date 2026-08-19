@@ -25,6 +25,11 @@ pub struct SavedLanDevice {
     /// Advertised host identity (base64), if known — lets us pin the host.
     #[serde(default)]
     pub public_key: Option<String>,
+    /// True only for an mDNS advertisement from the boot-time physical
+    /// GDM/GNOME console broker. Older remembered LAN hosts remain regular
+    /// hosts by default.
+    #[serde(default)]
+    pub physical_console: bool,
 }
 
 /// A client this host trusts: its identity public key plus a name the owner

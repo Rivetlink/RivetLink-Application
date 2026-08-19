@@ -18,9 +18,11 @@ On **Ubuntu Desktop 24.04 LTS or newer**, use **Settings → Ubuntu physical
 console** with a permanent HDMI dummy/EDID emulator. After one owner-approved
 PolicyKit action, RivetLink starts a non-root broker before Ubuntu login and
 captures the real GDM/GNOME seat0 session through a narrowly scoped worker.
-Registration uses the current signed-in relay session; no relay token is
-shown, copied or stored in a service. It does not enable automatic login,
-remote shell, RDP/VNC or file access. See the main repository's
+Setup offers direct **Local network**, **Via relay**, or both. Local network
+uses a pinned, encrypted trusted-device connection and needs no relay, account
+or internet; relay registration uses the current signed-in session, so no relay
+token is shown, copied or stored in a service. It does not enable automatic
+login, remote shell, RDP/VNC or file access. See the main repository's
 `docs/ubuntu-physical-console-broker.md`.
 
 ## Prerequisites

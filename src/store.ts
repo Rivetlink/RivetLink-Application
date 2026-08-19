@@ -18,6 +18,7 @@ export type SavedLanDevice = {
 	address: string;
 	port: number;
 	public_key: string | null;
+	physical_console: boolean;
 };
 
 /// A client this host trusts (its identity key + a name the owner gave it).
@@ -44,6 +45,7 @@ export type LanDevice = {
 	port: number;
 	public_key: string | null;
 	protocol_version: number | null;
+	physical_console: boolean;
 };
 
 export type Device = {
@@ -219,12 +221,14 @@ export async function addLanDevice(
 	address: string,
 	port: number,
 	publicKey: string | null,
+	physicalConsole: boolean,
 ): Promise<void> {
 	store.settings = await invoke<AppSettings>("add_lan_device", {
 		name,
 		address,
 		port,
 		publicKey,
+		physicalConsole,
 	});
 }
 
@@ -243,6 +247,20 @@ export async function lanScreenshot(
 		port,
 		pin,
 		hostPublicKey,
+	});
+}
+
+export async function lanConsoleCapture(
+	address: string,
+	port: number,
+	hostPublicKey: string | null,
+	inputs: ConsoleInput[],
+): Promise<ConsoleCapture> {
+	return invoke<ConsoleCapture>("lan_console_capture", {
+		address,
+		port,
+		hostPublicKey,
+		inputs,
 	});
 }
 

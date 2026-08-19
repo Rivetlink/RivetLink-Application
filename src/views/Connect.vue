@@ -153,6 +153,9 @@
 								<VChip v-if="consoleState" size="small" color="primary">
 									{{ consoleStateLabel }}
 								</VChip>
+								<VChip size="small" variant="tonal" class="ml-2">
+									{{ t("connect.connectionRelay") }}
+								</VChip>
 							</VCardTitle>
 							<VCardSubtitle>{{ t("connect.consoleInputHint") }}</VCardSubtitle>
 							<VImg
@@ -244,6 +247,15 @@
 							<VListItemTitle>
 								{{ d.name }}
 								<VChip
+									v-if="d.physical_console"
+									size="x-small"
+									color="primary"
+									variant="tonal"
+									class="ml-2"
+								>
+									{{ t("connect.lanPhysicalConsole") }}
+								</VChip>
+								<VChip
 									v-if="store.connectedLanId === d.id"
 									size="x-small"
 									color="green"
@@ -298,6 +310,17 @@
 									{{ t("connect.lanDisconnect") }}
 								</VBtn>
 								<VBtn
+									v-if="d.physical_console"
+									size="small"
+									color="primary"
+									variant="flat"
+									prepend-icon="mdi-monitor-lock"
+									:loading="lanCaptureId === d.id"
+									@click="captureLanConsole(d)"
+								>
+									{{ t("connect.lanOpenConsole") }}
+								</VBtn>
+								<VBtn
 									v-else
 									size="small"
 									color="primary"
@@ -309,6 +332,7 @@
 									{{ t("connect.lanConnect") }}
 								</VBtn>
 								<VBtn
+									v-if="!d.physical_console"
 									size="small"
 									variant="tonal"
 									prepend-icon="mdi-camera"
@@ -331,6 +355,28 @@
 				<VCard v-if="lanScreenshotImage" class="mt-4">
 					<VCardTitle>{{ t("connect.screenshot") }}</VCardTitle>
 					<VImg :src="lanScreenshotImage" />
+				</VCard>
+				<VCard v-if="lanConsoleImage" class="mt-4">
+					<VCardTitle class="d-flex align-center">
+						{{ t("connect.lanPhysicalConsole") }}
+						<VSpacer />
+						<VChip v-if="lanConsoleState" size="small" color="primary">
+							{{ consoleStateText(lanConsoleState) }}
+						</VChip>
+						<VChip size="small" variant="tonal" class="ml-2">
+							{{ t("connect.connectionLan") }}
+						</VChip>
+					</VCardTitle>
+					<VCardSubtitle>{{ t("connect.consoleInputHint") }}</VCardSubtitle>
+					<VImg
+						:src="lanConsoleImage"
+						tabindex="0"
+						class="console-screen"
+						@contextmenu.prevent
+						@click="lanConsoleClick"
+						@keydown.prevent="lanConsoleKey($event, true)"
+						@keyup.prevent="lanConsoleKey($event, false)"
+					/>
 				</VCard>
 			</VWindowItem>
 
@@ -393,6 +439,7 @@
 		lanDisconnect,
 		lanPing,
 		lanScreenshot,
+		lanConsoleCapture,
 		listDevices,
 		login,
 		type NetworkInfo,
@@ -443,6 +490,9 @@
 	const connectingId = ref<string | null>(null);
 	const lanCaptureId = ref<string | null>(null);
 	const lanScreenshotImage = ref<string | null>(null);
+	const lanConsoleImage = ref<string | null>(null);
+	const lanConsoleState = ref<string | null>(null);
+	const lanConsoleTarget = ref<SavedLanDevice | null>(null);
 	const net = ref<NetworkInfo | null>(null);
 	// Per-saved-device reachability (id -> online), refreshed on a timer.
 	const online = ref<Record<string, boolean>>({});
@@ -656,7 +706,7 @@
 	async function remember(d: LanDevice) {
 		error.value = null;
 		try {
-			await addLanDevice(d.name, d.address, d.port, d.public_key);
+			await addLanDevice(d.name, d.address, d.port, d.public_key, d.physical_console);
 		} catch (e) {
 			fail(e);
 		}
@@ -717,5 +767,62 @@
 		} finally {
 			lanCaptureId.value = null;
 		}
+	}
+
+	function consoleStateText(state: string | null) {
+		return state ? t({
+			GdmLogin: "connect.consoleStateLogin",
+			DesktopReady: "connect.consoleStateDesktop",
+			SessionLocked: "connect.consoleStateLocked",
+			SessionStarting: "connect.consoleStateStarting",
+			SessionSwitching: "connect.consoleStateSwitching",
+			Booting: "connect.consoleStateBooting",
+			Offline: "connect.consoleStateOffline",
+		}[state] || "connect.consoleStateBooting") : "";
+	}
+
+	async function captureLanConsole(device: SavedLanDevice, inputs: Parameters<typeof lanConsoleCapture>[3] = []) {
+		error.value = null;
+		lanCaptureId.value = device.id;
+		try {
+			const capture = await lanConsoleCapture(device.address, device.port, device.public_key, inputs);
+			lanConsoleTarget.value = device;
+			lanConsoleImage.value = capture.image;
+			lanConsoleState.value = capture.consoleState;
+		} catch (e) { fail(e); } finally { lanCaptureId.value = null; }
+	}
+
+	function lanConsoleKey(event: KeyboardEvent, down: boolean) {
+		// Only a physical browser code is forwarded. No character/password is read or logged.
+		if (lanConsoleTarget.value) {void captureLanConsole(lanConsoleTarget.value, [{
+			type: "key",
+			code: event.code,
+			down,
+		}]);}
+	}
+
+	function lanConsoleClick(event: MouseEvent) {
+		const target = event.currentTarget as HTMLElement;
+		const rect = target.getBoundingClientRect();
+		if (!rect.width || !rect.height || !lanConsoleTarget.value) {return;}
+		const x = Math.max(0, Math.min(10000, Math.round((event.clientX - rect.left) / rect.width * 10000)));
+		const y = Math.max(0, Math.min(10000, Math.round((event.clientY - rect.top) / rect.height * 10000)));
+		void captureLanConsole(lanConsoleTarget.value, [
+			{
+				type: "pointer_move",
+				x,
+				y,
+			},
+			{
+				type: "pointer_button",
+				button: "left",
+				down: true,
+			},
+			{
+				type: "pointer_button",
+				button: "left",
+				down: false,
+			},
+		]);
 	}
 </script>
