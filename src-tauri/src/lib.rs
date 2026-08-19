@@ -27,7 +27,10 @@ use tokio::sync::Mutex;
 use rivetlink_agent::lan::{serve_with_events, ConsentRequest, HostEvent, LanAuth};
 #[cfg(target_os = "linux")]
 use rivetlink_agent::{
-    config::AgentConfig,
+    config::{
+        AgentConfig, ConsoleTransportConfig, LanConsoleTransportConfig,
+        RelayConsoleTransportConfig, UnattendedConsoleConfig,
+    },
     keystore::{file::FileKeyStore, KeyStore},
     trusted::{TrustedClients, TrustedEntry},
 };
@@ -388,6 +391,10 @@ struct PhysicalConsoleStatus {
     supported: bool,
     configured: bool,
     broker_active: bool,
+    boot_service_enabled: bool,
+    gdm_available: bool,
+    lan_listening: bool,
+    lan_port: Option<u16>,
     lan_enabled: bool,
     relay_enabled: bool,
 }
@@ -416,19 +423,50 @@ fn default_lan_port() -> u16 {
 #[cfg(target_os = "linux")]
 #[tauri::command]
 fn physical_console_status() -> PhysicalConsoleStatus {
-    let configured = std::path::Path::new("/etc/systemd/system/rivetlink-console-broker.service")
-        .is_file()
-        && std::path::Path::new("/var/lib/rivetlink/agent.json").is_file();
+    const BROKER_UNIT: &str = "/etc/systemd/system/rivetlink-console-broker.service";
+    let unit = std::fs::read_to_string(BROKER_UNIT).unwrap_or_default();
+    let unit_installed = std::path::Path::new(BROKER_UNIT).is_file();
     let broker_active = std::process::Command::new("/usr/bin/systemctl")
         .args(["is-active", "--quiet", "rivetlink-console-broker.service"])
         .status()
         .is_ok_and(|status| status.success());
+    let boot_service_enabled = std::process::Command::new("/usr/bin/systemctl")
+        .args(["is-enabled", "--quiet", "rivetlink-console-broker.service"])
+        .status()
+        .is_ok_and(|status| status.success());
+    // The secret config is deliberately unreadable by the desktop user. A
+    // valid installed unit plus its enabled/active state is the public,
+    // non-sensitive configuration signal instead.
+    let configured = unit_installed && (broker_active || boot_service_enabled);
+    let gdm_available = ["gdm.service", "gdm3.service"].iter().any(|unit| {
+        std::process::Command::new("/usr/bin/systemctl")
+            .args(["is-active", "--quiet", unit])
+            .status()
+            .is_ok_and(|status| status.success())
+    });
+    let lan_enabled = unit.contains("Environment=RIVETLINK_CONSOLE_LAN=1");
+    let relay_enabled = unit.contains("Environment=RIVETLINK_CONSOLE_RELAY=1");
+    let lan_port = unit
+        .lines()
+        .find_map(|line| line.strip_prefix("Environment=RIVETLINK_CONSOLE_LAN_PORT="))
+        .and_then(|value| value.parse::<u16>().ok());
+    let lan_listening = lan_enabled
+        && lan_port.is_some_and(|port| {
+            std::process::Command::new("/usr/bin/ss")
+                .args(["-ltnH", &format!("sport = :{port}")])
+                .output()
+                .is_ok_and(|output| output.status.success() && !output.stdout.is_empty())
+        });
     PhysicalConsoleStatus {
         supported: is_supported_ubuntu(),
         configured,
         broker_active,
-        lan_enabled: false,
-        relay_enabled: false,
+        boot_service_enabled,
+        gdm_available,
+        lan_listening,
+        lan_port,
+        lan_enabled,
+        relay_enabled,
     }
 }
 
@@ -439,6 +477,10 @@ fn physical_console_status() -> PhysicalConsoleStatus {
         supported: false,
         configured: false,
         broker_active: false,
+        boot_service_enabled: false,
+        gdm_available: false,
+        lan_listening: false,
+        lan_port: None,
         lan_enabled: false,
         relay_enabled: false,
     }
@@ -473,6 +515,306 @@ fn checked_linux_user_id(name: &str) -> Result<u32, String> {
         .trim()
         .parse::<u32>()
         .map_err(|_| format!("could not determine UID for {name}"))
+}
+
+/// The only privileged entry point used by the Ubuntu setup dialog.  Keeping
+/// all fixed account, file and unit operations in this one process means
+/// PolicyKit asks once, while the desktop app retains the relay credential and
+/// supplies only the public device id over stdin after registration.
+#[cfg(target_os = "linux")]
+pub fn run_console_installer<I>(args: I) -> Result<(), String>
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    let values: Vec<_> = args.into_iter().collect();
+    let mut value = |name: &str| -> Result<String, String> {
+        let index = values
+            .iter()
+            .position(|arg| arg == name)
+            .ok_or_else(|| format!("missing installer argument: {name}"))?;
+        values
+            .get(index + 1)
+            .and_then(|arg| arg.to_str())
+            .map(str::to_string)
+            .ok_or_else(|| format!("invalid installer argument: {name}"))
+    };
+    let owner = value("--owner")?;
+    let device_name = value("--device-name")?;
+    let controller_key = value("--controller-key")?;
+    let source = PathBuf::from(value("--source-exe")?);
+    let relay_url = value("--relay-url")?;
+    let relay_http_url = value("--relay-http-url")?;
+    let appimage = value("--appimage")? == "1";
+    let lan = value("--lan")? == "1";
+    let relay = value("--relay")? == "1";
+    let lan_port = value("--lan-port")?
+        .parse::<u16>()
+        .map_err(|_| "invalid LAN port".to_string())?;
+    if values.len() != 20
+        || !owner
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+        || device_name.trim().is_empty()
+        || device_name.len() > 100
+        || (!lan && !relay)
+        || (lan && lan_port == 0)
+        || (relay && (!relay_url.starts_with("ws://") && !relay_url.starts_with("wss://")))
+        || (relay
+            && (!relay_http_url.starts_with("http://") && !relay_http_url.starts_with("https://")))
+    {
+        return Err("invalid physical-console installer request".to_string());
+    }
+    let controller = base64::engine::general_purpose::STANDARD
+        .decode(controller_key.trim())
+        .map_err(|_| "invalid controller identity".to_string())?;
+    if controller.len() != 32 {
+        return Err("invalid controller identity".to_string());
+    }
+    let root = run_checked_output("/usr/bin/id", &["-u".into()])?;
+    if root.trim() != "0" {
+        return Err("physical-console installer must be authorized by PolicyKit".to_string());
+    }
+    if !source.is_absolute() || !source.is_file() {
+        return Err("installer source executable is unavailable".to_string());
+    }
+    let owner_uid = checked_linux_user_id(&owner)?;
+    let gdm_uid = checked_linux_user_id("gdm")
+        .map_err(|_| "GDM is required for physical-console access".to_string())?;
+
+    if !command_status(
+        "/usr/bin/getent",
+        &["group".into(), "rivetlink-console".into()],
+    )?
+    .success()
+    {
+        run_checked(
+            "/usr/sbin/groupadd",
+            &["--system".into(), "rivetlink-console".into()],
+        )?;
+    }
+    if !command_status("/usr/bin/getent", &["passwd".into(), "rivetlink".into()])?.success() {
+        run_checked(
+            "/usr/sbin/useradd",
+            &[
+                "--system".into(),
+                "--home-dir".into(),
+                "/var/lib/rivetlink".into(),
+                "--create-home".into(),
+                "--shell".into(),
+                "/usr/sbin/nologin".into(),
+                "--gid".into(),
+                "rivetlink-console".into(),
+                "rivetlink".into(),
+            ],
+        )?;
+    }
+    for user in ["gdm", owner.as_str()] {
+        run_checked(
+            "/usr/sbin/usermod",
+            &[
+                "-a".into(),
+                "-G".into(),
+                "rivetlink-console".into(),
+                user.into(),
+            ],
+        )?;
+    }
+    run_checked(
+        "/usr/bin/install",
+        &[
+            "-d".into(),
+            "-o".into(),
+            "rivetlink".into(),
+            "-g".into(),
+            "rivetlink-console".into(),
+            "-m".into(),
+            "0710".into(),
+            "/var/lib/rivetlink".into(),
+            "/var/lib/rivetlink/keys".into(),
+        ],
+    )?;
+    run_checked(
+        "/usr/bin/install",
+        &[
+            "-d".into(),
+            "-o".into(),
+            "root".into(),
+            "-g".into(),
+            "root".into(),
+            "-m".into(),
+            "0755".into(),
+            "/usr/local/lib/rivetlink".into(),
+            "/etc/systemd/user".into(),
+        ],
+    )?;
+    run_checked(
+        "/usr/bin/apt-get",
+        &[
+            "install".into(),
+            "-y".into(),
+            "pipewire".into(),
+            "gstreamer1.0-tools".into(),
+            "gstreamer1.0-pipewire".into(),
+        ],
+    )?;
+    let agent_next = "/usr/local/lib/rivetlink/rivet-agent.next";
+    std::fs::copy(&source, agent_next)
+        .map_err(|error| format!("install RivetLink agent: {error}"))?;
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(agent_next, std::fs::Permissions::from_mode(0o755))
+        .map_err(|error| format!("secure RivetLink agent: {error}"))?;
+    std::fs::rename(agent_next, "/usr/local/lib/rivetlink/rivet-agent")
+        .map_err(|error| format!("activate RivetLink agent: {error}"))?;
+
+    let config_path = PathBuf::from("/var/lib/rivetlink/agent.json");
+    let key_path = PathBuf::from("/var/lib/rivetlink/keys");
+    let mut config = if config_path.is_file() {
+        AgentConfig::load(&config_path).map_err(|error| error.to_string())?
+    } else {
+        AgentConfig {
+            relay_url: relay_url.clone(),
+            relay_http_url: relay_http_url.clone(),
+            device_name: device_name.trim().to_string(),
+            keystore_path: key_path.clone(),
+            device_id: None,
+            heartbeat_secs: 10,
+            reconnect_cap_secs: 60,
+            unattended_console: UnattendedConsoleConfig {
+                enabled: true,
+                allow_trusted_clients: true,
+                ..UnattendedConsoleConfig::default()
+            },
+            console_transports: ConsoleTransportConfig::default(),
+        }
+    };
+    config.device_name = device_name.trim().to_string();
+    config.keystore_path = key_path.clone();
+    config.unattended_console.enabled = true;
+    config.unattended_console.allow_trusted_clients = true;
+    config.console_transports = ConsoleTransportConfig {
+        lan: LanConsoleTransportConfig {
+            enabled: lan,
+            port: lan_port,
+            ..LanConsoleTransportConfig::default()
+        },
+        relay: RelayConsoleTransportConfig { enabled: relay },
+    };
+    if relay {
+        config.relay_url = relay_url;
+        config.relay_http_url = relay_http_url;
+    }
+    config
+        .save(&config_path)
+        .map_err(|error| error.to_string())?;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("create installer runtime: {error}"))?;
+    let store = FileKeyStore::new(key_path.clone()).map_err(|error| error.to_string())?;
+    let signing = runtime
+        .block_on(store.ensure_signing_key())
+        .map_err(|error| error.to_string())?;
+    runtime
+        .block_on(store.ensure_encryption_key())
+        .map_err(|error| error.to_string())?;
+    let public_key = base64::engine::general_purpose::STANDARD.encode(signing.public);
+    let requires_device_id = relay && config.device_id.is_none();
+    println!(
+        "RIVETLINK_CONSOLE_PUBLIC_KEY {public_key} {}",
+        u8::from(requires_device_id)
+    );
+    use std::io::{BufRead, Write};
+    std::io::stdout()
+        .flush()
+        .map_err(|error| format!("flush installer response: {error}"))?;
+    let mut response = String::new();
+    std::io::stdin()
+        .lock()
+        .read_line(&mut response)
+        .map_err(|error| format!("read installer response: {error}"))?;
+    if requires_device_id {
+        let id = response
+            .trim()
+            .strip_prefix("DEVICE_ID ")
+            .ok_or("missing relay device id")?;
+        config.device_id = Some(uuid::Uuid::parse_str(id).map_err(|_| "invalid relay device id")?);
+    } else if response.trim() != "CONTINUE" {
+        return Err("invalid installer continuation".to_string());
+    }
+    config
+        .save(&config_path)
+        .map_err(|error| error.to_string())?;
+    let mut trusted = TrustedClients::load_or_empty(&key_path.join("trusted_clients.json"))
+        .map_err(|error| error.to_string())?;
+    trusted
+        .trust(
+            controller_key.trim(),
+            TrustedEntry {
+                name: "Owner controller".to_string(),
+                can_view: true,
+                can_control: true,
+                can_unattended_console: true,
+            },
+        )
+        .map_err(|error| error.to_string())?;
+    run_checked(
+        "/usr/bin/chown",
+        &[
+            "-R".into(),
+            "rivetlink:rivetlink-console".into(),
+            "/var/lib/rivetlink".into(),
+        ],
+    )?;
+    for file in [
+        "/var/lib/rivetlink/agent.json",
+        "/var/lib/rivetlink/keys/signing.json",
+        "/var/lib/rivetlink/keys/encryption.json",
+        "/var/lib/rivetlink/keys/trusted_clients.json",
+    ] {
+        run_checked("/usr/bin/chmod", &["0600".into(), file.into()])?;
+    }
+    let appimage_extract = appimage
+        .then_some("Environment=APPIMAGE_EXTRACT_AND_RUN=1\n")
+        .unwrap_or("");
+    let broker_unit = format!("[Unit]\nDescription=RivetLink physical HDMI/GDM console broker\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=rivetlink\nGroup=rivetlink-console\nRuntimeDirectory=rivetlink\nRuntimeDirectoryMode=0710\nExecStart=/usr/local/lib/rivetlink/rivet-agent --rivetlink-agent --config /var/lib/rivetlink/agent.json console-broker --socket /run/rivetlink/console.sock --allowed-worker-uid {gdm_uid} --allowed-worker-uid {owner_uid}\nRestart=on-failure\nRestartSec=5\nStartLimitIntervalSec=60\nStartLimitBurst=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/rivetlink /run/rivetlink\nLockPersonality=yes\nRestrictSUIDSGID=yes\n{appimage_extract}Environment=RUST_LOG=info\nEnvironment=RIVETLINK_CONSOLE_LAN={}\nEnvironment=RIVETLINK_CONSOLE_RELAY={}\nEnvironment=RIVETLINK_CONSOLE_LAN_PORT={lan_port}\n\n[Install]\nWantedBy=multi-user.target\n", u8::from(lan), u8::from(relay));
+    let worker_unit = format!("[Unit]\nDescription=RivetLink worker for the active GNOME/GDM console\nAfter=graphical-session.target\nPartOf=graphical-session.target\n\n[Service]\nType=simple\nExecStart=/usr/local/lib/rivetlink/rivet-agent --rivetlink-agent console-worker --socket /run/rivetlink/console.sock\nRestart=on-failure\nRestartSec=3\nNoNewPrivileges=yes\nPrivateTmp=yes\nLockPersonality=yes\nRestrictSUIDSGID=yes\n{appimage_extract}Environment=RUST_LOG=info\n\n[Install]\nWantedBy=graphical-session.target\n");
+    std::fs::write(
+        "/etc/systemd/system/rivetlink-console-broker.service",
+        broker_unit,
+    )
+    .map_err(|error| format!("write broker unit: {error}"))?;
+    std::fs::write(
+        "/etc/systemd/user/rivetlink-console-worker.service",
+        worker_unit,
+    )
+    .map_err(|error| format!("write worker unit: {error}"))?;
+    std::fs::set_permissions(
+        "/etc/systemd/system/rivetlink-console-broker.service",
+        std::fs::Permissions::from_mode(0o644),
+    )
+    .map_err(|error| error.to_string())?;
+    std::fs::set_permissions(
+        "/etc/systemd/user/rivetlink-console-worker.service",
+        std::fs::Permissions::from_mode(0o644),
+    )
+    .map_err(|error| error.to_string())?;
+    run_checked("/usr/bin/systemctl", &["daemon-reload".into()])?;
+    run_checked(
+        "/usr/bin/systemctl",
+        &[
+            "--global".into(),
+            "enable".into(),
+            "rivetlink-console-worker.service".into(),
+        ],
+    )?;
+    run_checked(
+        "/usr/bin/systemctl",
+        &[
+            "enable".into(),
+            "--now".into(),
+            "rivetlink-console-broker.service".into(),
+        ],
+    )
 }
 
 /// Retire only the two unit files written by the former virtual-monitor setup.
@@ -528,6 +870,168 @@ fn retire_legacy_virtual_monitor() -> Result<(), String> {
 /// relay token never crosses the privilege boundary.
 #[tauri::command]
 async fn setup_physical_console(
+    state: State<'_, AppState>,
+    setup: PhysicalConsoleSetup,
+) -> Result<PhysicalConsoleStatus, String> {
+    #[cfg(target_os = "linux")]
+    {
+        if !is_supported_ubuntu() {
+            return Err(
+                "physical-console access requires Ubuntu Desktop 24.04 LTS or newer".to_string(),
+            );
+        }
+        if setup.device_name.trim().is_empty() || setup.device_name.trim().len() > 100 {
+            return Err("enter a device name of at most 100 characters".to_string());
+        }
+        if !setup.enable_lan && !setup.enable_relay {
+            return Err("select Local network, Via relay, or both".to_string());
+        }
+        if setup.enable_lan && setup.lan_port == 0 {
+            return Err("enter a valid LAN port".to_string());
+        }
+        let controller_key = setup.controller_public_key.trim();
+        if base64::engine::general_purpose::STANDARD
+            .decode(controller_key)
+            .is_err()
+        {
+            return Err("enter the controller's valid RivetLink public key".to_string());
+        }
+        let relay = if setup.enable_relay {
+            let settings = state.settings.lock().await;
+            Some(
+                settings
+                    .active_relay()
+                    .cloned()
+                    .ok_or("add and select a relay before enabling relay access")?,
+            )
+        } else {
+            None
+        };
+        if setup.enable_relay
+            && !state
+                .client
+                .lock()
+                .await
+                .as_ref()
+                .is_some_and(RivetClient::is_authenticated)
+        {
+            return Err("sign in to the selected relay before enabling relay access".to_string());
+        }
+        let owner = std::env::var("USER").map_err(|_| "cannot determine the local Ubuntu user")?;
+        let executable = appimage_or_current_exe()?;
+        retire_legacy_virtual_monitor()?;
+        let mut command = tokio::process::Command::new("/usr/bin/pkexec");
+        command
+            .arg(&executable)
+            .arg("--rivetlink-console-install")
+            .args([
+                "--owner",
+                &owner,
+                "--device-name",
+                setup.device_name.trim(),
+                "--controller-key",
+                controller_key,
+            ])
+            .args([
+                "--source-exe",
+                executable
+                    .to_str()
+                    .ok_or("invalid RivetLink executable path")?,
+            ])
+            .args(["--lan", if setup.enable_lan { "1" } else { "0" }])
+            .args(["--relay", if setup.enable_relay { "1" } else { "0" }])
+            .args(["--lan-port", &setup.lan_port.to_string()])
+            .args([
+                "--relay-url",
+                relay.as_ref().map_or("", |value| value.ws_url.as_str()),
+            ])
+            .args([
+                "--relay-http-url",
+                relay.as_ref().map_or("", |value| value.http_url.as_str()),
+            ])
+            .args([
+                "--appimage",
+                if std::env::var_os("APPIMAGE").is_some() {
+                    "1"
+                } else {
+                    "0"
+                },
+            ])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+        let mut child = command
+            .spawn()
+            .map_err(|_| "could not start the authorized Ubuntu installer")?;
+        use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or("installer did not provide status")?;
+        let mut line = String::new();
+        tokio::io::BufReader::new(stdout)
+            .read_line(&mut line)
+            .await
+            .map_err(|_| "could not read installer status")?;
+        let mut fields = line.trim().split_whitespace();
+        if fields.next() != Some("RIVETLINK_CONSOLE_PUBLIC_KEY") {
+            return Err("authorized Ubuntu installer did not initialize the broker".to_string());
+        }
+        let broker_key = fields
+            .next()
+            .ok_or("installer returned no broker identity")?;
+        if base64::engine::general_purpose::STANDARD
+            .decode(broker_key)
+            .map_or(true, |raw| raw.len() != 32)
+        {
+            return Err("installed broker returned an invalid public key".to_string());
+        }
+        let needs_registration = fields.next() == Some("1");
+        if fields.next().is_some() {
+            return Err("installer returned an invalid broker response".to_string());
+        }
+        let response = if needs_registration {
+            let client = state.client.lock().await;
+            let device_id = client
+                .as_ref()
+                .filter(|client| client.is_authenticated())
+                .ok_or("your RivetLink session expired; sign in again and retry setup")?
+                .register_device(broker_key, setup.device_name.trim(), Some("linux"))
+                .await
+                .map_err(|error| error.to_string())?;
+            format!("DEVICE_ID {device_id}\n")
+        } else {
+            "CONTINUE\n".to_string()
+        };
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or("installer cannot receive registration")?;
+        stdin
+            .write_all(response.as_bytes())
+            .await
+            .map_err(|_| "could not complete authorized Ubuntu setup")?;
+        drop(stdin);
+        let status = child
+            .wait()
+            .await
+            .map_err(|_| "could not wait for authorized Ubuntu setup")?;
+        if !status.success() {
+            return Err(
+                "Ubuntu physical-console installation failed; check the system journal".to_string(),
+            );
+        }
+        return Ok(physical_console_status());
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = (state, setup);
+        Err("physical-console access is supported on Ubuntu only".to_string())
+    }
+}
+
+#[allow(dead_code)] // Retained temporarily as a migration reference for existing installs.
+async fn setup_physical_console_legacy(
     state: State<'_, AppState>,
     setup: PhysicalConsoleSetup,
 ) -> Result<PhysicalConsoleStatus, String> {
@@ -859,7 +1363,10 @@ async fn setup_physical_console(
             .then_some("Environment=APPIMAGE_EXTRACT_AND_RUN=1\n")
             .unwrap_or("");
         let broker_unit = format!(
-            "[Unit]\nDescription=RivetLink physical HDMI/GDM console broker\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=rivetlink\nGroup=rivetlink-console\nRuntimeDirectory=rivetlink\nRuntimeDirectoryMode=0710\nExecStart=/usr/local/lib/rivetlink/rivet-agent --rivetlink-agent --config /var/lib/rivetlink/agent.json console-broker --socket /run/rivetlink/console.sock --allowed-worker-uid {gdm_uid} --allowed-worker-uid {owner_uid}\nRestart=on-failure\nRestartSec=5\nStartLimitIntervalSec=60\nStartLimitBurst=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/rivetlink /run/rivetlink\nLockPersonality=yes\nRestrictSUIDSGID=yes\n{appimage_extract}Environment=RUST_LOG=info\n\n[Install]\nWantedBy=multi-user.target\n"
+            "[Unit]\nDescription=RivetLink physical HDMI/GDM console broker\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=rivetlink\nGroup=rivetlink-console\nRuntimeDirectory=rivetlink\nRuntimeDirectoryMode=0710\nExecStart=/usr/local/lib/rivetlink/rivet-agent --rivetlink-agent --config /var/lib/rivetlink/agent.json console-broker --socket /run/rivetlink/console.sock --allowed-worker-uid {gdm_uid} --allowed-worker-uid {owner_uid}\nRestart=on-failure\nRestartSec=5\nStartLimitIntervalSec=60\nStartLimitBurst=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/rivetlink /run/rivetlink\nLockPersonality=yes\nRestrictSUIDSGID=yes\n{appimage_extract}Environment=RUST_LOG=info\nEnvironment=RIVETLINK_CONSOLE_LAN={}\nEnvironment=RIVETLINK_CONSOLE_RELAY={}\nEnvironment=RIVETLINK_CONSOLE_LAN_PORT={}\n\n[Install]\nWantedBy=multi-user.target\n",
+            u8::from(setup.enable_lan),
+            u8::from(setup.enable_relay),
+            setup.lan_port,
         );
         let worker_unit = format!(
             "[Unit]\nDescription=RivetLink worker for the active GNOME/GDM console\nAfter=graphical-session.target\nPartOf=graphical-session.target\n\n[Service]\nType=simple\nExecStart=/usr/local/lib/rivetlink/rivet-agent --rivetlink-agent console-worker --socket /run/rivetlink/console.sock\nRestart=on-failure\nRestartSec=3\nNoNewPrivileges=yes\nPrivateTmp=yes\nLockPersonality=yes\nRestrictSUIDSGID=yes\n{appimage_extract}Environment=RUST_LOG=info\n\n[Install]\nWantedBy=graphical-session.target\n"

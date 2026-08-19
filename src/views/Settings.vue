@@ -95,6 +95,34 @@
 						<p class="text-body-2 mb-3">
 							{{ physicalConsole.configured ? t("physicalConsole.configuredHint") : t("physicalConsole.intro") }}
 						</p>
+						<VList v-if="physicalConsole.configured" density="compact" class="bg-transparent mb-2">
+							<VListItem :title="t('physicalConsole.bootService')">
+								<template #append>
+									<VChip size="x-small" :color="physicalConsole.bootServiceEnabled ? 'success' : 'warning'">
+										{{ physicalConsole.bootServiceEnabled ? t('physicalConsole.active') : t('physicalConsole.inactive') }}
+									</VChip>
+								</template>
+							</VListItem>
+							<VListItem :title="t('physicalConsole.gdm')">
+								<template #append>
+									<VChip size="x-small" :color="physicalConsole.gdmAvailable ? 'success' : 'warning'">
+										{{ physicalConsole.gdmAvailable ? t('physicalConsole.available') : t('physicalConsole.unavailable') }}
+									</VChip>
+								</template>
+							</VListItem>
+							<VListItem v-if="physicalConsole.lanEnabled" :title="t('physicalConsole.localNetwork')">
+								<template #append>
+									<VChip size="x-small" :color="physicalConsole.lanListening ? 'success' : 'warning'">
+										{{ physicalConsole.lanListening ? t('physicalConsole.listening', { port: physicalConsole.lanPort || '—' }) : t('physicalConsole.notListening') }}
+									</VChip>
+								</template>
+							</VListItem>
+							<VListItem v-if="physicalConsole.relayEnabled" :title="t('physicalConsole.relay')">
+								<template #append>
+									<VChip size="x-small" color="primary">{{ t('physicalConsole.configured') }}</VChip>
+								</template>
+							</VListItem>
+						</VList>
 						<VBtn
 							v-if="!physicalConsole.configured"
 							color="primary"
@@ -300,6 +328,10 @@
 		supported: false,
 		configured: false,
 		brokerActive: false,
+		bootServiceEnabled: false,
+		gdmAvailable: false,
+		lanListening: false,
+		lanPort: null as number | null,
 		lanEnabled: false,
 		relayEnabled: false,
 	});

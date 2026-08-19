@@ -31,6 +31,25 @@ fn main() {
         std::process::exit(exit_code);
     }
 
+    // A single, intentionally narrow PolicyKit entry point for physical-console
+    // installation. It accepts only validated setup fields, never opens a
+    // webview or shell, and waits only for the public relay device id.
+    #[cfg(target_os = "linux")]
+    if matches!(
+        std::env::args_os().nth(1).as_deref(),
+        Some(arg) if arg == std::ffi::OsStr::new("--rivetlink-console-install")
+    ) {
+        let exit_code = match rivetlink_app_lib::run_console_installer(std::env::args_os().skip(2))
+        {
+            Ok(()) => 0,
+            Err(error) => {
+                eprintln!("RivetLink console installer failed: {error}");
+                1
+            }
+        };
+        std::process::exit(exit_code);
+    }
+
     // Disable WebKitGTK's DMABUF renderer — a common cause of a blank/white
     // window on Linux with little downside. Must be set before the webview
     // starts.
