@@ -517,6 +517,84 @@ fn checked_linux_user_id(name: &str) -> Result<u32, String> {
         .map_err(|_| format!("could not determine UID for {name}"))
 }
 
+/// Install the agent runtime used by systemd.  AppImages must not be executed
+/// with `APPIMAGE_EXTRACT_AND_RUN` by two different service users: AppImage
+/// uses a shared, deterministic extraction directory under `/tmp`, so the GDM
+/// worker can otherwise inherit an extraction owned by the broker user and
+/// fail before it can attach to the console.  Extract once as root into a
+/// root-owned, world-readable application directory instead.
+#[cfg(target_os = "linux")]
+fn install_console_agent_runtime(
+    source: &std::path::Path,
+    appimage: bool,
+) -> Result<String, String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    if !appimage {
+        let agent_next = "/usr/local/lib/rivetlink/rivet-agent.next";
+        std::fs::copy(source, agent_next)
+            .map_err(|error| format!("install RivetLink agent: {error}"))?;
+        std::fs::set_permissions(agent_next, std::fs::Permissions::from_mode(0o755))
+            .map_err(|error| format!("secure RivetLink agent: {error}"))?;
+        std::fs::rename(agent_next, "/usr/local/lib/rivetlink/rivet-agent")
+            .map_err(|error| format!("activate RivetLink agent: {error}"))?;
+        return Ok("/usr/local/lib/rivetlink/rivet-agent".to_string());
+    }
+
+    let staging = std::path::Path::new("/usr/local/lib/rivetlink/appimage.next");
+    let appdir = std::path::Path::new("/usr/local/lib/rivetlink/appimage");
+    if staging.exists() {
+        std::fs::remove_dir_all(staging)
+            .map_err(|error| format!("remove stale AppImage staging directory: {error}"))?;
+    }
+    std::fs::create_dir(staging)
+        .map_err(|error| format!("create AppImage staging directory: {error}"))?;
+    let status = std::process::Command::new(source)
+        .arg("--appimage-extract")
+        .current_dir(staging)
+        .stdin(std::process::Stdio::null())
+        .status()
+        .map_err(|error| format!("extract RivetLink AppImage: {error}"))?;
+    if !status.success() {
+        return Err("extract RivetLink AppImage failed".to_string());
+    }
+    let extracted = staging.join("squashfs-root");
+    let app_run = extracted.join("AppRun");
+    if !app_run.is_file() {
+        return Err("extracted RivetLink AppImage is missing AppRun".to_string());
+    }
+    if appdir.exists() {
+        std::fs::remove_dir_all(appdir)
+            .map_err(|error| format!("replace previous AppImage runtime: {error}"))?;
+    }
+    std::fs::rename(&extracted, appdir)
+        .map_err(|error| format!("activate extracted RivetLink runtime: {error}"))?;
+    std::fs::remove_dir(staging)
+        .map_err(|error| format!("clean AppImage staging directory: {error}"))?;
+    run_checked(
+        "/usr/bin/chown",
+        &[
+            "-R".into(),
+            "root:root".into(),
+            "/usr/local/lib/rivetlink/appimage".into(),
+        ],
+    )?;
+    run_checked(
+        "/usr/bin/chmod",
+        &[
+            "-R".into(),
+            "go-w".into(),
+            "/usr/local/lib/rivetlink/appimage".into(),
+        ],
+    )?;
+    std::fs::set_permissions(
+        "/usr/local/lib/rivetlink/appimage/AppRun",
+        std::fs::Permissions::from_mode(0o755),
+    )
+    .map_err(|error| format!("secure extracted RivetLink launcher: {error}"))?;
+    Ok("/usr/local/lib/rivetlink/appimage/AppRun".to_string())
+}
+
 /// The only privileged entry point used by the Ubuntu setup dialog.  Keeping
 /// all fixed account, file and unit operations in this one process means
 /// PolicyKit asks once, while the desktop app retains the relay credential and
@@ -657,14 +735,8 @@ where
             "gstreamer1.0-pipewire".into(),
         ],
     )?;
-    let agent_next = "/usr/local/lib/rivetlink/rivet-agent.next";
-    std::fs::copy(&source, agent_next)
-        .map_err(|error| format!("install RivetLink agent: {error}"))?;
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(agent_next, std::fs::Permissions::from_mode(0o755))
-        .map_err(|error| format!("secure RivetLink agent: {error}"))?;
-    std::fs::rename(agent_next, "/usr/local/lib/rivetlink/rivet-agent")
-        .map_err(|error| format!("activate RivetLink agent: {error}"))?;
+    let agent_executable = install_console_agent_runtime(&source, appimage)?;
 
     let config_path = PathBuf::from("/var/lib/rivetlink/agent.json");
     let key_path = PathBuf::from("/var/lib/rivetlink/keys");
@@ -773,11 +845,8 @@ where
     ] {
         run_checked("/usr/bin/chmod", &["0600".into(), file.into()])?;
     }
-    let appimage_extract = appimage
-        .then_some("Environment=APPIMAGE_EXTRACT_AND_RUN=1\n")
-        .unwrap_or("");
-    let broker_unit = format!("[Unit]\nDescription=RivetLink physical HDMI/GDM console broker\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=rivetlink\nGroup=rivetlink-console\nRuntimeDirectory=rivetlink\nRuntimeDirectoryMode=0710\nExecStart=/usr/local/lib/rivetlink/rivet-agent --rivetlink-agent --config /var/lib/rivetlink/agent.json console-broker --socket /run/rivetlink/console.sock --allowed-worker-uid {gdm_uid} --allowed-worker-uid {owner_uid}\nRestart=on-failure\nRestartSec=5\nStartLimitIntervalSec=60\nStartLimitBurst=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/rivetlink /run/rivetlink\nLockPersonality=yes\nRestrictSUIDSGID=yes\n{appimage_extract}Environment=RUST_LOG=info\nEnvironment=RIVETLINK_CONSOLE_LAN={}\nEnvironment=RIVETLINK_CONSOLE_RELAY={}\nEnvironment=RIVETLINK_CONSOLE_LAN_PORT={lan_port}\n\n[Install]\nWantedBy=multi-user.target\n", u8::from(lan), u8::from(relay));
-    let worker_unit = format!("[Unit]\nDescription=RivetLink worker for the active GNOME/GDM console\nAfter=graphical-session.target\nPartOf=graphical-session.target\n\n[Service]\nType=simple\nExecStart=/usr/local/lib/rivetlink/rivet-agent --rivetlink-agent console-worker --socket /run/rivetlink/console.sock\nRestart=on-failure\nRestartSec=3\nNoNewPrivileges=yes\nPrivateTmp=yes\nLockPersonality=yes\nRestrictSUIDSGID=yes\n{appimage_extract}Environment=RUST_LOG=info\n\n[Install]\nWantedBy=graphical-session.target\n");
+    let broker_unit = format!("[Unit]\nDescription=RivetLink physical HDMI/GDM console broker\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=rivetlink\nGroup=rivetlink-console\nRuntimeDirectory=rivetlink\nRuntimeDirectoryMode=0710\nExecStart={agent_executable} --rivetlink-agent --config /var/lib/rivetlink/agent.json console-broker --socket /run/rivetlink/console.sock --allowed-worker-uid {gdm_uid} --allowed-worker-uid {owner_uid}\nRestart=on-failure\nRestartSec=5\nStartLimitIntervalSec=60\nStartLimitBurst=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/rivetlink /run/rivetlink\nLockPersonality=yes\nRestrictSUIDSGID=yes\nEnvironment=RUST_LOG=info\nEnvironment=RIVETLINK_CONSOLE_LAN={}\nEnvironment=RIVETLINK_CONSOLE_RELAY={}\nEnvironment=RIVETLINK_CONSOLE_LAN_PORT={lan_port}\n\n[Install]\nWantedBy=multi-user.target\n", u8::from(lan), u8::from(relay));
+    let worker_unit = format!("[Unit]\nDescription=RivetLink worker for the active GNOME/GDM console\nAfter=graphical-session.target\nPartOf=graphical-session.target\n\n[Service]\nType=simple\nExecStart={agent_executable} --rivetlink-agent console-worker --socket /run/rivetlink/console.sock\nRestart=on-failure\nRestartSec=3\nNoNewPrivileges=yes\nPrivateTmp=yes\nLockPersonality=yes\nRestrictSUIDSGID=yes\nEnvironment=RUST_LOG=info\n\n[Install]\nWantedBy=graphical-session.target\n");
     std::fs::write(
         "/etc/systemd/system/rivetlink-console-broker.service",
         broker_unit,
@@ -889,6 +958,11 @@ async fn setup_physical_console(
         if setup.enable_lan && setup.lan_port == 0 {
             return Err("enter a valid LAN port".to_string());
         }
+        // The ordinary in-session host uses the same fixed LAN port as the
+        // boot-time physical-console broker. Stop it before installing or
+        // restarting the broker so the system service becomes the sole
+        // advertiser/listener for this device identity.
+        stop_host_inner(&state);
         let controller_key = setup.controller_public_key.trim();
         if base64::engine::general_purpose::STANDARD
             .decode(controller_key)
@@ -2875,6 +2949,16 @@ async fn start_host(_app: tauri::AppHandle, _state: State<'_, AppState>) -> Resu
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[tauri::command]
 async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    #[cfg(target_os = "linux")]
+    {
+        let console = physical_console_status();
+        if console.broker_active && console.lan_enabled {
+            return Err(
+                "Ubuntu Physical Console already owns the RivetLink LAN port; use that service for this computer"
+                    .to_string(),
+            );
+        }
+    }
     // A 6-digit PIN. SPAKE2 makes a wrong PIN fail the handshake, and resists
     // offline guessing, so 6 digits is enough for a short-lived LAN session.
     let pin = format!(
