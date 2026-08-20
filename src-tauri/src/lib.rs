@@ -828,6 +828,7 @@ where
             "install".into(),
             "-y".into(),
             "pipewire".into(),
+            "acl".into(),
             "gstreamer1.0-tools".into(),
             "gstreamer1.0-pipewire".into(),
         ],
