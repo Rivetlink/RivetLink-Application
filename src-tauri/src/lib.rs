@@ -437,7 +437,10 @@ fn physical_console_status() -> PhysicalConsoleStatus {
     // The secret config is deliberately unreadable by the desktop user. A
     // valid installed unit plus its enabled/active state is the public,
     // non-sensitive configuration signal instead.
-    let configured = unit_installed && (broker_active || boot_service_enabled);
+    // Keep an intentionally disabled installation visible so the owner can
+    // re-enable or update it from the app instead of being prompted to create
+    // a second console identity.
+    let configured = unit_installed;
     let gdm_available = ["gdm.service", "gdm3.service"].iter().any(|unit| {
         std::process::Command::new("/usr/bin/systemctl")
             .args(["is-active", "--quiet", unit])
@@ -598,6 +601,66 @@ fn install_console_agent_runtime(
     Ok("/usr/local/lib/rivetlink/appimage/AppRun".to_string())
 }
 
+/// Fixed, non-shell service controls for an already installed console.  This
+/// deliberately has no file, command or unit-name parameters: PolicyKit can
+/// only start/stop RivetLink's two known units.
+#[cfg(target_os = "linux")]
+pub fn run_console_service_action<I>(args: I) -> Result<(), String>
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    let values: Vec<_> = args.into_iter().collect();
+    if values.len() != 2 || values.first().and_then(|arg| arg.to_str()) != Some("--action") {
+        return Err("invalid physical-console service request".to_string());
+    }
+    let action = values[1]
+        .to_str()
+        .ok_or("invalid physical-console service action")?;
+    let root = run_checked_output("/usr/bin/id", &["-u".into()])?;
+    if root.trim() != "0" {
+        return Err("physical-console service action must be authorized by PolicyKit".to_string());
+    }
+    match action {
+        "enable" => {
+            run_checked(
+                "/usr/bin/systemctl",
+                &[
+                    "--global".into(),
+                    "enable".into(),
+                    "rivetlink-console-worker.service".into(),
+                ],
+            )?;
+            run_checked(
+                "/usr/bin/systemctl",
+                &[
+                    "enable".into(),
+                    "--now".into(),
+                    "rivetlink-console-broker.service".into(),
+                ],
+            )
+        }
+        "disable" => {
+            run_checked(
+                "/usr/bin/systemctl",
+                &[
+                    "disable".into(),
+                    "--now".into(),
+                    "rivetlink-console-broker.service".into(),
+                ],
+            )?;
+            run_checked(
+                "/usr/bin/systemctl",
+                &[
+                    "--global".into(),
+                    "disable".into(),
+                    "rivetlink-console-worker.service".into(),
+                ],
+            )
+        }
+        _ => Err("invalid physical-console service action".to_string()),
+    }
+}
+
 /// The only privileged entry point used by the Ubuntu setup dialog.  Keeping
 /// all fixed account, file and unit operations in this one process means
 /// PolicyKit asks once, while the desktop app retains the relay credential and
@@ -738,6 +801,13 @@ where
             "gstreamer1.0-pipewire".into(),
         ],
     )?;
+    // A reconfiguration is an upgrade operation. Stop the old system broker
+    // before replacing its AppImage runtime; the freshly written unit is
+    // enabled and started below after `daemon-reload`.
+    let _ = run_checked(
+        "/usr/bin/systemctl",
+        &["stop".into(), "rivetlink-console-broker.service".into()],
+    );
     use std::os::unix::fs::PermissionsExt;
     let agent_executable = install_console_agent_runtime(&source, appimage)?;
 
@@ -1103,6 +1173,41 @@ async fn setup_physical_console(
     #[cfg(not(target_os = "linux"))]
     {
         let _ = (state, setup);
+        Err("physical-console access is supported on Ubuntu only".to_string())
+    }
+}
+
+/// Start or stop only the previously installed physical-console units. The
+/// privileged helper accepts a fixed enum, not a unit name or command.
+#[tauri::command]
+async fn physical_console_service_action(action: String) -> Result<PhysicalConsoleStatus, String> {
+    #[cfg(target_os = "linux")]
+    {
+        if !matches!(action.as_str(), "enable" | "disable") {
+            return Err("invalid physical-console service action".to_string());
+        }
+        let executable = appimage_or_current_exe()?;
+        let status = tokio::process::Command::new("/usr/bin/pkexec")
+            .arg(executable)
+            .arg("--rivetlink-console-service")
+            .args(["--action", action.as_str()])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .map_err(|_| "could not start the authorized Ubuntu service action".to_string())?;
+        if !status.success() {
+            return Err(
+                "Ubuntu physical-console service action failed; check the system journal"
+                    .to_string(),
+            );
+        }
+        return Ok(physical_console_status());
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = action;
         Err("physical-console access is supported on Ubuntu only".to_string())
     }
 }
@@ -3880,6 +3985,7 @@ pub fn run() {
             is_appimage,
             physical_console_status,
             setup_physical_console,
+            physical_console_service_action,
             toggle_devtools,
             add_relay,
             remove_relay,

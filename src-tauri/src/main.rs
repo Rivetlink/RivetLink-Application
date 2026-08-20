@@ -39,6 +39,22 @@ fn main() {
         std::process::exit(exit_code);
     }
 
+    #[cfg(target_os = "linux")]
+    if matches!(
+        std::env::args_os().nth(1).as_deref(),
+        Some(arg) if arg == std::ffi::OsStr::new("--rivetlink-console-service")
+    ) {
+        let exit_code =
+            match rivetlink_app_lib::run_console_service_action(std::env::args_os().skip(2)) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("RivetLink console service action failed: {error}");
+                    1
+                }
+            };
+        std::process::exit(exit_code);
+    }
+
     // A single, intentionally narrow PolicyKit entry point for physical-console
     // installation. It accepts only validated setup fields, never opens a
     // webview or shell, and waits only for the public relay device id.

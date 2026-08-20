@@ -119,7 +119,9 @@
 							</VListItem>
 							<VListItem v-if="physicalConsole.relayEnabled" :title="t('physicalConsole.relay')">
 								<template #append>
-									<VChip size="x-small" color="primary">{{ t('physicalConsole.configured') }}</VChip>
+									<VChip size="x-small" color="primary">
+										{{ t('physicalConsole.configured') }}
+									</VChip>
 								</template>
 							</VListItem>
 						</VList>
@@ -131,14 +133,52 @@
 						>
 							{{ t("physicalConsole.setup") }}
 						</VBtn>
-						<VBtn
-							v-else
-							variant="text"
-							prepend-icon="mdi-refresh"
-							@click="refreshPhysicalConsoleStatus"
+						<template v-else>
+							<VBtn
+								color="primary"
+								variant="text"
+								prepend-icon="mdi-update"
+								:disabled="physicalConsoleBusy"
+								@click="physicalConsoleDialog = true"
+							>
+								{{ t("physicalConsole.update") }}
+							</VBtn>
+							<VBtn
+								v-if="physicalConsole.bootServiceEnabled"
+								color="error"
+								variant="text"
+								prepend-icon="mdi-stop-circle-outline"
+								:loading="physicalConsoleBusy"
+								@click="setPhysicalConsoleService('disable')"
+							>
+								{{ t("physicalConsole.disable") }}
+							</VBtn>
+							<VBtn
+								v-else
+								color="success"
+								variant="text"
+								prepend-icon="mdi-play-circle-outline"
+								:loading="physicalConsoleBusy"
+								@click="setPhysicalConsoleService('enable')"
+							>
+								{{ t("physicalConsole.enable") }}
+							</VBtn>
+							<VBtn
+								variant="text"
+								prepend-icon="mdi-refresh"
+								@click="refreshPhysicalConsoleStatus"
+							>
+								{{ t("physicalConsole.refresh") }}
+							</VBtn>
+						</template>
+						<VAlert
+							v-if="physicalConsoleServiceError"
+							type="error"
+							variant="tonal"
+							class="mt-3"
 						>
-							{{ t("physicalConsole.refresh") }}
-						</VBtn>
+							{{ physicalConsoleServiceError }}
+						</VAlert>
 					</VCardText>
 				</VCard>
 			</VWindowItem>
@@ -320,6 +360,7 @@
 	const physicalConsoleDialog = ref(false);
 	const physicalConsoleBusy = ref(false);
 	const physicalConsoleError = ref("");
+	const physicalConsoleServiceError = ref("");
 	const physicalConsoleName = ref("");
 	const physicalConsoleControllerKey = ref("");
 	const physicalConsoleLan = ref(true);
@@ -364,6 +405,18 @@
 			closePhysicalConsoleDialog();
 		} catch (error) {
 			physicalConsoleError.value = String(error);
+		} finally {
+			physicalConsoleBusy.value = false;
+		}
+	}
+
+	async function setPhysicalConsoleService(action: "enable" | "disable") {
+		physicalConsoleBusy.value = true;
+		physicalConsoleServiceError.value = "";
+		try {
+			physicalConsole.value = await invoke<typeof physicalConsole.value>("physical_console_service_action", { action });
+		} catch (error) {
+			physicalConsoleServiceError.value = String(error);
 		} finally {
 			physicalConsoleBusy.value = false;
 		}
