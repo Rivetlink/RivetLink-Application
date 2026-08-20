@@ -1010,16 +1010,21 @@ fn retire_legacy_virtual_monitor() -> Result<(), String> {
     }
     // Best effort: an offline/failed old user manager must not prevent the
     // secure physical-console path from being installed.
-    let _ = run_checked(
-        "/usr/bin/systemctl",
-        &[
-            "--user".into(),
-            "disable".into(),
-            "--now".into(),
-            names[0].into(),
-            names[1].into(),
-        ],
-    );
+    // Handle each unit independently.  On an older, partially migrated
+    // installation only one of them may exist; including a missing unit in a
+    // combined `systemctl disable --now` invocation must not keep the other
+    // listener alive on the broker's LAN port.
+    for name in names {
+        let _ = run_checked(
+            "/usr/bin/systemctl",
+            &[
+                "--user".into(),
+                "disable".into(),
+                "--now".into(),
+                name.into(),
+            ],
+        );
+    }
     for name in names {
         let unit = units.join(name);
         match std::fs::symlink_metadata(&unit) {
@@ -1220,11 +1225,24 @@ async fn setup_physical_console(
 /// Start or stop only the previously installed physical-console units. The
 /// privileged helper accepts a fixed enum, not a unit name or command.
 #[tauri::command]
-async fn physical_console_service_action(action: String) -> Result<PhysicalConsoleStatus, String> {
+async fn physical_console_service_action(
+    state: State<'_, AppState>,
+    action: String,
+) -> Result<PhysicalConsoleStatus, String> {
     #[cfg(target_os = "linux")]
     {
         if !matches!(action.as_str(), "enable" | "disable") {
             return Err("invalid physical-console service action".to_string());
+        }
+        if action == "enable" {
+            // The normal in-session LAN host and the retired virtual-monitor
+            // host used the same fixed TCP port as the boot-time broker.  An
+            // enable action can happen long after initial installation, so do
+            // the same migration/ownership hand-off as setup before asking
+            // systemd to start the broker.  Otherwise a stale user service
+            // leaves the broker in an endless AddressInUse retry loop.
+            stop_host_inner(&state);
+            retire_legacy_virtual_monitor()?;
         }
         let executable = appimage_or_current_exe()?;
         let status = tokio::process::Command::new("/usr/bin/pkexec")
@@ -1247,7 +1265,7 @@ async fn physical_console_service_action(action: String) -> Result<PhysicalConso
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = action;
+        let _ = (state, action);
         Err("physical-console access is supported on Ubuntu only".to_string())
     }
 }
