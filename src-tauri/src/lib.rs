@@ -560,8 +560,9 @@ fn install_console_agent_runtime(
     }
     let extracted = staging.join("squashfs-root");
     let app_run = extracted.join("AppRun");
-    if !app_run.is_file() {
-        return Err("extracted RivetLink AppImage is missing AppRun".to_string());
+    let app_run_wrapped = extracted.join("AppRun.wrapped");
+    if !app_run.is_file() || !app_run_wrapped.is_file() {
+        return Err("extracted RivetLink AppImage is missing its launcher".to_string());
     }
     if appdir.exists() {
         std::fs::remove_dir_all(appdir)
@@ -587,11 +588,13 @@ fn install_console_agent_runtime(
             "/usr/local/lib/rivetlink/appimage".into(),
         ],
     )?;
-    std::fs::set_permissions(
+    for launcher in [
         "/usr/local/lib/rivetlink/appimage/AppRun",
-        std::fs::Permissions::from_mode(0o755),
-    )
-    .map_err(|error| format!("secure extracted RivetLink launcher: {error}"))?;
+        "/usr/local/lib/rivetlink/appimage/AppRun.wrapped",
+    ] {
+        std::fs::set_permissions(launcher, std::fs::Permissions::from_mode(0o755))
+            .map_err(|error| format!("secure extracted RivetLink launcher: {error}"))?;
+    }
     Ok("/usr/local/lib/rivetlink/appimage/AppRun".to_string())
 }
 
