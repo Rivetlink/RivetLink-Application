@@ -2504,11 +2504,199 @@ async fn discover_lan(state: State<'_, AppState>) -> Result<Vec<rivetlink_sdk::L
         (Some(pk), Some(own)) => pk != own,
         _ => true,
     });
+    #[cfg(target_os = "macos")]
+    if found.is_empty() {
+        // macOS's system Bonjour browser can see services in circumstances
+        // where a sandboxed/raw-UDP mDNS socket receives no resolution events.
+        // This fixed-command fallback only supplies discovery metadata; the
+        // subsequent direct connection still pins the advertised host key and
+        // completes RivetLink's signed encrypted handshake.
+        found = macos_bonjour_discover().await;
+        found.retain(|d| match (&d.public_key, &own_key) {
+            (Some(pk), Some(own)) => pk != own,
+            _ => true,
+        });
+    }
     for d in &found {
         tracing::info!(name = %d.name, address = %d.address, port = d.port, "discover_lan: host");
     }
     tracing::info!(count = found.len(), "discover_lan: done");
     Ok(found)
+}
+
+/// macOS fallback for Bonjour discovery.  `dns-sd` is Apple's system Bonjour
+/// client, not a shell script or network helper we ship.  We invoke it with
+/// fixed arguments, collect its short-lived output, and resolve only the
+/// instances it reports.  Discovery data is untrusted by design and is still
+/// authenticated cryptographically when a connection is opened.
+#[cfg(target_os = "macos")]
+async fn macos_bonjour_discover() -> Vec<rivetlink_sdk::LanDevice> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    let mut child = match macos_bonjour_command(&["-B", "_rivetlink._tcp", "local."]).spawn() {
+        Ok(child) => child,
+        Err(error) => {
+            tracing::debug!(%error, "macOS Bonjour fallback could not start");
+            return Vec::new();
+        }
+    };
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.start_kill();
+        let _ = child.wait().await;
+        return Vec::new();
+    };
+
+    let mut instances = std::collections::BTreeSet::new();
+    let mut lines = BufReader::new(stdout).lines();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(1500);
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(remaining, lines.next_line()).await {
+            Ok(Ok(Some(line))) => {
+                if let Some(instance) = bonjour_browse_instance(&line) {
+                    instances.insert(instance.to_string());
+                }
+            }
+            Ok(Ok(None)) | Ok(Err(_)) | Err(_) => break,
+        }
+    }
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+
+    let mut devices = Vec::new();
+    for instance in instances {
+        if let Some(device) = macos_bonjour_resolve(&instance).await {
+            devices.push(device);
+        }
+    }
+    tracing::info!(hosts = devices.len(), "macOS Bonjour fallback: done");
+    devices
+}
+
+#[cfg(target_os = "macos")]
+async fn macos_bonjour_resolve(instance: &str) -> Option<rivetlink_sdk::LanDevice> {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    let mut child = macos_bonjour_command(&["-L", instance, "_rivetlink._tcp", "local."])
+        .spawn()
+        .ok()?;
+    let stdout = child.stdout.take()?;
+    let mut lines = BufReader::new(stdout).lines();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(1500);
+    let mut endpoint = None;
+    let mut public_key = None;
+    let mut protocol_version = None;
+    let mut physical_console = false;
+
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            break;
+        }
+        match tokio::time::timeout(remaining, lines.next_line()).await {
+            Ok(Ok(Some(line))) => {
+                endpoint = endpoint.or_else(|| bonjour_endpoint(&line));
+                public_key =
+                    public_key.or_else(|| bonjour_txt_value(&line, "pk").map(str::to_string));
+                protocol_version = protocol_version.or_else(|| {
+                    bonjour_txt_value(&line, "v").and_then(|value| value.parse::<u16>().ok())
+                });
+                physical_console |= bonjour_txt_value(&line, "mode") == Some("physical-console");
+            }
+            Ok(Ok(None)) | Ok(Err(_)) | Err(_) => break,
+        }
+    }
+    let _ = child.start_kill();
+    let _ = child.wait().await;
+
+    let (hostname, port) = endpoint?;
+    let addresses = tokio::net::lookup_host((hostname.trim_end_matches('.'), port))
+        .await
+        .ok()?
+        .collect::<Vec<_>>();
+    let address = addresses
+        .iter()
+        .copied()
+        .find(|address| address.is_ipv4())
+        .or_else(|| addresses.first().copied())?;
+    Some(rivetlink_sdk::LanDevice {
+        name: instance.to_string(),
+        address: address.ip().to_string(),
+        port,
+        public_key,
+        protocol_version,
+        physical_console,
+    })
+}
+
+#[cfg(target_os = "macos")]
+fn macos_bonjour_command(args: &[&str]) -> tokio::process::Command {
+    // `dns-sd` line-buffers when connected to an interactive terminal but may
+    // fully buffer stdout when the app captures a pipe.  `script` is macOS's
+    // built-in pseudo-terminal wrapper, so it gives the fixed Bonjour command
+    // a TTY without involving a shell or interpolation.
+    let mut command = tokio::process::Command::new("/usr/bin/script");
+    command
+        .args(["-q", "/dev/null", "/usr/bin/dns-sd"])
+        .args(args)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .stdout(std::process::Stdio::piped());
+    command
+}
+
+/// Extract the instance name from a fixed-format `dns-sd -B` add event.
+fn bonjour_browse_instance(line: &str) -> Option<&str> {
+    line.split_once("_rivetlink._tcp.")
+        .map(|(_, rest)| rest.trim())
+        .filter(|instance| !instance.is_empty())
+}
+
+/// Extract `hostname:port` from a `dns-sd -L` resolution event.
+fn bonjour_endpoint(line: &str) -> Option<(String, u16)> {
+    let endpoint = line
+        .split_once(" can be reached at ")?
+        .1
+        .split_whitespace()
+        .next()?;
+    let (hostname, port) = endpoint.rsplit_once(':')?;
+    Some((hostname.to_string(), port.parse().ok()?))
+}
+
+/// Read a TXT value from the `dns-sd -L` line.  We only consume the compact
+/// `pk`, `v`, and `mode` properties; a friendly name may contain spaces.
+fn bonjour_txt_value<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    line.split_whitespace()
+        .find_map(|value| value.strip_prefix(&format!("{key}=")))
+}
+
+#[cfg(test)]
+mod bonjour_tests {
+    use super::{bonjour_browse_instance, bonjour_endpoint, bonjour_txt_value};
+
+    #[test]
+    fn parses_macos_bonjour_browse_and_resolution_output() {
+        let browse = "21:44:05.672  Add 2 14 local. _rivetlink._tcp. Gus - Jarvis Home";
+        assert_eq!(bonjour_browse_instance(browse), Some("Gus - Jarvis Home"));
+
+        let resolved = "Gus\\032-\\032Jarvis\\032Home._rivetlink._tcp.local. can be reached at gus---jarvis-home.local.:47823 (interface 14) name=Gus\\ -\\ Jarvis\\ Home pk=Joy4KxOcmVx+TI1wNq25ahiSQu5v9s9S1JpOMjdJMzQ= v=4 mode=physical-console";
+        assert_eq!(
+            bonjour_endpoint(resolved),
+            Some(("gus---jarvis-home.local.".to_string(), 47823))
+        );
+        assert_eq!(
+            bonjour_txt_value(resolved, "pk"),
+            Some("Joy4KxOcmVx+TI1wNq25ahiSQu5v9s9S1JpOMjdJMzQ=")
+        );
+        assert_eq!(bonjour_txt_value(resolved, "v"), Some("4"));
+        assert_eq!(
+            bonjour_txt_value(resolved, "mode"),
+            Some("physical-console")
+        );
+    }
 }
 
 /// Remember a discovered LAN host so it shows up without re-scanning.
