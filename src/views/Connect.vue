@@ -497,15 +497,18 @@
 	// Per-saved-device reachability (id -> online), refreshed on a timer.
 	const online = ref<Record<string, boolean>>({});
 
-	// Hosts found by a scan that aren't already remembered. Match on identity
-	// key first (the same machine can resolve on a different address between
-	// scans — e.g. IPv4 one time, a routable IPv6 the next — and must not show
-	// twice), then fall back to address:port for hosts that advertise no key.
+	// Hosts found by a scan that aren't already remembered. A host identity is
+	// authoritative: the same IP:port may legitimately move from the ordinary
+	// user-session host to the boot-time physical-console broker, whose key is
+	// intentionally different. Do not hide that key transition behind a stale
+	// saved entry — show it so the owner can explicitly replace the old entry.
+	// Only keyless legacy advertisements fall back to address:port deduping.
 	const lanUnsaved = computed(() =>
 		lanFound.value.filter(
 			(f) => !store.settings.lan_devices.some(
-				(s) => (f.public_key && s.public_key && s.public_key === f.public_key)
-					|| (s.address === f.address && s.port === f.port),
+				(s) => (f.public_key && s.public_key)
+					? s.public_key === f.public_key
+					: s.address === f.address && s.port === f.port,
 			),
 		),
 	);
