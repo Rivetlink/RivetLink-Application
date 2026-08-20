@@ -462,7 +462,10 @@
 			// Autostart unsupported on this platform — leave the toggle off.
 		}
 		physicalConsoleName.value = store.settings.device_name || "RivetLink Home Node";
-		physicalConsoleControllerKey.value = store.publicKey;
+		// This dialog runs on the Ubuntu host. Its own key must never be used
+		// as the remote controller key: doing so would leave the actual laptop
+		// untrusted and make the console handshake fail after setup.
+		physicalConsoleControllerKey.value = "";
 		await refreshPhysicalConsoleStatus();
 	});
 

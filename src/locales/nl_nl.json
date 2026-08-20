@@ -216,14 +216,14 @@
         "needsAttention": "aandacht nodig",
         "dialogTitle": "Ubuntu fysieke console instellen",
         "warning": "Dit installeert een beperkte niet-root systeemservice en een sessiewerker voor GDM/GNOME. Een HDMI-dummy moet aangesloten blijven. Ubuntu vraagt eenmalig om je systeemwachtwoord.",
-        "scope": "De huidige RivetLink-client wordt expliciet vertrouwd voor versleutelde schermweergave en muis/toetsenbordinvoer op GDM of je eigen sessie. RivetLink bewaart of leest je Ubuntu-wachtwoord nooit; typ het uitsluitend in het externe GDM-venster. Er is geen shell, bestandstoegang, clipboard of automatische Ubuntu-login.",
+        "scope": "Plak de publieke sleutel van de aparte laptop of desktop die deze Ubuntu-computer gaat bedienen. Dat apparaat wordt expliciet vertrouwd voor versleutelde schermweergave en muis/toetsenbordinvoer op GDM of je eigen sessie. RivetLink bewaart of leest je Ubuntu-wachtwoord nooit; typ het uitsluitend in het externe GDM-venster. Er is geen shell, bestandstoegang, clipboard of automatische Ubuntu-login.",
         "localNetwork": "Lokaal netwerk",
         "localNetworkHint": "Directe versleutelde toegang op dit LAN. Voor deze route zijn geen relay, account of internetverbinding nodig.",
         "relay": "Via relay",
         "relayHint": "Versleutelde externe toegang buiten dit netwerk. Alleen vereist als deze optie is ingeschakeld: een geselecteerde relay en ingelogde sessie.",
         "name": "Naam voor deze Ubuntu Home Node",
         "controllerKey": "Publieke sleutel van het bedienende apparaat",
-        "controllerKeyHint": "Standaard is dit de sleutel van deze app. Alleen expliciet vertrouwde sleutels krijgen toegang vóór Ubuntu-login.",
+        "controllerKeyHint": "Open op de aparte bedienende laptop/desktop RivetLink → Instellingen → Beveiliging en kopieer daar de publieke sleutel. Gebruik niet de sleutel van deze Ubuntu-computer zelf.",
         "confirm": "Installeren en inschakelen"
     },
     "resources": {

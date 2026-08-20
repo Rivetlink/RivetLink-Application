@@ -216,14 +216,14 @@
         "needsAttention": "needs attention",
         "dialogTitle": "Set up Ubuntu physical console",
         "warning": "This installs a restricted non-root system service and a GDM/GNOME session worker. An HDMI dummy must remain connected. Ubuntu asks once for your system password.",
-        "scope": "The current RivetLink client is explicitly trusted for encrypted display and pointer/keyboard input at GDM or your own session. RivetLink never stores or reads your Ubuntu password; type it only in the remote GDM window. There is no shell, file access, clipboard or Ubuntu automatic login.",
+        "scope": "Paste the public key of the separate laptop or desktop that will control this Ubuntu computer. That device is explicitly trusted for encrypted display and pointer/keyboard input at GDM or your own session. RivetLink never stores or reads your Ubuntu password; type it only in the remote GDM window. There is no shell, file access, clipboard or Ubuntu automatic login.",
         "localNetwork": "Local network",
         "localNetworkHint": "Direct encrypted access on this LAN. No relay, account or internet connection is required for this route.",
         "relay": "Via relay",
         "relayHint": "Encrypted remote access outside this network. Requires a selected relay and signed-in session only when enabled.",
         "name": "Name for this Ubuntu Home Node",
         "controllerKey": "Controlling device public key",
-        "controllerKeyHint": "By default this is this app's key. Only explicitly trusted keys may access the console before Ubuntu login.",
+        "controllerKeyHint": "On the separate controlling laptop/desktop, open RivetLink → Settings → Security and copy its public key. Do not use this Ubuntu computer's own key.",
         "confirm": "Install and enable"
     },
     "resources": {

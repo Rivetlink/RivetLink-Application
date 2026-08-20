@@ -520,6 +520,25 @@ fn checked_linux_user_id(name: &str) -> Result<u32, String> {
         .map_err(|_| format!("could not determine UID for {name}"))
 }
 
+/// Accounts that may own GDM's real graphical seat on supported Ubuntu
+/// releases. Ubuntu 24.04 commonly runs the greeter as the separate
+/// `gdm-greeter` account instead of the historical `gdm` account. Both are
+/// deliberately allow-listed only when they exist; accepting only `gdm`
+/// leaves the real greeter unable to attach to the broker socket.
+#[cfg(target_os = "linux")]
+fn gdm_graphical_worker_accounts() -> Result<Vec<(String, u32)>, String> {
+    let mut accounts = Vec::new();
+    for name in ["gdm-greeter", "gdm"] {
+        if command_status("/usr/bin/getent", &["passwd".into(), name.into()])?.success() {
+            accounts.push((name.to_string(), checked_linux_user_id(name)?));
+        }
+    }
+    if accounts.is_empty() {
+        return Err("GDM is required for physical-console access".to_string());
+    }
+    Ok(accounts)
+}
+
 /// Install the agent runtime used by systemd.  AppImages must not be executed
 /// with `APPIMAGE_EXTRACT_AND_RUN` by two different service users: AppImage
 /// uses a shared, deterministic extraction directory under `/tmp`, so the GDM
@@ -722,8 +741,11 @@ where
         return Err("installer source executable is unavailable".to_string());
     }
     let owner_uid = checked_linux_user_id(&owner)?;
-    let gdm_uid = checked_linux_user_id("gdm")
-        .map_err(|_| "GDM is required for physical-console access".to_string())?;
+    let gdm_accounts = gdm_graphical_worker_accounts()?;
+    let gdm_worker_args = gdm_accounts
+        .iter()
+        .map(|(_, uid)| format!(" --allowed-worker-uid {uid}"))
+        .collect::<String>();
 
     if !command_status(
         "/usr/bin/getent",
@@ -752,7 +774,11 @@ where
             ],
         )?;
     }
-    for user in ["gdm", owner.as_str()] {
+    for user in gdm_accounts
+        .iter()
+        .map(|(name, _)| name.as_str())
+        .chain(std::iter::once(owner.as_str()))
+    {
         run_checked(
             "/usr/sbin/usermod",
             &[
@@ -918,7 +944,7 @@ where
     ] {
         run_checked("/usr/bin/chmod", &["0600".into(), file.into()])?;
     }
-    let broker_unit = format!("[Unit]\nDescription=RivetLink physical HDMI/GDM console broker\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=rivetlink\nGroup=rivetlink-console\nRuntimeDirectory=rivetlink\nRuntimeDirectoryMode=0710\nExecStart={agent_executable} --rivetlink-agent --config /var/lib/rivetlink/agent.json console-broker --socket /run/rivetlink/console.sock --allowed-worker-uid {gdm_uid} --allowed-worker-uid {owner_uid}\nRestart=on-failure\nRestartSec=5\nStartLimitIntervalSec=60\nStartLimitBurst=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/rivetlink /run/rivetlink\nLockPersonality=yes\nRestrictSUIDSGID=yes\nEnvironment=RUST_LOG=info\nEnvironment=RIVETLINK_CONSOLE_LAN={}\nEnvironment=RIVETLINK_CONSOLE_RELAY={}\nEnvironment=RIVETLINK_CONSOLE_LAN_PORT={lan_port}\n\n[Install]\nWantedBy=multi-user.target\n", u8::from(lan), u8::from(relay));
+    let broker_unit = format!("[Unit]\nDescription=RivetLink physical HDMI/GDM console broker\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=60\nStartLimitBurst=5\n\n[Service]\nType=simple\nUser=rivetlink\nGroup=rivetlink-console\nRuntimeDirectory=rivetlink\nRuntimeDirectoryMode=0710\nExecStart={agent_executable} --rivetlink-agent --config /var/lib/rivetlink/agent.json console-broker --socket /run/rivetlink/console.sock{gdm_worker_args} --allowed-worker-uid {owner_uid}\nRestart=on-failure\nRestartSec=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/rivetlink /run/rivetlink\nLockPersonality=yes\nRestrictSUIDSGID=yes\nEnvironment=RUST_LOG=info\nEnvironment=RIVETLINK_CONSOLE_LAN={}\nEnvironment=RIVETLINK_CONSOLE_RELAY={}\nEnvironment=RIVETLINK_CONSOLE_LAN_PORT={lan_port}\n\n[Install]\nWantedBy=multi-user.target\n", u8::from(lan), u8::from(relay));
     let worker_unit = format!("[Unit]\nDescription=RivetLink worker for the active GNOME/GDM console\nAfter=graphical-session.target\nPartOf=graphical-session.target\n\n[Service]\nType=simple\nExecStart={agent_executable} --rivetlink-agent console-worker --socket /run/rivetlink/console.sock\nRestart=on-failure\nRestartSec=3\nNoNewPrivileges=yes\nPrivateTmp=yes\nLockPersonality=yes\nRestrictSUIDSGID=yes\nEnvironment=RUST_LOG=info\n\n[Install]\nWantedBy=graphical-session.target\n");
     std::fs::write(
         "/etc/systemd/system/rivetlink-console-broker.service",
@@ -1042,6 +1068,15 @@ async fn setup_physical_console(
             .is_err()
         {
             return Err("enter the controller's valid RivetLink public key".to_string());
+        }
+        let local_key = Identity::load_or_create(&state.identity_path())
+            .map_err(|error| error.to_string())?
+            .public_key_b64();
+        if controller_key == local_key {
+            return Err(
+                "use the public key from the separate computer that will control this Ubuntu host; this Ubuntu device cannot authorize itself"
+                    .to_string(),
+            );
         }
         let relay = if setup.enable_relay {
             let settings = state.settings.lock().await;
@@ -1545,7 +1580,7 @@ async fn setup_physical_console_legacy(
             .then_some("Environment=APPIMAGE_EXTRACT_AND_RUN=1\n")
             .unwrap_or("");
         let broker_unit = format!(
-            "[Unit]\nDescription=RivetLink physical HDMI/GDM console broker\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nType=simple\nUser=rivetlink\nGroup=rivetlink-console\nRuntimeDirectory=rivetlink\nRuntimeDirectoryMode=0710\nExecStart=/usr/local/lib/rivetlink/rivet-agent --rivetlink-agent --config /var/lib/rivetlink/agent.json console-broker --socket /run/rivetlink/console.sock --allowed-worker-uid {gdm_uid} --allowed-worker-uid {owner_uid}\nRestart=on-failure\nRestartSec=5\nStartLimitIntervalSec=60\nStartLimitBurst=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/rivetlink /run/rivetlink\nLockPersonality=yes\nRestrictSUIDSGID=yes\n{appimage_extract}Environment=RUST_LOG=info\nEnvironment=RIVETLINK_CONSOLE_LAN={}\nEnvironment=RIVETLINK_CONSOLE_RELAY={}\nEnvironment=RIVETLINK_CONSOLE_LAN_PORT={}\n\n[Install]\nWantedBy=multi-user.target\n",
+            "[Unit]\nDescription=RivetLink physical HDMI/GDM console broker\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=60\nStartLimitBurst=5\n\n[Service]\nType=simple\nUser=rivetlink\nGroup=rivetlink-console\nRuntimeDirectory=rivetlink\nRuntimeDirectoryMode=0710\nExecStart=/usr/local/lib/rivetlink/rivet-agent --rivetlink-agent --config /var/lib/rivetlink/agent.json console-broker --socket /run/rivetlink/console.sock --allowed-worker-uid {gdm_uid} --allowed-worker-uid {owner_uid}\nRestart=on-failure\nRestartSec=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/rivetlink /run/rivetlink\nLockPersonality=yes\nRestrictSUIDSGID=yes\n{appimage_extract}Environment=RUST_LOG=info\nEnvironment=RIVETLINK_CONSOLE_LAN={}\nEnvironment=RIVETLINK_CONSOLE_RELAY={}\nEnvironment=RIVETLINK_CONSOLE_LAN_PORT={}\n\n[Install]\nWantedBy=multi-user.target\n",
             u8::from(setup.enable_lan),
             u8::from(setup.enable_relay),
             setup.lan_port,
