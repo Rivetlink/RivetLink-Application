@@ -54,6 +54,7 @@ export type Device = {
 	platform: string | null;
 	last_seen: string | null;
 	online: boolean;
+	public_key: string;
 };
 
 /// The machine's current network, for confirming both devices share a subnet.

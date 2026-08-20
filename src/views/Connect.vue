@@ -316,9 +316,9 @@
 									variant="flat"
 									prepend-icon="mdi-monitor-lock"
 									:loading="lanCaptureId === d.id"
-									@click="captureLanConsole(d)"
+									@click="smartConnect(d)"
 								>
-									{{ t("connect.lanOpenConsole") }}
+									{{ t("connect.lanConnect") }}
 								</VBtn>
 								<VBtn
 									v-else
@@ -793,6 +793,61 @@
 			lanConsoleImage.value = capture.image;
 			lanConsoleState.value = capture.consoleState;
 		} catch (e) { fail(e); } finally { lanCaptureId.value = null; }
+	}
+
+	// Prefer the exact advertised host key on the local network. If it is not
+	// currently discoverable, try the same public device identity through the
+	// already authenticated relay. Route selection never changes the identity
+	// pinned for LAN or the relay's normal cryptographic authentication.
+	async function smartConnect(device: SavedLanDevice) {
+		error.value = null;
+		lanCaptureId.value = device.id;
+		try {
+			scanning.value = true;
+			const discovered = await discoverLan();
+			lanFound.value = discovered;
+			const local = discovered.find((candidate) =>
+				candidate.physical_console
+				&& candidate.public_key === device.public_key,
+			);
+			if (local) {
+				const capture = await lanConsoleCapture(
+					local.address,
+					local.port,
+					device.public_key,
+					[],
+				);
+				lanConsoleTarget.value = {
+					...device,
+					address: local.address,
+					port: local.port,
+				};
+				lanConsoleImage.value = capture.image;
+				lanConsoleState.value = capture.consoleState;
+				return;
+			}
+
+			if (activeRelay() && store.connected && store.loggedIn) {
+				const relayDevices = await listDevices();
+				const relayDevice = relayDevices.find((candidate) =>
+					candidate.public_key === device.public_key,
+				);
+				if (relayDevice) {
+					devices.value = relayDevices;
+					selected.value = relayDevice.id;
+					tab.value = "devices";
+					await capture();
+					return;
+				}
+			}
+
+			throw new Error(t("connect.errNoRoute"));
+		} catch (e) {
+			fail(e);
+		} finally {
+			scanning.value = false;
+			lanCaptureId.value = null;
+		}
 	}
 
 	function lanConsoleKey(event: KeyboardEvent, down: boolean) {

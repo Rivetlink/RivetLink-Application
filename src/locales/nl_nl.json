@@ -107,7 +107,8 @@
         "errUnreachable": "Kan die computer niet bereiken. Die deelt waarschijnlijk niet meer, of staat uit.",
         "errTimeout": "De verbinding duurde te lang. Deelt de andere computer nog op dit netwerk?",
         "errAuth": "De verbinding werd geweigerd. Klopt de code?",
-        "errNotTrusted": "Dit apparaat is nog niet toegelaten. Voer de code in, of laat de andere computer het toelaten bij Toegang."
+        "errNotTrusted": "Dit apparaat is nog niet toegelaten. Voer de code in, of laat de andere computer het toelaten bij Toegang.",
+        "errNoRoute": "Deze computer is niet beschikbaar op je lokale netwerk en er is geen passende relay-verbinding gereed. Schakel bij een Ubuntu fysieke console eerst de fysieke-console-service in."
     },
     "device": {
         "thisDevice": "Dit apparaat",

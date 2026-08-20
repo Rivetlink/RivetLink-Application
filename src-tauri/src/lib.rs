@@ -148,7 +148,10 @@ impl AppState {
     }
 }
 
-/// Device shape sent to the frontend (no key material).
+/// Device shape sent to the frontend. The public identity is intentionally
+/// included so a saved direct-LAN host can be matched to the same relay
+/// device. It is not secret material and is already used for pinned direct
+/// handshakes and relay authentication.
 #[derive(Serialize)]
 struct DeviceDto {
     id: String,
@@ -156,6 +159,7 @@ struct DeviceDto {
     platform: Option<String>,
     last_seen: Option<String>,
     online: bool,
+    public_key: String,
 }
 
 impl From<Device> for DeviceDto {
@@ -166,6 +170,7 @@ impl From<Device> for DeviceDto {
             platform: d.platform,
             last_seen: d.last_seen,
             online: d.online,
+            public_key: d.public_key,
         }
     }
 }
