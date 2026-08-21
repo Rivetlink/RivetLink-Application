@@ -1214,6 +1214,23 @@ async fn setup_physical_console(
                 "Ubuntu physical-console installation failed; check the system journal".to_string(),
             );
         }
+        // The privileged installer updates a global user unit.  The currently
+        // logged-in owner's user manager has already loaded its unit cache,
+        // however, so reload and start the fixed worker here as that owner.
+        // This makes an update immediately usable; future GDM/GNOME sessions
+        // pick up the global unit automatically at login.
+        run_checked(
+            "/usr/bin/systemctl",
+            &["--user".into(), "daemon-reload".into()],
+        )?;
+        run_checked(
+            "/usr/bin/systemctl",
+            &[
+                "--user".into(),
+                "restart".into(),
+                "rivetlink-console-worker.service".into(),
+            ],
+        )?;
         return Ok(physical_console_status());
     }
     #[cfg(not(target_os = "linux"))]
