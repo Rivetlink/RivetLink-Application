@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": {
+      "../../RivetLink/target/release/rivet-agent": "rivetlink-service-agent/rivet-agent"
+    }
+  }
+}

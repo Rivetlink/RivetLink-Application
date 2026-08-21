@@ -40,7 +40,7 @@ jobs:
           # compiles and the .deb declares a clean `Depends:` on a normal
           # pipewire. We must NOT build these on 22.04 (see the next entry).
           - os: ubuntu-24.04
-            args: "--bundles deb,rpm"
+            args: "--config src-tauri/tauri.linux.conf.json --bundles deb,rpm"
           # --- Linux: AppImage (broad-compat), built on 22.04 ----------------
           # Built on 22.04 so EVERYTHING it bundles (our binary + webkit/gtk/
           # glib/pipewire) links glibc <= 2.35 and runs on hosts down to 22.04 —
@@ -53,7 +53,7 @@ jobs:
           # NB: the deb can't take this PPA — dpkg-shlibdeps would stamp a
           # `Depends: libpipewire-0.3-0 (>= 1.0)` that a stock 22.04 can't satisfy.
           - os: ubuntu-22.04
-            args: "--bundles appimage"
+            args: "--config src-tauri/tauri.linux.conf.json --bundles appimage"
             ppa: true
             appimage: true
           - os: macos-latest
@@ -144,6 +144,11 @@ jobs:
         working-directory: RivetLink-Application
         run: npm ci
 
+      - name: Build native Linux physical-console service agent
+        if: startsWith(matrix.os, 'ubuntu')
+        working-directory: RivetLink
+        run: cargo build --release --bin rivet-agent
+
       # The AppStream <releases> entry should always match the tag being built.
       # Stamp it here so it never needs manual editing per version.
       - name: Stamp metainfo release
@@ -211,6 +216,11 @@ jobs:
           AI=$(ls *.AppImage | head -1)
           echo "repacking $AI"
           ./"$AI" --appimage-extract >/dev/null
+          # Regression guard: the native agent resource is required for the
+          # direct systemd broker/worker path on Ubuntu AppArmor hosts.
+          AGENT=$(find squashfs-root -type f -path '*/rivetlink-service-agent/rivet-agent' -print -quit)
+          test -n "$AGENT"
+          test -x "$AGENT"
           # libwayland* MUST come from the host (ABI-stable, present on every
           # desktop, and on the standard AppImage excludelist for this reason).
           rm -f squashfs-root/usr/lib/libwayland-*.so*

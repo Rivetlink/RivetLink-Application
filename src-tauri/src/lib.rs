@@ -344,6 +344,29 @@ fn appimage_or_current_exe() -> Result<PathBuf, String> {
     Ok(executable)
 }
 
+/// The native service agent is a separately bundled resource.  It is never
+/// executed through AppRun: systemd installs a root-owned copy via the
+/// authorized console installer.  The development fallback keeps local source
+/// builds usable after `cargo build --release --bin rivet-agent`.
+#[cfg(target_os = "linux")]
+fn bundled_console_agent(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let resource = app
+        .path()
+        .resource_dir()
+        .map_err(|error| format!("locate RivetLink service resources: {error}"))?
+        .join("rivetlink-service-agent")
+        .join("rivet-agent");
+    if resource.is_file() {
+        return Ok(resource);
+    }
+    let development = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../RivetLink/target/release/rivet-agent");
+    if development.is_file() {
+        return Ok(development);
+    }
+    Err("this RivetLink build is missing its native physical-console service agent; update RivetLink and retry setup".to_string())
+}
+
 #[cfg(target_os = "linux")]
 fn run_checked(program: &str, args: &[std::ffi::OsString]) -> Result<(), String> {
     let status = std::process::Command::new(program)
@@ -397,6 +420,7 @@ struct PhysicalConsoleStatus {
     configured: bool,
     broker_active: bool,
     boot_service_enabled: bool,
+    native_service_agent: bool,
     gdm_available: bool,
     lan_listening: bool,
     lan_port: Option<u16>,
@@ -431,6 +455,8 @@ fn physical_console_status() -> PhysicalConsoleStatus {
     const BROKER_UNIT: &str = "/etc/systemd/system/rivetlink-console-broker.service";
     let unit = std::fs::read_to_string(BROKER_UNIT).unwrap_or_default();
     let unit_installed = std::path::Path::new(BROKER_UNIT).is_file();
+    let native_service_agent = std::path::Path::new(CONSOLE_AGENT_PATH).is_file()
+        && unit.contains(&format!("ExecStart={CONSOLE_AGENT_PATH} "));
     let broker_active = std::process::Command::new("/usr/bin/systemctl")
         .args(["is-active", "--quiet", "rivetlink-console-broker.service"])
         .status()
@@ -470,6 +496,7 @@ fn physical_console_status() -> PhysicalConsoleStatus {
         configured,
         broker_active,
         boot_service_enabled,
+        native_service_agent,
         gdm_available,
         lan_listening,
         lan_port,
@@ -486,6 +513,7 @@ fn physical_console_status() -> PhysicalConsoleStatus {
         configured: false,
         broker_active: false,
         boot_service_enabled: false,
+        native_service_agent: false,
         gdm_available: false,
         lan_listening: false,
         lan_port: None,
@@ -544,39 +572,92 @@ fn gdm_graphical_worker_accounts() -> Result<Vec<(String, u32)>, String> {
     Ok(accounts)
 }
 
-/// Install the agent runtime used by systemd.  AppImages must not be executed
-/// with `APPIMAGE_EXTRACT_AND_RUN` by two different service users: AppImage
-/// uses a shared, deterministic extraction directory under `/tmp`, so the GDM
-/// worker can otherwise inherit an extraction owned by the broker user and
-/// fail before it can attach to the console.  Extract once as root into a
-/// root-owned, world-readable application directory instead.
 #[cfg(target_os = "linux")]
-fn install_console_agent_runtime(
-    source: &std::path::Path,
-    appimage: bool,
-) -> Result<String, String> {
-    use std::os::unix::fs::PermissionsExt;
+const CONSOLE_AGENT_PATH: &str = "/usr/local/lib/rivetlink/rivet-agent";
 
-    if !appimage {
-        let agent_next = "/usr/local/lib/rivetlink/rivet-agent.next";
-        std::fs::copy(source, agent_next)
-            .map_err(|error| format!("install RivetLink agent: {error}"))?;
-        std::fs::set_permissions(agent_next, std::fs::Permissions::from_mode(0o755))
-            .map_err(|error| format!("secure RivetLink agent: {error}"))?;
-        std::fs::rename(agent_next, "/usr/local/lib/rivetlink/rivet-agent")
-            .map_err(|error| format!("activate RivetLink agent: {error}"))?;
-        return Ok("/usr/local/lib/rivetlink/rivet-agent".to_string());
+/// Find the native agent bundled as a Tauri resource in an extracted AppImage.
+/// The service binary is deliberately separate from `AppRun`: AppRun may enter
+/// an unprivileged user namespace, which Ubuntu AppArmor rightfully confines
+/// away from the broker socket.
+#[cfg(target_os = "linux")]
+fn extracted_console_agent(root: &std::path::Path) -> Result<PathBuf, String> {
+    fn visit(path: &std::path::Path, matches: &mut Vec<PathBuf>) -> Result<(), String> {
+        for entry in std::fs::read_dir(path)
+            .map_err(|error| format!("read extracted AppImage resources: {error}"))?
+        {
+            let entry = entry.map_err(|error| format!("read extracted AppImage entry: {error}"))?;
+            let kind = entry
+                .file_type()
+                .map_err(|error| format!("inspect extracted AppImage entry: {error}"))?;
+            if kind.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            if kind.is_dir() {
+                visit(&path, matches)?;
+            } else if kind.is_file()
+                && path.file_name().is_some_and(|name| name == "rivet-agent")
+                && path
+                    .components()
+                    .any(|component| component.as_os_str() == "rivetlink-service-agent")
+            {
+                matches.push(path);
+            }
+        }
+        Ok(())
     }
 
-    let staging = std::path::Path::new("/usr/local/lib/rivetlink/appimage.next");
-    let appdir = std::path::Path::new("/usr/local/lib/rivetlink/appimage");
+    let mut matches = Vec::new();
+    visit(root, &mut matches)?;
+    match matches.as_slice() {
+        [agent] => Ok(agent.clone()),
+        [] => Err("the AppImage is missing its native RivetLink service agent".to_string()),
+        _ => Err("the AppImage contains an ambiguous native service agent".to_string()),
+    }
+}
+
+/// Atomically replace the native, root-owned agent executed by systemd.  The
+/// broker and worker use this same immutable file, so an installed pair cannot
+/// silently split across desktop/AppRun runtime versions.
+#[cfg(target_os = "linux")]
+fn install_native_console_agent(source: &std::path::Path) -> Result<String, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let metadata = std::fs::symlink_metadata(source)
+        .map_err(|error| format!("inspect native RivetLink service agent: {error}"))?;
+    if !metadata.file_type().is_file() {
+        return Err("native RivetLink service agent is unavailable".to_string());
+    }
+    let agent_next = format!("{CONSOLE_AGENT_PATH}.next");
+    std::fs::copy(source, &agent_next)
+        .map_err(|error| format!("install native RivetLink service agent: {error}"))?;
+    std::fs::set_permissions(&agent_next, std::fs::Permissions::from_mode(0o755))
+        .map_err(|error| format!("secure native RivetLink service agent: {error}"))?;
+    std::fs::rename(&agent_next, CONSOLE_AGENT_PATH)
+        .map_err(|error| format!("activate native RivetLink service agent: {error}"))?;
+    Ok(CONSOLE_AGENT_PATH.to_string())
+}
+
+/// Resolve the bundled service agent then install it atomically.  AppImages
+/// are extracted only by the root-authorized installer so it can read their
+/// resources without launching AppRun as either service account.
+#[cfg(target_os = "linux")]
+fn install_console_agent_runtime(
+    app_executable: &std::path::Path,
+    service_agent: &std::path::Path,
+    appimage: bool,
+) -> Result<String, String> {
+    if !appimage {
+        return install_native_console_agent(service_agent);
+    }
+
+    let staging = std::path::Path::new("/usr/local/lib/rivetlink/appimage.extracting");
     if staging.exists() {
         std::fs::remove_dir_all(staging)
             .map_err(|error| format!("remove stale AppImage staging directory: {error}"))?;
     }
     std::fs::create_dir(staging)
         .map_err(|error| format!("create AppImage staging directory: {error}"))?;
-    let status = std::process::Command::new(source)
+    let status = std::process::Command::new(app_executable)
         .arg("--appimage-extract")
         .current_dir(staging)
         .stdin(std::process::Stdio::null())
@@ -586,43 +667,40 @@ fn install_console_agent_runtime(
         return Err("extract RivetLink AppImage failed".to_string());
     }
     let extracted = staging.join("squashfs-root");
-    let app_run = extracted.join("AppRun");
-    let app_run_wrapped = extracted.join("AppRun.wrapped");
-    if !app_run.is_file() || !app_run_wrapped.is_file() {
-        return Err("extracted RivetLink AppImage is missing its launcher".to_string());
-    }
-    if appdir.exists() {
-        std::fs::remove_dir_all(appdir)
-            .map_err(|error| format!("replace previous AppImage runtime: {error}"))?;
-    }
-    std::fs::rename(&extracted, appdir)
-        .map_err(|error| format!("activate extracted RivetLink runtime: {error}"))?;
-    std::fs::remove_dir(staging)
-        .map_err(|error| format!("clean AppImage staging directory: {error}"))?;
-    run_checked(
-        "/usr/bin/chown",
-        &[
-            "-R".into(),
-            "root:root".into(),
-            "/usr/local/lib/rivetlink/appimage".into(),
-        ],
-    )?;
-    run_checked(
-        "/usr/bin/chmod",
-        &[
-            "-R".into(),
-            "go-w".into(),
-            "/usr/local/lib/rivetlink/appimage".into(),
-        ],
-    )?;
-    for launcher in [
-        "/usr/local/lib/rivetlink/appimage/AppRun",
-        "/usr/local/lib/rivetlink/appimage/AppRun.wrapped",
-    ] {
-        std::fs::set_permissions(launcher, std::fs::Permissions::from_mode(0o755))
-            .map_err(|error| format!("secure extracted RivetLink launcher: {error}"))?;
-    }
-    Ok("/usr/local/lib/rivetlink/appimage/AppRun".to_string())
+    let result =
+        extracted_console_agent(&extracted).and_then(|agent| install_native_console_agent(&agent));
+    std::fs::remove_dir_all(staging)
+        .map_err(|error| format!("clean AppImage extraction: {error}"))?;
+    result
+}
+
+/// Render the two fixed units which make up physical-console infrastructure.
+/// The native agent is intentionally the only executable in either unit.
+/// Running a worker through the desktop AppImage can create an unprivileged
+/// user namespace; Ubuntu AppArmor then correctly denies its broker socket.
+#[cfg(target_os = "linux")]
+fn physical_console_units(
+    agent_executable: &str,
+    gdm_worker_args: &str,
+    owner_uid: u32,
+    lan: bool,
+    relay: bool,
+    lan_port: u16,
+) -> (String, String) {
+    let broker = format!(
+        "[Unit]\nDescription=RivetLink physical HDMI/GDM console broker\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=60\nStartLimitBurst=5\n\n[Service]\nType=simple\nUser=rivetlink\nGroup=rivetlink-console\nRuntimeDirectory=rivetlink\nRuntimeDirectoryMode=0710\nExecStart={agent_executable} --config /var/lib/rivetlink/agent.json console-broker --socket /run/rivetlink/console.sock{gdm_worker_args} --allowed-worker-uid {owner_uid}\nRestart=on-failure\nRestartSec=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/rivetlink /run/rivetlink\nLockPersonality=yes\nRestrictSUIDSGID=yes\nEnvironment=RUST_LOG=info\nEnvironment=RIVETLINK_CONSOLE_LAN={}\nEnvironment=RIVETLINK_CONSOLE_RELAY={}\nEnvironment=RIVETLINK_CONSOLE_LAN_PORT={lan_port}\n\n[Install]\nWantedBy=multi-user.target\n",
+        u8::from(lan),
+        u8::from(relay)
+    );
+    // Do not add `PrivateTmp` here. For a systemd *user* service Ubuntu's
+    // AppImage runtime can transition into `unprivileged_userns`, and AppArmor
+    // denies an otherwise correctly ACL-authorized Unix-socket connect. The
+    // worker never needs a private temporary directory; retain all applicable
+    // privilege-reduction controls instead.
+    let worker = format!(
+        "[Unit]\nDescription=RivetLink worker for the active GNOME/GDM console\nAfter=graphical-session.target\nPartOf=graphical-session.target\n\n[Service]\nType=simple\nExecStart={agent_executable} console-worker --socket /run/rivetlink/console.sock\nRestart=on-failure\nRestartSec=3\nNoNewPrivileges=yes\nLockPersonality=yes\nRestrictSUIDSGID=yes\nEnvironment=RUST_LOG=info\n\n[Install]\nWantedBy=graphical-session.target\n"
+    );
+    (broker, worker)
 }
 
 /// Fixed, non-shell service controls for an already installed console.  This
@@ -710,6 +788,7 @@ where
     let device_name = value("--device-name")?;
     let controller_key = value("--controller-key")?;
     let source = PathBuf::from(value("--source-exe")?);
+    let service_agent = PathBuf::from(value("--service-agent-source")?);
     let relay_url = value("--relay-url")?;
     let relay_http_url = value("--relay-http-url")?;
     let appimage = value("--appimage")? == "1";
@@ -718,7 +797,7 @@ where
     let lan_port = value("--lan-port")?
         .parse::<u16>()
         .map_err(|_| "invalid LAN port".to_string())?;
-    if values.len() != 20
+    if values.len() != 22
         || !owner
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
@@ -744,6 +823,9 @@ where
     }
     if !source.is_absolute() || !source.is_file() {
         return Err("installer source executable is unavailable".to_string());
+    }
+    if !service_agent.is_absolute() || (!appimage && !service_agent.is_file()) {
+        return Err("installer native service agent is unavailable".to_string());
     }
     let owner_uid = checked_linux_user_id(&owner)?;
     let gdm_accounts = gdm_graphical_worker_accounts()?;
@@ -833,15 +915,15 @@ where
             "gstreamer1.0-pipewire".into(),
         ],
     )?;
-    // A reconfiguration is an upgrade operation. Stop the old system broker
-    // before replacing its AppImage runtime; the freshly written unit is
-    // enabled and started below after `daemon-reload`.
+    // A reconfiguration is an upgrade operation. Stop the old broker before
+    // atomically replacing the native agent it executes; the freshly written
+    // unit is enabled and started below after `daemon-reload`.
     let _ = run_checked(
         "/usr/bin/systemctl",
         &["stop".into(), "rivetlink-console-broker.service".into()],
     );
     use std::os::unix::fs::PermissionsExt;
-    let agent_executable = install_console_agent_runtime(&source, appimage)?;
+    let agent_executable = install_console_agent_runtime(&source, &service_agent, appimage)?;
 
     let config_path = PathBuf::from("/var/lib/rivetlink/agent.json");
     let key_path = PathBuf::from("/var/lib/rivetlink/keys");
@@ -950,8 +1032,14 @@ where
     ] {
         run_checked("/usr/bin/chmod", &["0600".into(), file.into()])?;
     }
-    let broker_unit = format!("[Unit]\nDescription=RivetLink physical HDMI/GDM console broker\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=60\nStartLimitBurst=5\n\n[Service]\nType=simple\nUser=rivetlink\nGroup=rivetlink-console\nRuntimeDirectory=rivetlink\nRuntimeDirectoryMode=0710\nExecStart={agent_executable} --rivetlink-agent --config /var/lib/rivetlink/agent.json console-broker --socket /run/rivetlink/console.sock{gdm_worker_args} --allowed-worker-uid {owner_uid}\nRestart=on-failure\nRestartSec=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/rivetlink /run/rivetlink\nLockPersonality=yes\nRestrictSUIDSGID=yes\nEnvironment=RUST_LOG=info\nEnvironment=RIVETLINK_CONSOLE_LAN={}\nEnvironment=RIVETLINK_CONSOLE_RELAY={}\nEnvironment=RIVETLINK_CONSOLE_LAN_PORT={lan_port}\n\n[Install]\nWantedBy=multi-user.target\n", u8::from(lan), u8::from(relay));
-    let worker_unit = format!("[Unit]\nDescription=RivetLink worker for the active GNOME/GDM console\nAfter=graphical-session.target\nPartOf=graphical-session.target\n\n[Service]\nType=simple\nExecStart={agent_executable} --rivetlink-agent console-worker --socket /run/rivetlink/console.sock\nRestart=on-failure\nRestartSec=3\nNoNewPrivileges=yes\nPrivateTmp=yes\nLockPersonality=yes\nRestrictSUIDSGID=yes\nEnvironment=RUST_LOG=info\n\n[Install]\nWantedBy=graphical-session.target\n");
+    let (broker_unit, worker_unit) = physical_console_units(
+        &agent_executable,
+        &gdm_worker_args,
+        owner_uid,
+        lan,
+        relay,
+        lan_port,
+    );
     std::fs::write(
         "/etc/systemd/system/rivetlink-console-broker.service",
         broker_unit,
@@ -1049,6 +1137,7 @@ fn retire_legacy_virtual_monitor() -> Result<(), String> {
 /// relay token never crosses the privilege boundary.
 #[tauri::command]
 async fn setup_physical_console(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     setup: PhysicalConsoleSetup,
 ) -> Result<PhysicalConsoleStatus, String> {
@@ -1112,6 +1201,7 @@ async fn setup_physical_console(
         }
         let owner = std::env::var("USER").map_err(|_| "cannot determine the local Ubuntu user")?;
         let executable = appimage_or_current_exe()?;
+        let service_agent = bundled_console_agent(&app)?;
         retire_legacy_virtual_monitor()?;
         let mut command = tokio::process::Command::new("/usr/bin/pkexec");
         command
@@ -1130,6 +1220,12 @@ async fn setup_physical_console(
                 executable
                     .to_str()
                     .ok_or("invalid RivetLink executable path")?,
+            ])
+            .args([
+                "--service-agent-source",
+                service_agent
+                    .to_str()
+                    .ok_or("invalid RivetLink service agent path")?,
             ])
             .args(["--lan", if setup.enable_lan { "1" } else { "0" }])
             .args(["--relay", if setup.enable_relay { "1" } else { "0" }])
@@ -1235,7 +1331,7 @@ async fn setup_physical_console(
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (state, setup);
+        let _ = (app, state, setup);
         Err("physical-console access is supported on Ubuntu only".to_string())
     }
 }
@@ -1279,6 +1375,23 @@ async fn physical_console_service_action(
                     .to_string(),
             );
         }
+        if action == "enable" {
+            // A global user unit is cached by the already logged-in GNOME
+            // manager. Reload it and launch the direct native worker now;
+            // future GDM/GNOME sessions inherit it automatically.
+            run_checked(
+                "/usr/bin/systemctl",
+                &["--user".into(), "daemon-reload".into()],
+            )?;
+            run_checked(
+                "/usr/bin/systemctl",
+                &[
+                    "--user".into(),
+                    "restart".into(),
+                    "rivetlink-console-worker.service".into(),
+                ],
+            )?;
+        }
         return Ok(physical_console_status());
     }
     #[cfg(not(target_os = "linux"))]
@@ -1288,11 +1401,21 @@ async fn physical_console_service_action(
     }
 }
 
-#[allow(dead_code)] // Retained temporarily as a migration reference for existing installs.
+#[allow(dead_code, unreachable_code, unused_variables)] // Retained only as an error path for obsolete callers.
 async fn setup_physical_console_legacy(
     state: State<'_, AppState>,
     setup: PhysicalConsoleSetup,
 ) -> Result<PhysicalConsoleStatus, String> {
+    // This predecessor copied the desktop executable into the service path and
+    // started its embedded agent. It must never be revived: Ubuntu AppImage
+    // runtimes can enter `unprivileged_userns`, where AppArmor denies the
+    // broker socket. The supported setup above installs the separate native
+    // agent resource instead.
+    return Err(
+        "this obsolete physical-console installer is disabled; use the current native-agent setup"
+            .to_string(),
+    );
+
     #[cfg(target_os = "linux")]
     {
         if !is_supported_ubuntu() {
@@ -2714,6 +2837,48 @@ mod bonjour_tests {
             bonjour_txt_value(resolved, "mode"),
             Some("physical-console")
         );
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod console_service_tests {
+    use super::{extracted_console_agent, physical_console_units, CONSOLE_AGENT_PATH};
+
+    #[test]
+    fn services_execute_only_the_native_agent_and_keep_worker_out_of_appimage_sandbox() {
+        let (broker, worker) = physical_console_units(
+            CONSOLE_AGENT_PATH,
+            " --allowed-worker-uid 975",
+            1000,
+            true,
+            true,
+            47823,
+        );
+
+        assert!(broker.contains(&format!("ExecStart={CONSOLE_AGENT_PATH} --config")));
+        assert!(worker.contains(&format!("ExecStart={CONSOLE_AGENT_PATH} console-worker")));
+        assert!(!broker.contains("AppRun"));
+        assert!(!worker.contains("AppRun"));
+        assert!(!worker.contains("--rivetlink-agent"));
+        // `PrivateTmp` plus AppRun placed the graphical worker in Ubuntu's
+        // AppArmor unprivileged_userns profile, which denies console.sock.
+        assert!(!worker.contains("PrivateTmp="));
+        assert!(worker.contains("NoNewPrivileges=yes"));
+        assert!(worker.contains("LockPersonality=yes"));
+        assert!(worker.contains("RestrictSUIDSGID=yes"));
+    }
+
+    #[test]
+    fn finds_the_single_native_agent_in_an_extracted_appimage() {
+        let root =
+            std::env::temp_dir().join(format!("rivetlink-agent-test-{}", uuid::Uuid::new_v4()));
+        let agent = root.join("usr/lib/RivetLink/resources/rivetlink-service-agent/rivet-agent");
+        std::fs::create_dir_all(agent.parent().expect("agent parent"))
+            .expect("create test resource tree");
+        std::fs::write(&agent, b"native-agent").expect("write test agent");
+
+        assert_eq!(extracted_console_agent(&root).expect("find agent"), agent);
+        std::fs::remove_dir_all(&root).expect("remove test resource tree");
     }
 }
 

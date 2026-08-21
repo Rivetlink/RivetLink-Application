@@ -82,13 +82,17 @@ jobs:
         working-directory: RivetLink-Application
         run: npm ci
 
+      - name: Build native physical-console service agent
+        working-directory: RivetLink
+        run: cargo build --release --bin rivet-agent
+
       - name: Build AppImage
         working-directory: RivetLink-Application
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           # AppImage tooling can't use FUSE on the runner; extract-and-run instead.
           APPIMAGE_EXTRACT_AND_RUN: "1"
-        run: npm run tauri build -- --bundles appimage
+        run: npm run tauri build -- --config src-tauri/tauri.linux.conf.json --bundles appimage
 
       # Two steps on purpose: the repack downloads + runs appimagetool, so it must
       # NOT have the updater signing key in its environment (a compromised tool
@@ -103,6 +107,11 @@ jobs:
           AI=$(ls *.AppImage | head -1)
           echo "repacking $AI"
           ./"$AI" --appimage-extract >/dev/null
+          # Regression guard: service units must receive the standalone native
+          # agent, never AppRun from the desktop AppImage runtime.
+          AGENT=$(find squashfs-root -type f -path '*/rivetlink-service-agent/rivet-agent' -print -quit)
+          test -n "$AGENT"
+          test -x "$AGENT"
           # libwayland* MUST come from the host. The bundled jammy copies mix with
           # the host's mesa libEGL on newer hosts (e.g. 26.04) and abort with
           # "Could not create default EGL display: EGL_BAD_PARAMETER", leaving a

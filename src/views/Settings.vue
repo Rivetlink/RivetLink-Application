@@ -87,8 +87,8 @@
 					<VCardTitle class="d-flex align-center">
 						{{ t("physicalConsole.title") }}
 						<VSpacer />
-						<VChip v-if="physicalConsole.configured" :color="physicalConsole.brokerActive ? 'success' : 'warning'" size="small">
-							{{ physicalConsole.brokerActive ? t("physicalConsole.running") : t("physicalConsole.needsAttention") }}
+						<VChip v-if="physicalConsole.configured" :color="physicalConsole.brokerActive && physicalConsole.nativeServiceAgent ? 'success' : 'warning'" size="small">
+							{{ physicalConsole.brokerActive && physicalConsole.nativeServiceAgent ? t("physicalConsole.running") : t("physicalConsole.needsAttention") }}
 						</VChip>
 					</VCardTitle>
 					<VCardText>
@@ -100,6 +100,13 @@
 								<template #append>
 									<VChip size="x-small" :color="physicalConsole.bootServiceEnabled ? 'success' : 'warning'">
 										{{ physicalConsole.bootServiceEnabled ? t('physicalConsole.active') : t('physicalConsole.inactive') }}
+									</VChip>
+								</template>
+							</VListItem>
+							<VListItem :title="t('physicalConsole.serviceAgent')">
+								<template #append>
+									<VChip size="x-small" :color="physicalConsole.nativeServiceAgent ? 'success' : 'warning'">
+										{{ physicalConsole.nativeServiceAgent ? t('physicalConsole.native') : t('physicalConsole.updateRequired') }}
 									</VChip>
 								</template>
 							</VListItem>
@@ -370,6 +377,7 @@
 		configured: false,
 		brokerActive: false,
 		bootServiceEnabled: false,
+		nativeServiceAgent: false,
 		gdmAvailable: false,
 		lanListening: false,
 		lanPort: null as number | null,

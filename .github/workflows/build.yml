@@ -131,6 +131,22 @@ jobs:
         working-directory: RivetLink-Application
         run: npm ci
 
+      # The Ubuntu physical-console services never execute AppRun. Build the
+      # standalone agent too, so Linux CI verifies the exact native binary
+      # bundled into release artifacts.
+      - name: Build native Linux service agent
+        if: startsWith(matrix.os, 'ubuntu')
+        working-directory: RivetLink
+        run: cargo build --release --bin rivet-agent
+
+      # Executes the unit-rendering regression test under Linux. It protects
+      # restricted Ubuntu/AppArmor hosts from a future AppRun or PrivateTmp
+      # worker regression that would re-enter unprivileged_userns.
+      - name: Test Linux native physical-console service units
+        if: startsWith(matrix.os, 'ubuntu')
+        working-directory: RivetLink-Application/src-tauri
+        run: cargo test -p rivetlink-app --lib console_service_tests
+
       - name: Build (compile, skip installers)
         working-directory: RivetLink-Application
         run: npm run tauri build -- --no-bundle

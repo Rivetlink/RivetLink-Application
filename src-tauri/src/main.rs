@@ -2,43 +2,6 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
-    // RivetLink's system and session services need a durable executable.  This
-    // private argument starts only the agent and never opens a webview.  It is
-    // intentionally not exposed as a normal application action.
-    #[cfg(target_os = "linux")]
-    if matches!(
-        std::env::args_os().nth(1).as_deref(),
-        Some(arg)
-            if arg == std::ffi::OsStr::new("--rivetlink-agent")
-                // Compatibility for an already installed pre-physical-console
-                // service. New units exclusively use --rivetlink-agent.
-                || arg == std::ffi::OsStr::new("--rivetlink-headless-agent")
-    ) {
-        // The embedded agent is launched directly by systemd rather than via
-        // rivet-agent's standalone binary, so it needs its own journal logger.
-        // RUST_LOG from the restricted unit controls verbosity; event payloads,
-        // screenshots, keys and keyboard input are never logged by the agent.
-        tracing_subscriber::fmt()
-            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-            .with_ansi(false)
-            .init();
-        let args = std::env::args_os()
-            .enumerate()
-            .filter_map(|(index, arg)| (index != 1).then_some(arg));
-        let runtime = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .expect("create RivetLink agent runtime");
-        let exit_code = match runtime.block_on(rivetlink_agent::runner::run_from(args)) {
-            Ok(()) => 0,
-            Err(error) => {
-                eprintln!("RivetLink agent failed: {error}");
-                1
-            }
-        };
-        std::process::exit(exit_code);
-    }
-
     #[cfg(target_os = "linux")]
     if matches!(
         std::env::args_os().nth(1).as_deref(),
