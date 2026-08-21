@@ -265,6 +265,21 @@ export async function lanConsoleCapture(
 	});
 }
 
+/// Open an authorized physical console in the same dedicated viewer window as
+/// a normal LAN screen share. The backend continuously refreshes the console
+/// capture and forwards mouse/keyboard input through its trusted protocol.
+export async function lanConsoleConnect(device: SavedLanDevice): Promise<void> {
+	await invoke("lan_console_connect", {
+		target: {
+			name: device.name,
+			address: device.address,
+			port: device.port,
+			deviceId: device.id,
+			publicKey: device.public_key,
+		},
+	});
+}
+
 /// Open a live screen stream to a saved LAN device (renders in its own window).
 export async function lanConnect(
 	device: SavedLanDevice,

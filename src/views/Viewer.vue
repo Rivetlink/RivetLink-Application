@@ -131,6 +131,11 @@
 		tiles: TilePatch[];
 	};
 
+	type ConsoleFrame = {
+		image: string;
+		consoleState: string | null;
+	};
+
 	const { t } = useI18n();
 	const canvasEl = ref<HTMLCanvasElement | null>(null);
 	const hasFrame = ref(false);
@@ -211,6 +216,7 @@
 	const ctx = shallowRef<CanvasRenderingContext2D | null>(null);
 	const pending = shallowRef<Promise<void>>(Promise.resolve());
 	const unlistenFrame = ref<UnlistenFn | null>(null);
+	const unlistenConsoleFrame = ref<UnlistenFn | null>(null);
 	const unlistenEnd = ref<UnlistenFn | null>(null);
 	const unlistenDisplays = ref<UnlistenFn | null>(null);
 	const unlistenBlur = ref<UnlistenFn | null>(null);
@@ -270,6 +276,31 @@
 			clearTimeout(closeTimer.value);
 			closeTimer.value = undefined;
 		}
+		lastFrameAt.value = performance.now();
+		slow.value = false;
+	}
+
+	async function applyConsoleFrame(frame: ConsoleFrame): Promise<void> {
+		const canvas = canvasEl.value;
+		if (!canvas) {
+			return;
+		}
+		const encoded = frame.image.split(",", 2)[1];
+		if (!encoded) {
+			return;
+		}
+		const bitmap = await createImageBitmap(new Blob([base64ToBytes(encoded)], { type: "image/png" }));
+		canvas.width = bitmap.width;
+		canvas.height = bitmap.height;
+		frameW.value = bitmap.width;
+		frameH.value = bitmap.height;
+		if (!ctx.value) {
+			ctx.value = canvas.getContext("2d");
+		}
+		ctx.value?.drawImage(bitmap, 0, 0);
+		bitmap.close();
+		hasFrame.value = true;
+		ended.value = false;
 		lastFrameAt.value = performance.now();
 		slow.value = false;
 	}
@@ -465,6 +496,9 @@
 			// Serialise frames so tile draws never interleave out of order.
 			pending.value = pending.value.then(() => applyDelta(e.payload)).catch(() => { /* drop */ });
 		});
+		unlistenConsoleFrame.value = await listen<ConsoleFrame>("lan://console-frame", (e) => {
+			pending.value = pending.value.then(() => applyConsoleFrame(e.payload)).catch(() => { /* drop */ });
+		});
 		unlistenEnd.value = await listen("lan://disconnected", () => {
 			ended.value = true;
 			hasFrame.value = false;
@@ -514,6 +548,7 @@
 
 	onUnmounted(() => {
 		unlistenFrame.value?.();
+		unlistenConsoleFrame.value?.();
 		unlistenEnd.value?.();
 		unlistenDisplays.value?.();
 		unlistenBlur.value?.();

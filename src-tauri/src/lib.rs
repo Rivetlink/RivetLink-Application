@@ -57,6 +57,11 @@ struct AppState {
     /// Sends remote-input events (mouse/keyboard) to the active live-stream task
     /// while *this* device is controlling a host. Set alongside `switch_tx`.
     input_tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<rivetlink_sdk::lan::LanRequest>>>,
+    /// Sends normalized input to the active physical-console viewer. Physical
+    /// consoles deliberately use their own trusted capture protocol rather than
+    /// the ordinary desktop stream, so the polling task batches these into its
+    /// next authenticated capture transaction.
+    console_input_tx: std::sync::Mutex<Option<tokio::sync::mpsc::Sender<ConsoleInputPacket>>>,
     /// The active "receive help" host session (advertise + serve), if any.
     host: std::sync::Mutex<Option<HostSession>>,
     /// Trusted client identity keys (base64), shared live with the running host
@@ -2588,7 +2593,7 @@ async fn capture_screenshot(
 /// Send one remote event to an explicitly authorized physical-console host and
 /// return the resulting encrypted screenshot. The event is forwarded as an
 /// opaque E2E payload; this backend neither logs nor persists it.
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct ConsoleCaptureDto {
     image: String,
@@ -2991,6 +2996,113 @@ async fn lan_console_capture(
     })
 }
 
+/// Open the physical console in the same standalone viewer used by ordinary
+/// screen sharing. The console protocol is deliberately request/response (it
+/// is also used before a desktop session exists), so the task continuously
+/// requests authenticated PNG captures and applies queued input to the next
+/// request. This keeps the privileged broker protocol separate from normal
+/// desktop streaming while giving the operator one consistent viewer UX.
+#[tauri::command]
+async fn lan_console_connect(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    target: LanTarget,
+) -> Result<(), String> {
+    let ip: std::net::IpAddr = target
+        .address
+        .parse()
+        .map_err(|_| format!("bad address: {}", target.address))?;
+    let host_key = target
+        .public_key
+        .filter(|key| !key.trim().is_empty())
+        .ok_or(
+            "physical-console LAN access requires the host identity from discovery or a saved key",
+        )?;
+
+    // Stop a stale desktop/console viewer before rebuilding the shared window.
+    stop_stream(&state);
+    open_viewer(&app, &format!("RivetLink — {}", target.name)).await?;
+
+    let identity =
+        Identity::load_or_create(&state.identity_path()).map_err(|error| error.to_string())?;
+    let addr = std::net::SocketAddr::new(ip, target.port);
+    let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<ConsoleInputPacket>(128);
+    if let Ok(mut guard) = state.console_input_tx.lock() {
+        *guard = Some(input_tx);
+    }
+
+    let app_for_task = app.clone();
+    let task = tokio::spawn(async move {
+        // The broker captures a complete PNG for each request. Ten polls per
+        // second keeps pointer feedback responsive without continuously
+        // hammering GDM/Mutter on a pre-login console.
+        const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+        loop {
+            let mut inputs = Vec::new();
+            let mut latest_move = None;
+            while let Ok(input) = input_rx.try_recv() {
+                // Movement is state, not an action: keep only the newest move
+                // until a click/key/scroll boundary, then preserve ordering so
+                // a click still lands where the cursor was shown.
+                if matches!(input, ConsoleInputPacket::PointerMove { .. }) {
+                    latest_move = Some(input);
+                } else {
+                    if let Some(move_event) = latest_move.take() {
+                        inputs.push(move_event);
+                    }
+                    inputs.push(input);
+                }
+            }
+            if let Some(move_event) = latest_move {
+                inputs.push(move_event);
+            }
+
+            let capture = tokio::time::timeout(
+                std::time::Duration::from_secs(15),
+                rivetlink_sdk::lan::console_capture_key_pinned(
+                    addr,
+                    &identity,
+                    Some(&host_key),
+                    inputs,
+                ),
+            )
+            .await;
+            match capture {
+                Ok(Ok(capture)) => {
+                    let image = format!(
+                        "data:image/png;base64,{}",
+                        base64::engine::general_purpose::STANDARD.encode(capture.png),
+                    );
+                    let payload = ConsoleCaptureDto {
+                        image,
+                        console_state: capture.state.map(|state| format!("{state:?}")),
+                    };
+                    if app_for_task.emit("lan://console-frame", payload).is_err() {
+                        break;
+                    }
+                }
+                Ok(Err(error)) => {
+                    let _ = app_for_task.emit("lan://error", error.to_string());
+                    break;
+                }
+                Err(_) => {
+                    let _ = app_for_task.emit("lan://error", "physical-console capture timed out");
+                    break;
+                }
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
+        }
+        let _ = app_for_task.emit("lan://disconnected", ());
+    });
+
+    if let Ok(mut guard) = state.stream.lock() {
+        *guard = Some(task);
+    }
+    let _ = app.emit("lan://connected", target.device_id);
+    tracing::info!(name = %target.name, %addr, "lan_console_connect: viewer polling started");
+    Ok(())
+}
+
 /// True while `open_viewer` is closing a stale viewer to rebuild a fresh one, so
 /// that close's `CloseRequested` handler skips the disconnect side-effects (the
 /// new stream is about to start — don't stop it / emit "disconnected").
@@ -3381,12 +3493,39 @@ enum ClientInput {
 #[tauri::command]
 async fn lan_send_input(state: State<'_, AppState>, event: ClientInput) -> Result<(), String> {
     use rivetlink_sdk::lan::LanRequest;
+    let console_input = match &event {
+        ClientInput::Move { x, y } => ConsoleInputPacket::PointerMove { x: *x, y: *y },
+        ClientInput::Button { button, down } => ConsoleInputPacket::PointerButton {
+            button: match button {
+                rivetlink_sdk::lan::PtrButton::Left => rivetlink_protocol::MouseButton::Left,
+                rivetlink_sdk::lan::PtrButton::Right => rivetlink_protocol::MouseButton::Right,
+                rivetlink_sdk::lan::PtrButton::Middle => rivetlink_protocol::MouseButton::Middle,
+            },
+            down: *down,
+        },
+        ClientInput::Scroll { dx, dy } => ConsoleInputPacket::Scroll { dx: *dx, dy: *dy },
+        ClientInput::Key { code, down } => ConsoleInputPacket::Key {
+            code: code.clone(),
+            down: *down,
+        },
+    };
     let req = match event {
         ClientInput::Move { x, y } => LanRequest::PointerMove { x, y },
         ClientInput::Button { button, down } => LanRequest::PointerButton { button, down },
         ClientInput::Scroll { dx, dy } => LanRequest::Scroll { dx, dy },
         ClientInput::Key { code, down } => LanRequest::Key { code, down },
     };
+    // A console viewer takes precedence over an ordinary LAN stream. Both
+    // routes retain their host-side authorization checks.
+    let console_sender = state
+        .console_input_tx
+        .lock()
+        .ok()
+        .and_then(|g| g.as_ref().cloned());
+    if let Some(tx) = console_sender {
+        let _ = tx.try_send(console_input);
+        return Ok(());
+    }
     let sender = state.input_tx.lock().ok().and_then(|g| g.as_ref().cloned());
     if let Some(tx) = sender {
         // Drop rather than await on a full queue: a backed-up channel means the
@@ -3451,6 +3590,9 @@ fn stop_stream(state: &AppState) {
         *guard = None;
     }
     if let Ok(mut guard) = state.input_tx.lock() {
+        *guard = None;
+    }
+    if let Ok(mut guard) = state.console_input_tx.lock() {
         *guard = None;
     }
 }
@@ -4368,6 +4510,7 @@ pub fn run() {
                 stream: std::sync::Mutex::new(None),
                 switch_tx: std::sync::Mutex::new(None),
                 input_tx: std::sync::Mutex::new(None),
+                console_input_tx: std::sync::Mutex::new(None),
                 host: std::sync::Mutex::new(None),
                 trusted_keys: Arc::new(std::sync::Mutex::new(trusted)),
                 sys: std::sync::Mutex::new(sysinfo::System::new()),
@@ -4429,6 +4572,7 @@ pub fn run() {
             remove_lan_device,
             lan_screenshot,
             lan_console_capture,
+            lan_console_connect,
             lan_connect,
             lan_switch_display,
             lan_send_input,

@@ -440,6 +440,7 @@
 		lanPing,
 		lanScreenshot,
 		lanConsoleCapture,
+		lanConsoleConnect,
 		listDevices,
 		login,
 		type NetworkInfo,
@@ -811,19 +812,11 @@
 				&& candidate.public_key === device.public_key,
 			);
 			if (local) {
-				const capture = await lanConsoleCapture(
-					local.address,
-					local.port,
-					device.public_key,
-					[],
-				);
-				lanConsoleTarget.value = {
+				await lanConsoleConnect({
 					...device,
 					address: local.address,
 					port: local.port,
-				};
-				lanConsoleImage.value = capture.image;
-				lanConsoleState.value = capture.consoleState;
+				});
 				return;
 			}
 
