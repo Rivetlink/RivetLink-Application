@@ -14,15 +14,15 @@
 
 mod settings;
 
-use std::path::PathBuf;
 #[cfg(target_os = "linux")]
 use std::path::Path;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use base64::Engine;
-use serde::Serialize;
 #[cfg(target_os = "linux")]
 use serde::Deserialize;
+use serde::Serialize;
 use tauri::menu::{MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::{Emitter, Manager, State};
 use tokio::sync::Mutex;
@@ -634,7 +634,8 @@ fn gdm_graphical_worker_accounts() -> Result<Vec<(String, u32)>, String> {
 #[cfg(target_os = "linux")]
 const CONSOLE_AGENT_PATH: &str = "/usr/local/lib/rivetlink/rivet-agent";
 #[cfg(target_os = "linux")]
-const LIGHTDM_RIVETLINK_CONFIG: &str = "/etc/lightdm/lightdm.conf.d/90-rivetlink-unattended-console.conf";
+const LIGHTDM_RIVETLINK_CONFIG: &str =
+    "/etc/lightdm/lightdm.conf.d/90-rivetlink-unattended-console.conf";
 #[cfg(target_os = "linux")]
 const LIGHTDM_BACKUP_DIRECTORY: &str = "/var/lib/rivetlink/lightdm-backup";
 #[cfg(target_os = "linux")]
@@ -911,7 +912,10 @@ fn lightdm_wayland_session() -> Result<String, String> {
         let Ok(contents) = std::fs::read_to_string(&path) else {
             continue;
         };
-        if contents.lines().any(|line| line.starts_with("Exec=") && line.contains("gnome-session")) {
+        if contents
+            .lines()
+            .any(|line| line.starts_with("Exec=") && line.contains("gnome-session"))
+        {
             return Ok(name.trim_end_matches(".desktop").to_string());
         }
     }
@@ -926,7 +930,12 @@ fn lightdm_preflight() -> Result<String, String> {
     if !Path::new(CONSOLE_AGENT_PATH).is_file() {
         return Err("the native RivetLink service agent is not installed".to_string());
     }
-    if !command_status(CONSOLE_AGENT_PATH, &["console-lightdm-greeter-start".into(), "--help".into()])?.success() {
+    if !command_status(
+        CONSOLE_AGENT_PATH,
+        &["console-lightdm-greeter-start".into(), "--help".into()],
+    )?
+    .success()
+    {
         return Err("the installed RivetLink service agent does not support LightDM login mode; update RivetLink first".to_string());
     }
     let wayland_session = lightdm_wayland_session()?;
@@ -943,7 +952,10 @@ fn lightdm_preflight() -> Result<String, String> {
         .into_iter()
         .flatten()
         .filter_map(Result::ok)
-        .any(|entry| std::fs::read_to_string(entry.path().join("status")).is_ok_and(|status| status.trim() == "connected"));
+        .any(|entry| {
+            std::fs::read_to_string(entry.path().join("status"))
+                .is_ok_and(|status| status.trim() == "connected")
+        });
     if !has_connected_display {
         return Err("no connected HDMI/DRM display was detected; keep the HDMI dummy attached before enabling LightDM login mode".to_string());
     }
@@ -951,7 +963,11 @@ fn lightdm_preflight() -> Result<String, String> {
 }
 
 #[cfg(target_os = "linux")]
-fn run_checked_with_input(program: &str, args: &[std::ffi::OsString], input: &[u8]) -> Result<(), String> {
+fn run_checked_with_input(
+    program: &str,
+    args: &[std::ffi::OsString],
+    input: &[u8],
+) -> Result<(), String> {
     use std::io::Write;
     let mut child = std::process::Command::new(program)
         .args(args)
@@ -960,9 +976,17 @@ fn run_checked_with_input(program: &str, args: &[std::ffi::OsString], input: &[u
         .stderr(std::process::Stdio::null())
         .spawn()
         .map_err(|_| format!("could not start required system command: {program}"))?;
-    child.stdin.take().ok_or("required system command has no input")?.write_all(input)
+    child
+        .stdin
+        .take()
+        .ok_or("required system command has no input")?
+        .write_all(input)
         .map_err(|_| format!("could not configure required system command: {program}"))?;
-    if child.wait().map_err(|_| format!("could not wait for required system command: {program}"))?.success() {
+    if child
+        .wait()
+        .map_err(|_| format!("could not wait for required system command: {program}"))?
+        .success()
+    {
         Ok(())
     } else {
         Err(format!("required system command failed: {program}"))
@@ -971,15 +995,41 @@ fn run_checked_with_input(program: &str, args: &[std::ffi::OsString], input: &[u
 
 #[cfg(target_os = "linux")]
 fn run_checked_noninteractive(program: &str, args: &[std::ffi::OsString]) -> Result<(), String> {
-    let status = std::process::Command::new(program)
+    let output = std::process::Command::new(program)
         .args(args)
         .env("DEBIAN_FRONTEND", "noninteractive")
         .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
+        .output()
         .map_err(|_| format!("could not start required system command: {program}"))?;
-    if status.success() { Ok(()) } else { Err(format!("required system command failed: {program}")) }
+    if output.status.success() {
+        Ok(())
+    } else {
+        // This helper is used only for fixed, privileged package-manager and
+        // display-manager commands; it never receives credentials or remote
+        // client data. Surface the tail of its output so an owner can repair a
+        // broken APT dependency instead of getting an opaque GUI failure.
+        let combined = format!(
+            "{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let detail: String = combined
+            .trim()
+            .chars()
+            .rev()
+            .take(1200)
+            .collect::<String>()
+            .chars()
+            .rev()
+            .collect();
+        if detail.is_empty() {
+            Err(format!("required system command failed: {program}"))
+        } else {
+            Err(format!(
+                "required system command failed: {program}: {detail}"
+            ))
+        }
+    }
 }
 
 /// Enable the optional, explicitly requested LightDM X11 login greeter. This
@@ -988,7 +1038,8 @@ fn run_checked_noninteractive(program: &str, args: &[std::ffi::OsString]) -> Res
 /// manager from underneath the owner.
 #[cfg(target_os = "linux")]
 pub fn run_console_lightdm_enable<I>(args: I) -> Result<(), String>
-where I: IntoIterator<Item = std::ffi::OsString>,
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
 {
     let values: Vec<_> = args.into_iter().collect();
     if values.as_slice() != [std::ffi::OsString::from("--confirm")] {
@@ -1002,39 +1053,111 @@ where I: IntoIterator<Item = std::ffi::OsString>,
     }
     let wayland_session = lightdm_preflight()?;
     let broker_unit_path = Path::new("/etc/systemd/system/rivetlink-console-broker.service");
-    let broker_unit = std::fs::read_to_string(broker_unit_path)
-        .map_err(|_| "install the RivetLink physical-console broker before enabling LightDM login mode".to_string())?;
+    let broker_unit = std::fs::read_to_string(broker_unit_path).map_err(|_| {
+        "install the RivetLink physical-console broker before enabling LightDM login mode"
+            .to_string()
+    })?;
     if !broker_unit.contains(&format!("ExecStart={CONSOLE_AGENT_PATH} ")) {
-        return Err("the installed broker does not use RivetLink's native service agent".to_string());
+        return Err(
+            "the installed broker does not use RivetLink's native service agent".to_string(),
+        );
     }
     let default_display_manager = std::fs::read_to_string("/etc/X11/default-display-manager").ok();
     let gdm_custom_conf = std::fs::read_to_string("/etc/gdm3/custom.conf").ok();
-    let rollback = LightdmRollback { default_display_manager, gdm_custom_conf, broker_unit: broker_unit.clone(), wayland_session: wayland_session.clone() };
-    run_checked("/usr/bin/install", &["-d".into(), "-o".into(), "root".into(), "-g".into(), "root".into(), "-m".into(), "0700".into(), LIGHTDM_BACKUP_DIRECTORY.into()])?;
-    std::fs::write(LIGHTDM_ROLLBACK_METADATA, serde_json::to_vec_pretty(&rollback).map_err(|error| error.to_string())?)
-        .map_err(|error| format!("write LightDM rollback metadata: {error}"))?;
+    let rollback = LightdmRollback {
+        default_display_manager,
+        gdm_custom_conf,
+        broker_unit: broker_unit.clone(),
+        wayland_session: wayland_session.clone(),
+    };
+    run_checked(
+        "/usr/bin/install",
+        &[
+            "-d".into(),
+            "-o".into(),
+            "root".into(),
+            "-g".into(),
+            "root".into(),
+            "-m".into(),
+            "0700".into(),
+            LIGHTDM_BACKUP_DIRECTORY.into(),
+        ],
+    )?;
+    std::fs::write(
+        LIGHTDM_ROLLBACK_METADATA,
+        serde_json::to_vec_pretty(&rollback).map_err(|error| error.to_string())?,
+    )
+    .map_err(|error| format!("write LightDM rollback metadata: {error}"))?;
     use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(LIGHTDM_ROLLBACK_METADATA, std::fs::Permissions::from_mode(0o600))
-        .map_err(|error| format!("secure LightDM rollback metadata: {error}"))?;
+    std::fs::set_permissions(
+        LIGHTDM_ROLLBACK_METADATA,
+        std::fs::Permissions::from_mode(0o600),
+    )
+    .map_err(|error| format!("secure LightDM rollback metadata: {error}"))?;
 
     let result = (|| -> Result<(), String> {
-        run_checked("/usr/bin/apt-get", &["install".into(), "-y".into(), "lightdm".into(), "lightdm-gtk-greeter".into(), "xserver-xorg-core".into()])?;
+        // Installing LightDM can otherwise trigger debconf's display-manager
+        // chooser. This setup runs behind PolicyKit, without a package-manager
+        // TTY, so make that selection non-interactive; the explicit
+        // debconf-set-selections call below is the only allowed choice.
+        run_checked_noninteractive(
+            "/usr/bin/apt-get",
+            &[
+                "install".into(),
+                "-y".into(),
+                "lightdm".into(),
+                "lightdm-gtk-greeter".into(),
+                "xserver-xorg-core".into(),
+            ],
+        )?;
         let lightdm_uid = checked_linux_user_id("lightdm")?;
-        run_checked("/usr/sbin/usermod", &["-a".into(), "-G".into(), "rivetlink-console".into(), "lightdm".into()])?;
-        let inserted = broker_unit.replacen("\nRestart=on-failure", &format!(" --allowed-worker-uid {lightdm_uid}\nRestart=on-failure"), 1);
-        if inserted == broker_unit || inserted.matches("--allowed-worker-uid").count() < broker_unit.matches("--allowed-worker-uid").count() + 1 {
-            return Err("unexpected RivetLink broker unit; refusing to widen worker authorization".to_string());
+        run_checked(
+            "/usr/sbin/usermod",
+            &[
+                "-a".into(),
+                "-G".into(),
+                "rivetlink-console".into(),
+                "lightdm".into(),
+            ],
+        )?;
+        let inserted = broker_unit.replacen(
+            "\nRestart=on-failure",
+            &format!(" --allowed-worker-uid {lightdm_uid}\nRestart=on-failure"),
+            1,
+        );
+        if inserted == broker_unit
+            || inserted.matches("--allowed-worker-uid").count()
+                < broker_unit.matches("--allowed-worker-uid").count() + 1
+        {
+            return Err(
+                "unexpected RivetLink broker unit; refusing to widen worker authorization"
+                    .to_string(),
+            );
         }
-        std::fs::write(broker_unit_path, inserted).map_err(|error| format!("update broker LightDM authorization: {error}"))?;
-        std::fs::create_dir_all("/etc/lightdm/lightdm.conf.d").map_err(|error| format!("create LightDM configuration directory: {error}"))?;
+        std::fs::write(broker_unit_path, inserted)
+            .map_err(|error| format!("update broker LightDM authorization: {error}"))?;
+        std::fs::create_dir_all("/etc/lightdm/lightdm.conf.d")
+            .map_err(|error| format!("create LightDM configuration directory: {error}"))?;
         let config = format!("# Managed by RivetLink optional unattended-console setup.\n# X11 remains local and cookie-authenticated; TCP is explicitly disabled.\n[Seat:*]\ngreeter-session=lightdm-gtk-greeter\nxserver-allow-tcp=false\nuser-session={wayland_session}\ngreeter-setup-script={CONSOLE_AGENT_PATH} console-lightdm-greeter-start\ndisplay-stopped-script={CONSOLE_AGENT_PATH} console-lightdm-greeter-stop\n");
-        std::fs::write(LIGHTDM_RIVETLINK_CONFIG, config).map_err(|error| format!("write RivetLink LightDM configuration: {error}"))?;
-        std::fs::set_permissions(LIGHTDM_RIVETLINK_CONFIG, std::fs::Permissions::from_mode(0o644)).map_err(|error| format!("secure RivetLink LightDM configuration: {error}"))?;
-        run_checked_with_input("/usr/bin/debconf-set-selections", &[], b"shared/default-x-display-manager select lightdm\n")?;
+        std::fs::write(LIGHTDM_RIVETLINK_CONFIG, config)
+            .map_err(|error| format!("write RivetLink LightDM configuration: {error}"))?;
+        std::fs::set_permissions(
+            LIGHTDM_RIVETLINK_CONFIG,
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .map_err(|error| format!("secure RivetLink LightDM configuration: {error}"))?;
+        run_checked_with_input(
+            "/usr/bin/debconf-set-selections",
+            &[],
+            b"shared/default-x-display-manager select lightdm\n",
+        )?;
         run_checked_noninteractive("/usr/sbin/dpkg-reconfigure", &["lightdm".into()])?;
         run_checked("/usr/bin/systemctl", &["daemon-reload".into()])?;
         // Restart only RivetLink's broker, never the active display manager.
-        let _ = run_checked("/usr/bin/systemctl", &["restart".into(), "rivetlink-console-broker.service".into()]);
+        let _ = run_checked(
+            "/usr/bin/systemctl",
+            &["restart".into(), "rivetlink-console-broker.service".into()],
+        );
         Ok(())
     })();
     if result.is_err() {
@@ -1045,28 +1168,56 @@ where I: IntoIterator<Item = std::ffi::OsString>,
 
 #[cfg(target_os = "linux")]
 fn restore_lightdm_rollback() -> Result<(), String> {
-    let rollback: LightdmRollback = serde_json::from_slice(&std::fs::read(LIGHTDM_ROLLBACK_METADATA)
-        .map_err(|_| "no RivetLink LightDM rollback metadata exists".to_string())?)
-        .map_err(|error| format!("read LightDM rollback metadata: {error}"))?;
+    let rollback: LightdmRollback = serde_json::from_slice(
+        &std::fs::read(LIGHTDM_ROLLBACK_METADATA)
+            .map_err(|_| "no RivetLink LightDM rollback metadata exists".to_string())?,
+    )
+    .map_err(|error| format!("read LightDM rollback metadata: {error}"))?;
     let _ = std::fs::remove_file(LIGHTDM_RIVETLINK_CONFIG);
-    if let Some(contents) = rollback.default_display_manager { std::fs::write("/etc/X11/default-display-manager", contents).map_err(|error| format!("restore display-manager selection: {error}"))?; }
-    match rollback.gdm_custom_conf { Some(contents) => std::fs::write("/etc/gdm3/custom.conf", contents).map_err(|error| format!("restore GDM configuration: {error}"))?, None => { let _ = std::fs::remove_file("/etc/gdm3/custom.conf"); } }
-    std::fs::write("/etc/systemd/system/rivetlink-console-broker.service", rollback.broker_unit).map_err(|error| format!("restore broker authorization: {error}"))?;
-    run_checked_with_input("/usr/bin/debconf-set-selections", &[], b"shared/default-x-display-manager select gdm3\n")?;
+    if let Some(contents) = rollback.default_display_manager {
+        std::fs::write("/etc/X11/default-display-manager", contents)
+            .map_err(|error| format!("restore display-manager selection: {error}"))?;
+    }
+    match rollback.gdm_custom_conf {
+        Some(contents) => std::fs::write("/etc/gdm3/custom.conf", contents)
+            .map_err(|error| format!("restore GDM configuration: {error}"))?,
+        None => {
+            let _ = std::fs::remove_file("/etc/gdm3/custom.conf");
+        }
+    }
+    std::fs::write(
+        "/etc/systemd/system/rivetlink-console-broker.service",
+        rollback.broker_unit,
+    )
+    .map_err(|error| format!("restore broker authorization: {error}"))?;
+    run_checked_with_input(
+        "/usr/bin/debconf-set-selections",
+        &[],
+        b"shared/default-x-display-manager select gdm3\n",
+    )?;
     run_checked_noninteractive("/usr/sbin/dpkg-reconfigure", &["gdm3".into()])?;
     run_checked("/usr/bin/systemctl", &["daemon-reload".into()])?;
-    let _ = run_checked("/usr/bin/systemctl", &["restart".into(), "rivetlink-console-broker.service".into()]);
-    std::fs::remove_file(LIGHTDM_ROLLBACK_METADATA).map_err(|error| format!("remove LightDM rollback metadata: {error}"))?;
+    let _ = run_checked(
+        "/usr/bin/systemctl",
+        &["restart".into(), "rivetlink-console-broker.service".into()],
+    );
+    std::fs::remove_file(LIGHTDM_ROLLBACK_METADATA)
+        .map_err(|error| format!("remove LightDM rollback metadata: {error}"))?;
     Ok(())
 }
 
 #[cfg(target_os = "linux")]
 pub fn run_console_lightdm_restore<I>(args: I) -> Result<(), String>
-where I: IntoIterator<Item = std::ffi::OsString>,
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
 {
     let values: Vec<_> = args.into_iter().collect();
-    if !values.is_empty() { return Err("invalid LightDM restore request".to_string()); }
-    if run_checked_output("/usr/bin/id", &["-u".into()])?.trim() != "0" { return Err("LightDM restore must be authorized by PolicyKit".to_string()); }
+    if !values.is_empty() {
+        return Err("invalid LightDM restore request".to_string());
+    }
+    if run_checked_output("/usr/bin/id", &["-u".into()])?.trim() != "0" {
+        return Err("LightDM restore must be authorized by PolicyKit".to_string());
+    }
     restore_lightdm_rollback()
 }
 
@@ -1620,18 +1771,29 @@ async fn setup_physical_console(
             // This is deliberately a second, explicit privileged operation.
             // Normal console installation and normal application updates never
             // change the display manager; the checkbox is the owner's consent.
-            let lightdm_status = tokio::process::Command::new("/usr/bin/pkexec")
+            let lightdm_output = tokio::process::Command::new("/usr/bin/pkexec")
                 .arg(&executable)
                 .arg("--rivetlink-console-lightdm-enable")
                 .args(["--confirm"])
                 .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
+                // The helper only accepts fixed arguments and never receives
+                // credentials. Retaining its concise stderr lets the owner
+                // see a failed preflight/transaction without exposing secrets
+                // or sending them to the journal.
+                .output()
                 .await
                 .map_err(|_| "could not start authorized LightDM setup".to_string())?;
-            if !lightdm_status.success() {
-                return Err("LightDM login mode was not enabled; RivetLink left the existing display manager unchanged. Check the system journal for the preflight diagnostic.".to_string());
+            if !lightdm_output.status.success() {
+                let detail = String::from_utf8_lossy(&lightdm_output.stderr);
+                let detail = detail.trim();
+                let suffix = if detail.is_empty() {
+                    String::new()
+                } else {
+                    format!(" Details: {detail}")
+                };
+                return Err(format!(
+                    "LightDM login mode was not enabled; RivetLink restored the existing display-manager configuration.{suffix}"
+                ));
             }
         }
         // The privileged installer updates a global user unit.  The currently
@@ -1665,7 +1827,9 @@ async fn setup_physical_console(
 /// packages and does not restart the active graphical session; reboot to make
 /// the restored GDM selection take effect safely.
 #[tauri::command]
-async fn restore_physical_console_gdm(app: tauri::AppHandle) -> Result<PhysicalConsoleStatus, String> {
+async fn restore_physical_console_gdm(
+    app: tauri::AppHandle,
+) -> Result<PhysicalConsoleStatus, String> {
     #[cfg(target_os = "linux")]
     {
         let executable = appimage_or_current_exe()?;
@@ -1679,7 +1843,9 @@ async fn restore_physical_console_gdm(app: tauri::AppHandle) -> Result<PhysicalC
             .await
             .map_err(|_| "could not start authorized LightDM restore".to_string())?;
         if !status.success() {
-            return Err("could not restore GDM; use the documented SSH recovery commands".to_string());
+            return Err(
+                "could not restore GDM; use the documented SSH recovery commands".to_string(),
+            );
         }
         Ok(physical_console_status(app))
     }

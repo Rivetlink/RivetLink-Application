@@ -23,10 +23,14 @@ fn main() {
         std::env::args_os().nth(1).as_deref(),
         Some(arg) if arg == std::ffi::OsStr::new("--rivetlink-console-lightdm-enable")
     ) {
-        let exit_code = match rivetlink_app_lib::run_console_lightdm_enable(std::env::args_os().skip(2)) {
-            Ok(()) => 0,
-            Err(error) => { eprintln!("RivetLink LightDM setup failed: {error}"); 1 }
-        };
+        let exit_code =
+            match rivetlink_app_lib::run_console_lightdm_enable(std::env::args_os().skip(2)) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("RivetLink LightDM setup failed: {error}");
+                    1
+                }
+            };
         std::process::exit(exit_code);
     }
 
@@ -35,10 +39,14 @@ fn main() {
         std::env::args_os().nth(1).as_deref(),
         Some(arg) if arg == std::ffi::OsStr::new("--rivetlink-console-lightdm-restore")
     ) {
-        let exit_code = match rivetlink_app_lib::run_console_lightdm_restore(std::env::args_os().skip(2)) {
-            Ok(()) => 0,
-            Err(error) => { eprintln!("RivetLink LightDM restore failed: {error}"); 1 }
-        };
+        let exit_code =
+            match rivetlink_app_lib::run_console_lightdm_restore(std::env::args_os().skip(2)) {
+                Ok(()) => 0,
+                Err(error) => {
+                    eprintln!("RivetLink LightDM restore failed: {error}");
+                    1
+                }
+            };
         std::process::exit(exit_code);
     }
 
