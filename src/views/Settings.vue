@@ -87,8 +87,8 @@
 					<VCardTitle class="d-flex align-center">
 						{{ t("physicalConsole.title") }}
 						<VSpacer />
-						<VChip v-if="physicalConsole.configured" :color="physicalConsole.brokerActive && physicalConsole.nativeServiceAgent ? 'success' : 'warning'" size="small">
-							{{ physicalConsole.brokerActive && physicalConsole.nativeServiceAgent ? t("physicalConsole.running") : t("physicalConsole.needsAttention") }}
+						<VChip v-if="physicalConsole.configured" :color="physicalConsole.brokerActive && physicalConsole.nativeServiceAgentCurrent ? 'success' : 'warning'" size="small">
+							{{ physicalConsole.brokerActive && physicalConsole.nativeServiceAgentCurrent ? t("physicalConsole.running") : t("physicalConsole.needsAttention") }}
 						</VChip>
 					</VCardTitle>
 					<VCardText>
@@ -105,8 +105,8 @@
 							</VListItem>
 							<VListItem :title="t('physicalConsole.serviceAgent')">
 								<template #append>
-									<VChip size="x-small" :color="physicalConsole.nativeServiceAgent ? 'success' : 'warning'">
-										{{ physicalConsole.nativeServiceAgent ? t('physicalConsole.native') : t('physicalConsole.updateRequired') }}
+									<VChip size="x-small" :color="physicalConsole.nativeServiceAgentCurrent ? 'success' : 'warning'">
+										{{ physicalConsole.nativeServiceAgentCurrent ? t('physicalConsole.native') : t('physicalConsole.updateRequired') }}
 									</VChip>
 								</template>
 							</VListItem>
@@ -142,9 +142,19 @@
 						</VBtn>
 						<template v-else>
 							<VBtn
+								v-if="!physicalConsole.nativeServiceAgentCurrent"
 								color="primary"
 								variant="text"
 								prepend-icon="mdi-update"
+								:loading="physicalConsoleBusy"
+								@click="updatePhysicalConsoleAgent"
+							>
+								{{ t("physicalConsole.updateAgent") }}
+							</VBtn>
+							<VBtn
+								color="primary"
+								variant="text"
+								prepend-icon="mdi-cog-outline"
 								:disabled="physicalConsoleBusy"
 								@click="physicalConsoleDialog = true"
 							>
@@ -378,6 +388,7 @@
 		brokerActive: false,
 		bootServiceEnabled: false,
 		nativeServiceAgent: false,
+		nativeServiceAgentCurrent: false,
 		gdmAvailable: false,
 		lanListening: false,
 		lanPort: null as number | null,
@@ -423,6 +434,19 @@
 		physicalConsoleServiceError.value = "";
 		try {
 			physicalConsole.value = await invoke<typeof physicalConsole.value>("physical_console_service_action", { action });
+		} catch (error) {
+			physicalConsoleServiceError.value = String(error);
+		} finally {
+			physicalConsoleBusy.value = false;
+		}
+	}
+
+	async function updatePhysicalConsoleAgent() {
+		physicalConsoleBusy.value = true;
+		physicalConsoleServiceError.value = "";
+		try {
+			await invoke<boolean>("update_physical_console_agent_if_needed");
+			await refreshPhysicalConsoleStatus();
 		} catch (error) {
 			physicalConsoleServiceError.value = String(error);
 		} finally {

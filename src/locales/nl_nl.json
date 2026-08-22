@@ -212,6 +212,7 @@
         "listening": "luistert op poort {port}",
         "notListening": "luistert niet",
         "setup": "Fysieke console instellen",
+        "updateAgent": "Service-agent bijwerken",
         "update": "Bijwerken / opnieuw instellen",
         "enable": "Inschakelen en starten",
         "disable": "Uitschakelen en stoppen",
@@ -273,6 +274,7 @@
     },
     "viewer": {
         "connecting": "Verbinden — scherm van de andere computer wordt geladen…",
+        "error": "Verbinden mislukt: {error}",
         "ended": "De verbinding is beëindigd.",
         "poor": "Slechte verbinding",
         "resetZoom": "Zoom terugzetten",

@@ -32,7 +32,7 @@
 					size="48"
 					class="mb-3"
 				/>
-				<p>{{ ended ? t("viewer.ended") : t("viewer.connecting") }}</p>
+				<p>{{ errorMessage ? t("viewer.error", { error: errorMessage }) : (ended ? t("viewer.ended") : t("viewer.connecting")) }}</p>
 			</div>
 			<VChip
 				v-if="slow && hasFrame"
@@ -140,6 +140,10 @@
 	const canvasEl = ref<HTMLCanvasElement | null>(null);
 	const hasFrame = ref(false);
 	const ended = ref(false);
+	// A console capture can be authenticated and connected while the host's
+	// compositor refuses to provide a frame (notably GDM lockdown). Keep the
+	// actual backend error visible instead of leaving the user on a spinner.
+	const errorMessage = ref<string | null>(null);
 	const slow = ref(false);
 	// Screens the host offers. Empty/one on Linux hosts (the portal already
 	// picked a screen); two or more on macOS, where the picker can switch.
@@ -218,6 +222,7 @@
 	const unlistenFrame = ref<UnlistenFn | null>(null);
 	const unlistenConsoleFrame = ref<UnlistenFn | null>(null);
 	const unlistenEnd = ref<UnlistenFn | null>(null);
+	const unlistenError = ref<UnlistenFn | null>(null);
 	const unlistenDisplays = ref<UnlistenFn | null>(null);
 	const unlistenBlur = ref<UnlistenFn | null>(null);
 	// The host sends a heartbeat frame ~every second; if nothing arrives for a
@@ -269,6 +274,7 @@
 
 		hasFrame.value = true;
 		ended.value = false;
+		errorMessage.value = null;
 		// Frames are flowing again — if this window was lingering on a "connection
 		// ended" screen (about to self-close in 5s) it's a live reconnect now, so
 		// cancel that pending close instead of yanking the window mid-session.
@@ -301,6 +307,7 @@
 		bitmap.close();
 		hasFrame.value = true;
 		ended.value = false;
+		errorMessage.value = null;
 		lastFrameAt.value = performance.now();
 		slow.value = false;
 	}
@@ -499,6 +506,9 @@
 		unlistenConsoleFrame.value = await listen<ConsoleFrame>("lan://console-frame", (e) => {
 			pending.value = pending.value.then(() => applyConsoleFrame(e.payload)).catch(() => { /* drop */ });
 		});
+		unlistenError.value = await listen<string>("lan://error", (e) => {
+			errorMessage.value = e.payload || "unknown error";
+		});
 		unlistenEnd.value = await listen("lan://disconnected", () => {
 			ended.value = true;
 			hasFrame.value = false;
@@ -550,6 +560,7 @@
 		unlistenFrame.value?.();
 		unlistenConsoleFrame.value?.();
 		unlistenEnd.value?.();
+		unlistenError.value?.();
 		unlistenDisplays.value?.();
 		unlistenBlur.value?.();
 		detachControl(canvasEl.value); // drop any input listeners

@@ -128,6 +128,16 @@
 		});
 		await loadSettings();
 		if (getCurrentWindow().label === "main" && store.settings.setup_complete) {
+			// A configured Ubuntu Physical Console has a small native agent beside
+			// the AppImage. After a desktop update, bring that agent to the exact
+			// same build through its deliberately narrow PolicyKit helper. This
+			// preserves the existing device identity, trusted clients and transport
+			// settings; cancelling the OS authorization simply retries next launch.
+			try {
+				await invoke<boolean>("update_physical_console_agent_if_needed");
+			} catch (error) {
+				console.warn("Physical Console service agent was not updated", error);
+			}
 			// Check for updates once on launch. Silent unless something's waiting:
 			// a normal release pops a dismissable dialog, a forced one a locked
 			// dialog. Fire-and-forget so a slow network never delays the app.

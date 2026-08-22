@@ -426,6 +426,7 @@ struct PhysicalConsoleStatus {
     broker_active: bool,
     boot_service_enabled: bool,
     native_service_agent: bool,
+    native_service_agent_current: bool,
     gdm_available: bool,
     lan_listening: bool,
     lan_port: Option<u16>,
@@ -456,12 +457,16 @@ fn default_lan_port() -> u16 {
 
 #[cfg(target_os = "linux")]
 #[tauri::command]
-fn physical_console_status() -> PhysicalConsoleStatus {
+fn physical_console_status(app: tauri::AppHandle) -> PhysicalConsoleStatus {
     const BROKER_UNIT: &str = "/etc/systemd/system/rivetlink-console-broker.service";
     let unit = std::fs::read_to_string(BROKER_UNIT).unwrap_or_default();
     let unit_installed = std::path::Path::new(BROKER_UNIT).is_file();
     let native_service_agent = std::path::Path::new(CONSOLE_AGENT_PATH).is_file()
         && unit.contains(&format!("ExecStart={CONSOLE_AGENT_PATH} "));
+    let native_service_agent_current = native_service_agent
+        && bundled_console_agent(&app).is_ok_and(|bundled| {
+            same_regular_file(std::path::Path::new(CONSOLE_AGENT_PATH), &bundled)
+        });
     let broker_active = std::process::Command::new("/usr/bin/systemctl")
         .args(["is-active", "--quiet", "rivetlink-console-broker.service"])
         .status()
@@ -502,6 +507,7 @@ fn physical_console_status() -> PhysicalConsoleStatus {
         broker_active,
         boot_service_enabled,
         native_service_agent,
+        native_service_agent_current,
         gdm_available,
         lan_listening,
         lan_port,
@@ -512,19 +518,44 @@ fn physical_console_status() -> PhysicalConsoleStatus {
 
 #[cfg(not(target_os = "linux"))]
 #[tauri::command]
-fn physical_console_status() -> PhysicalConsoleStatus {
+fn physical_console_status(_app: tauri::AppHandle) -> PhysicalConsoleStatus {
     PhysicalConsoleStatus {
         supported: false,
         configured: false,
         broker_active: false,
         boot_service_enabled: false,
         native_service_agent: false,
+        native_service_agent_current: false,
         gdm_available: false,
         lan_listening: false,
         lan_port: None,
         lan_enabled: false,
         relay_enabled: false,
     }
+}
+
+/// Compare a root-installed agent to the exact native agent bundled by this
+/// desktop build. Both are local regular files; reading them never exposes a
+/// display, credential, or key. A byte comparison avoids relying on the
+/// agent's package version string and prevents an old service binary silently
+/// surviving a successful desktop update.
+#[cfg(target_os = "linux")]
+fn same_regular_file(left: &std::path::Path, right: &std::path::Path) -> bool {
+    const MAX_AGENT_BYTES: u64 = 128 * 1024 * 1024;
+    let Ok(left_meta) = std::fs::metadata(left) else {
+        return false;
+    };
+    let Ok(right_meta) = std::fs::metadata(right) else {
+        return false;
+    };
+    left_meta.is_file()
+        && right_meta.is_file()
+        && left_meta.len() <= MAX_AGENT_BYTES
+        && left_meta.len() == right_meta.len()
+        && matches!(
+            (std::fs::read(left), std::fs::read(right)),
+            (Ok(left), Ok(right)) if left == right
+        )
 }
 
 #[cfg(target_os = "linux")]
@@ -766,6 +797,69 @@ where
         }
         _ => Err("invalid physical-console service action".to_string()),
     }
+}
+
+/// Narrow root entry point used after a signed desktop application update.
+/// It updates only the native agent behind an already-installed RivetLink
+/// physical-console unit.  Trust, device identity, transport configuration,
+/// ownership and unit contents are intentionally left untouched.
+#[cfg(target_os = "linux")]
+pub fn run_console_agent_updater<I>(args: I) -> Result<(), String>
+where
+    I: IntoIterator<Item = std::ffi::OsString>,
+{
+    const BROKER_UNIT: &str = "/etc/systemd/system/rivetlink-console-broker.service";
+    let values: Vec<_> = args.into_iter().collect();
+    let [source_flag, source, service_agent_flag, service_agent, appimage_flag, appimage] =
+        values.as_slice()
+    else {
+        return Err("invalid console agent update request".to_string());
+    };
+    if source_flag != "--source-exe"
+        || service_agent_flag != "--service-agent-source"
+        || appimage_flag != "--appimage"
+    {
+        return Err("invalid console agent update request".to_string());
+    }
+    let source = PathBuf::from(source);
+    let service_agent = PathBuf::from(service_agent);
+    let appimage = appimage == "1";
+    let root = run_checked_output("/usr/bin/id", &["-u".into()])?;
+    if root.trim() != "0" {
+        return Err("console agent update must be authorized by PolicyKit".to_string());
+    }
+    if !source.is_absolute() || !source.is_file() {
+        return Err("console agent update source executable is unavailable".to_string());
+    }
+    if !service_agent.is_absolute() || (!appimage && !service_agent.is_file()) {
+        return Err("console agent update source is unavailable".to_string());
+    }
+    let unit = std::fs::read_to_string(BROKER_UNIT)
+        .map_err(|_| "physical-console broker is not installed".to_string())?;
+    if !unit.contains(&format!("ExecStart={CONSOLE_AGENT_PATH} ")) {
+        return Err("physical-console broker does not use RivetLink's native agent".to_string());
+    }
+    let broker_was_active = command_status(
+        "/usr/bin/systemctl",
+        &[
+            "is-active".into(),
+            "--quiet".into(),
+            "rivetlink-console-broker.service".into(),
+        ],
+    )?
+    .success();
+
+    // Atomic replacement means a running broker continues using its old mapped
+    // executable until the controlled restart below; no partial binary can be
+    // observed by either service.
+    install_console_agent_runtime(&source, &service_agent, appimage)?;
+    if broker_was_active {
+        run_checked(
+            "/usr/bin/systemctl",
+            &["restart".into(), "rivetlink-console-broker.service".into()],
+        )?;
+    }
+    Ok(())
 }
 
 /// The only privileged entry point used by the Ubuntu setup dialog.  Keeping
@@ -1332,7 +1426,7 @@ async fn setup_physical_console(
                 "rivetlink-console-worker.service".into(),
             ],
         )?;
-        return Ok(physical_console_status());
+        return Ok(physical_console_status(app));
     }
     #[cfg(not(target_os = "linux"))]
     {
@@ -1345,6 +1439,7 @@ async fn setup_physical_console(
 /// privileged helper accepts a fixed enum, not a unit name or command.
 #[tauri::command]
 async fn physical_console_service_action(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     action: String,
 ) -> Result<PhysicalConsoleStatus, String> {
@@ -1397,17 +1492,96 @@ async fn physical_console_service_action(
                 ],
             )?;
         }
-        return Ok(physical_console_status());
+        return Ok(physical_console_status(app));
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = (state, action);
+        let _ = (app, state, action);
         Err("physical-console access is supported on Ubuntu only".to_string())
+    }
+}
+
+/// Refresh an already configured physical-console service agent from this
+/// signed RivetLink build.  This is intentionally separate from setup: no
+/// controller key, relay login, transport selection, or device registration is
+/// requested again after a normal application update.
+#[tauri::command]
+async fn update_physical_console_agent_if_needed(app: tauri::AppHandle) -> Result<bool, String> {
+    #[cfg(target_os = "linux")]
+    {
+        const BROKER_UNIT: &str = "/etc/systemd/system/rivetlink-console-broker.service";
+        let unit = std::fs::read_to_string(BROKER_UNIT).unwrap_or_default();
+        if !unit.contains(&format!("ExecStart={CONSOLE_AGENT_PATH} ")) {
+            return Ok(false);
+        }
+        let service_agent = bundled_console_agent(&app)?;
+        if same_regular_file(std::path::Path::new(CONSOLE_AGENT_PATH), &service_agent) {
+            return Ok(false);
+        }
+        let executable = appimage_or_current_exe()?;
+        let status = tokio::process::Command::new("/usr/bin/pkexec")
+            .arg(&executable)
+            .arg("--rivetlink-console-update-agent")
+            .args([
+                "--source-exe",
+                executable
+                    .to_str()
+                    .ok_or("invalid RivetLink executable path")?,
+            ])
+            .args([
+                "--service-agent-source",
+                service_agent
+                    .to_str()
+                    .ok_or("invalid native RivetLink service-agent path")?,
+            ])
+            .args([
+                "--appimage",
+                if std::env::var_os("APPIMAGE").is_some() {
+                    "1"
+                } else {
+                    "0"
+                },
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .map_err(|_| "could not start the authorized console-agent update".to_string())?;
+        if !status.success() {
+            return Err(
+                "physical-console service agent update was not authorized or failed".to_string(),
+            );
+        }
+        // The system helper restarts the broker. Reload the existing desktop
+        // user's worker so its next request cannot retain an old mapped agent;
+        // GDM picks the global unit and new agent automatically at the next
+        // greeter session.
+        run_checked(
+            "/usr/bin/systemctl",
+            &["--user".into(), "daemon-reload".into()],
+        )?;
+        run_checked(
+            "/usr/bin/systemctl",
+            &[
+                "--user".into(),
+                "restart".into(),
+                "rivetlink-console-worker.service".into(),
+            ],
+        )?;
+        tracing::info!("physical-console native service agent refreshed after desktop update");
+        return Ok(true);
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = app;
+        Ok(false)
     }
 }
 
 #[allow(dead_code, unreachable_code, unused_variables)] // Retained only as an error path for obsolete callers.
 async fn setup_physical_console_legacy(
+    app: tauri::AppHandle,
     state: State<'_, AppState>,
     setup: PhysicalConsoleSetup,
 ) -> Result<PhysicalConsoleStatus, String> {
@@ -1816,7 +1990,7 @@ async fn setup_physical_console_legacy(
         let _ = std::fs::remove_file(broker_source);
         let _ = std::fs::remove_file(worker_source);
         install_result?;
-        let mut status = physical_console_status();
+        let mut status = physical_console_status(app);
         status.lan_enabled = setup.enable_lan;
         status.relay_enabled = setup.enable_relay;
         return Ok(status);
@@ -2847,7 +3021,9 @@ mod bonjour_tests {
 
 #[cfg(all(test, target_os = "linux"))]
 mod console_service_tests {
-    use super::{extracted_console_agent, physical_console_units, CONSOLE_AGENT_PATH};
+    use super::{
+        extracted_console_agent, physical_console_units, same_regular_file, CONSOLE_AGENT_PATH,
+    };
 
     #[test]
     fn services_execute_only_the_native_agent_and_keep_worker_out_of_appimage_sandbox() {
@@ -2884,6 +3060,22 @@ mod console_service_tests {
 
         assert_eq!(extracted_console_agent(&root).expect("find agent"), agent);
         std::fs::remove_dir_all(&root).expect("remove test resource tree");
+    }
+
+    #[test]
+    fn service_agent_current_check_requires_exact_binary_content() {
+        let root =
+            std::env::temp_dir().join(format!("rivetlink-agent-compare-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).expect("create test directory");
+        let installed = root.join("installed-agent");
+        let bundled = root.join("bundled-agent");
+        std::fs::write(&installed, b"agent-build-a").expect("write installed agent");
+        std::fs::write(&bundled, b"agent-build-a").expect("write bundled agent");
+        assert!(same_regular_file(&installed, &bundled));
+
+        std::fs::write(&bundled, b"agent-build-b").expect("replace bundled agent");
+        assert!(!same_regular_file(&installed, &bundled));
+        std::fs::remove_dir_all(&root).expect("remove test directory");
     }
 }
 
@@ -3630,7 +3822,7 @@ async fn start_host(_app: tauri::AppHandle, _state: State<'_, AppState>) -> Resu
 async fn start_host(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
     #[cfg(target_os = "linux")]
     {
-        let console = physical_console_status();
+        let console = physical_console_status(app.clone());
         if console.broker_active && console.lan_enabled {
             return Err(
                 "Ubuntu Physical Console already owns the RivetLink LAN port; use that service for this computer"
@@ -4558,6 +4750,7 @@ pub fn run() {
             physical_console_status,
             setup_physical_console,
             physical_console_service_action,
+            update_physical_console_agent_if_needed,
             toggle_devtools,
             add_relay,
             remove_relay,

@@ -212,6 +212,7 @@
         "listening": "listening on port {port}",
         "notListening": "not listening",
         "setup": "Set up physical console",
+        "updateAgent": "Update service agent",
         "update": "Update / reconfigure",
         "enable": "Enable and start",
         "disable": "Disable and stop",
@@ -273,6 +274,7 @@
     },
     "viewer": {
         "connecting": "Connecting — loading the other computer's screen…",
+        "error": "Connection failed: {error}",
         "ended": "The connection has ended.",
         "poor": "Poor connection",
         "resetZoom": "Reset zoom",
