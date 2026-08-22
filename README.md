@@ -17,7 +17,10 @@ video, input control, and Host mode are on the roadmap.
 On **Ubuntu Desktop 24.04 LTS or newer**, use **Settings → Ubuntu physical
 console** with a permanent HDMI dummy/EDID emulator. After one owner-approved
 PolicyKit action, RivetLink starts a non-root broker before Ubuntu login and
-captures the real GDM/GNOME seat0 session through a narrowly scoped worker.
+captures the real logged-in GNOME seat0 session through a narrowly scoped
+worker. Stock GNOME/Mutter intentionally does not permit RivetLink to capture
+or inject input into the existing physical GDM login display; GNOME's supported
+Remote Login uses a separate headless RDP display instead.
 Setup offers direct **Local network**, **Via relay**, or both. Local network
 uses a pinned, encrypted trusted-device connection and needs no relay, account
 or internet; relay registration uses the current signed-in session, so no relay
