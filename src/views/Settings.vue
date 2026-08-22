@@ -117,6 +117,13 @@
 									</VChip>
 								</template>
 							</VListItem>
+							<VListItem :title="t('physicalConsole.loginScreen')">
+								<template #append>
+									<VChip size="x-small" :color="physicalConsole.lightdmLoginEnabled ? 'success' : 'warning'">
+										{{ physicalConsole.lightdmLoginEnabled ? t('physicalConsole.lightdmEnabled') : t('physicalConsole.gdmProtected') }}
+									</VChip>
+								</template>
+							</VListItem>
 							<VListItem v-if="physicalConsole.lanEnabled" :title="t('physicalConsole.localNetwork')">
 								<template #append>
 									<VChip size="x-small" :color="physicalConsole.lanListening ? 'success' : 'warning'">
@@ -141,6 +148,16 @@
 							{{ t("physicalConsole.setup") }}
 						</VBtn>
 						<template v-else>
+							<VBtn
+								v-if="physicalConsole.lightdmLoginEnabled"
+								color="warning"
+								variant="text"
+								prepend-icon="mdi-restore"
+								:loading="physicalConsoleBusy"
+								@click="restorePhysicalConsoleGdm"
+							>
+								{{ t("physicalConsole.restoreGdm") }}
+							</VBtn>
 							<VBtn
 								v-if="!physicalConsole.nativeServiceAgentCurrent"
 								color="primary"
@@ -314,6 +331,13 @@
 						persistent-hint
 						density="comfortable"
 					/>
+					<VCheckbox
+						v-model="physicalConsoleLightdmLogin"
+						:label="t('physicalConsole.lightdmOptIn')"
+						:hint="t('physicalConsole.lightdmOptInHint')"
+						persistent-hint
+						density="comfortable"
+					/>
 					<VAlert
 						v-if="physicalConsoleError"
 						type="error"
@@ -382,6 +406,7 @@
 	const physicalConsoleControllerKey = ref("");
 	const physicalConsoleLan = ref(true);
 	const physicalConsoleRelay = ref(true);
+	const physicalConsoleLightdmLogin = ref(false);
 	const physicalConsole = ref({
 		supported: false,
 		configured: false,
@@ -390,6 +415,8 @@
 		nativeServiceAgent: false,
 		nativeServiceAgentCurrent: false,
 		gdmAvailable: false,
+		lightdmLoginEnabled: false,
+		loginManager: "unknown",
 		lanListening: false,
 		lanPort: null as number | null,
 		lanEnabled: false,
@@ -419,6 +446,7 @@
 					controllerPublicKey: physicalConsoleControllerKey.value,
 					enableLan: physicalConsoleLan.value,
 					enableRelay: physicalConsoleRelay.value,
+					enableLightdmLogin: physicalConsoleLightdmLogin.value,
 				},
 			});
 			closePhysicalConsoleDialog();
@@ -434,6 +462,18 @@
 		physicalConsoleServiceError.value = "";
 		try {
 			physicalConsole.value = await invoke<typeof physicalConsole.value>("physical_console_service_action", { action });
+		} catch (error) {
+			physicalConsoleServiceError.value = String(error);
+		} finally {
+			physicalConsoleBusy.value = false;
+		}
+	}
+
+	async function restorePhysicalConsoleGdm() {
+		physicalConsoleBusy.value = true;
+		physicalConsoleServiceError.value = "";
+		try {
+			physicalConsole.value = await invoke<typeof physicalConsole.value>("restore_physical_console_gdm");
 		} catch (error) {
 			physicalConsoleServiceError.value = String(error);
 		} finally {
