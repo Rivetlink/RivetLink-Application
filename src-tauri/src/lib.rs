@@ -801,7 +801,7 @@ where
 
 /// Narrow root entry point used after a signed desktop application update.
 /// It updates only the native agent behind an already-installed RivetLink
-/// physical-console unit.  Trust, device identity, transport configuration,
+/// physical-console unit. Trust, device identity, transport configuration,
 /// ownership and unit contents are intentionally left untouched.
 #[cfg(target_os = "linux")]
 pub fn run_console_agent_updater<I>(args: I) -> Result<(), String>
@@ -1009,7 +1009,6 @@ where
             "install".into(),
             "-y".into(),
             "pipewire".into(),
-            "acl".into(),
             "gstreamer1.0-tools".into(),
             "gstreamer1.0-pipewire".into(),
         ],
@@ -1771,7 +1770,6 @@ async fn setup_physical_console_legacy(
                 "rivetlink".into(),
                 "--".into(),
                 "/usr/local/lib/rivetlink/rivet-agent".into(),
-                "--rivetlink-agent".into(),
                 "--config".into(),
                 "/var/lib/rivetlink/agent.json".into(),
                 "init".into(),
@@ -1817,7 +1815,6 @@ async fn setup_physical_console_legacy(
             "rivetlink".into(),
             "--".into(),
             "/usr/local/lib/rivetlink/rivet-agent".into(),
-            "--rivetlink-agent".into(),
             "--config".into(),
             "/var/lib/rivetlink/agent.json".into(),
             "configure-console-transports".into(),
@@ -1840,7 +1837,6 @@ async fn setup_physical_console_legacy(
                 "rivetlink".into(),
                 "--".into(),
                 "/usr/local/lib/rivetlink/rivet-agent".into(),
-                "--rivetlink-agent".into(),
                 "--config".into(),
                 "/var/lib/rivetlink/agent.json".into(),
                 "public-key".into(),
@@ -1862,7 +1858,6 @@ async fn setup_physical_console_legacy(
                     "rivetlink".into(),
                     "--".into(),
                     "/usr/local/lib/rivetlink/rivet-agent".into(),
-                    "--rivetlink-agent".into(),
                     "--config".into(),
                     "/var/lib/rivetlink/agent.json".into(),
                     "device-id".into(),
@@ -1888,7 +1883,6 @@ async fn setup_physical_console_legacy(
                     "rivetlink".into(),
                     "--".into(),
                     "/usr/local/lib/rivetlink/rivet-agent".into(),
-                    "--rivetlink-agent".into(),
                     "--config".into(),
                     "/var/lib/rivetlink/agent.json".into(),
                     "set-device-id".into(),
@@ -1905,7 +1899,6 @@ async fn setup_physical_console_legacy(
                 "rivetlink".into(),
                 "--".into(),
                 "/usr/local/lib/rivetlink/rivet-agent".into(),
-                "--rivetlink-agent".into(),
                 "--config".into(),
                 "/var/lib/rivetlink/agent.json".into(),
                 "trust-client".into(),
@@ -1918,18 +1911,14 @@ async fn setup_physical_console_legacy(
             ],
         )?;
 
-        let appimage_extract = std::env::var_os("APPIMAGE")
-            .is_some()
-            .then_some("Environment=APPIMAGE_EXTRACT_AND_RUN=1\n")
-            .unwrap_or("");
         let broker_unit = format!(
-            "[Unit]\nDescription=RivetLink physical HDMI/GDM console broker\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=60\nStartLimitBurst=5\n\n[Service]\nType=simple\nUser=rivetlink\nGroup=rivetlink-console\nRuntimeDirectory=rivetlink\nRuntimeDirectoryMode=0710\nExecStart=/usr/local/lib/rivetlink/rivet-agent --rivetlink-agent --config /var/lib/rivetlink/agent.json console-broker --socket /run/rivetlink/console.sock --allowed-worker-uid {gdm_uid} --allowed-worker-uid {owner_uid}\nRestart=on-failure\nRestartSec=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/rivetlink /run/rivetlink\nLockPersonality=yes\nRestrictSUIDSGID=yes\n{appimage_extract}Environment=RUST_LOG=info\nEnvironment=RIVETLINK_CONSOLE_LAN={}\nEnvironment=RIVETLINK_CONSOLE_RELAY={}\nEnvironment=RIVETLINK_CONSOLE_LAN_PORT={}\n\n[Install]\nWantedBy=multi-user.target\n",
+            "[Unit]\nDescription=RivetLink physical HDMI/GDM console broker\nWants=network-online.target\nAfter=network-online.target\nStartLimitIntervalSec=60\nStartLimitBurst=5\n\n[Service]\nType=simple\nUser=rivetlink\nGroup=rivetlink-console\nRuntimeDirectory=rivetlink\nRuntimeDirectoryMode=0710\nExecStart=/usr/local/lib/rivetlink/rivet-agent --config /var/lib/rivetlink/agent.json console-broker --socket /run/rivetlink/console.sock --allowed-worker-uid {gdm_uid} --allowed-worker-uid {owner_uid}\nRestart=on-failure\nRestartSec=5\nNoNewPrivileges=yes\nPrivateTmp=yes\nProtectSystem=strict\nProtectHome=yes\nReadWritePaths=/var/lib/rivetlink /run/rivetlink\nLockPersonality=yes\nRestrictSUIDSGID=yes\nEnvironment=RUST_LOG=info\nEnvironment=RIVETLINK_CONSOLE_LAN={}\nEnvironment=RIVETLINK_CONSOLE_RELAY={}\nEnvironment=RIVETLINK_CONSOLE_LAN_PORT={}\n\n[Install]\nWantedBy=multi-user.target\n",
             u8::from(setup.enable_lan),
             u8::from(setup.enable_relay),
             setup.lan_port,
         );
         let worker_unit = format!(
-            "[Unit]\nDescription=RivetLink worker for the active GNOME/GDM console\nAfter=graphical-session.target\nPartOf=graphical-session.target\n\n[Service]\nType=simple\nExecStart=/usr/local/lib/rivetlink/rivet-agent --rivetlink-agent console-worker --socket /run/rivetlink/console.sock\nRestart=on-failure\nRestartSec=3\nNoNewPrivileges=yes\nPrivateTmp=yes\nLockPersonality=yes\nRestrictSUIDSGID=yes\n{appimage_extract}Environment=RUST_LOG=info\n\n[Install]\nWantedBy=graphical-session.target\n"
+            "[Unit]\nDescription=RivetLink worker for the active GNOME/GDM console\nAfter=graphical-session.target\nPartOf=graphical-session.target\n\n[Service]\nType=simple\nExecStart=/usr/local/lib/rivetlink/rivet-agent console-worker --socket /run/rivetlink/console.sock\nRestart=on-failure\nRestartSec=3\nNoNewPrivileges=yes\nLockPersonality=yes\nRestrictSUIDSGID=yes\nEnvironment=RUST_LOG=info\n\n[Install]\nWantedBy=graphical-session.target\n"
         );
         let broker_source =
             write_install_unit(&state.data_dir, "rivetlink-console-broker", &broker_unit)?;
