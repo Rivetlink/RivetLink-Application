@@ -38,7 +38,7 @@ use rivetlink_agent::{
     keystore::{file::FileKeyStore, KeyStore},
     trusted::{TrustedClients, TrustedEntry},
 };
-use rivetlink_protocol::ConsoleInputPacket;
+use rivetlink_protocol::{ConsoleInputPacket, HostConsoleState};
 use rivetlink_sdk::{ClientConfig, Device, Identity, RivetClient};
 
 use settings::{AppSettings, Relay, TrustedKey};
@@ -3972,10 +3972,21 @@ async fn lan_console_connect(
 
     let app_for_task = app.clone();
     let task = tokio::spawn(async move {
-        // The broker captures a complete PNG for each request. Ten polls per
-        // second keeps pointer feedback responsive without continuously
-        // hammering GDM/Mutter on a pre-login console.
-        const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(100);
+        // The broker captures a complete PNG for each request. 25 polls per
+        // second gives the X11 login screen and normal desktop visibly smoother
+        // pointer feedback, while the request/response protocol still applies
+        // backpressure when capture or encoding takes longer than 40 ms.
+        const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(40);
+        // A successful login replaces the LightDM X11 worker with the normal
+        // GNOME worker.  There is deliberately a short period with no active
+        // worker while LightDM/PAM tears down the greeter and GNOME starts. Keep
+        // the authenticated RivetLink viewer alive across that expected handoff,
+        // but do not turn an initial connection failure or a reboot into an
+        // indefinite reconnect loop.
+        const LOGIN_HANDOFF_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
+        const LOGIN_HANDOFF_RETRY: std::time::Duration = std::time::Duration::from_secs(1);
+        let mut last_console_state = None;
+        let mut handoff_deadline = None;
         loop {
             let mut inputs = Vec::new();
             let mut latest_move = None;
@@ -4008,6 +4019,8 @@ async fn lan_console_connect(
             .await;
             match capture {
                 Ok(Ok(capture)) => {
+                    last_console_state = capture.state;
+                    handoff_deadline = None;
                     let image = format!(
                         "data:image/png;base64,{}",
                         base64::engine::general_purpose::STANDARD.encode(capture.png),
@@ -4021,10 +4034,46 @@ async fn lan_console_connect(
                     }
                 }
                 Ok(Err(error)) => {
+                    if let Some(deadline) = console_login_handoff_deadline(
+                        last_console_state,
+                        handoff_deadline,
+                        std::time::Instant::now(),
+                        LOGIN_HANDOFF_GRACE,
+                    ) {
+                        if handoff_deadline.is_none() {
+                            tracing::info!("physical-console login handoff started; waiting for desktop worker");
+                            let _ = app_for_task.emit("lan://console-handoff", ());
+                        }
+                        handoff_deadline = Some(deadline);
+                        tokio::time::sleep(std::cmp::min(
+                            LOGIN_HANDOFF_RETRY,
+                            deadline.saturating_duration_since(std::time::Instant::now()),
+                        ))
+                        .await;
+                        continue;
+                    }
                     let _ = app_for_task.emit("lan://error", error.to_string());
                     break;
                 }
                 Err(_) => {
+                    if let Some(deadline) = console_login_handoff_deadline(
+                        last_console_state,
+                        handoff_deadline,
+                        std::time::Instant::now(),
+                        LOGIN_HANDOFF_GRACE,
+                    ) {
+                        if handoff_deadline.is_none() {
+                            tracing::info!("physical-console login handoff timed out; waiting for desktop worker");
+                            let _ = app_for_task.emit("lan://console-handoff", ());
+                        }
+                        handoff_deadline = Some(deadline);
+                        tokio::time::sleep(std::cmp::min(
+                            LOGIN_HANDOFF_RETRY,
+                            deadline.saturating_duration_since(std::time::Instant::now()),
+                        ))
+                        .await;
+                        continue;
+                    }
                     let _ = app_for_task.emit("lan://error", "physical-console capture timed out");
                     break;
                 }
@@ -4040,6 +4089,54 @@ async fn lan_console_connect(
     let _ = app.emit("lan://connected", target.device_id);
     tracing::info!(name = %target.name, %addr, "lan_console_connect: viewer polling started");
     Ok(())
+}
+
+/// The LightDM → GNOME worker replacement is an expected one-time interruption
+/// only after the client has actually viewed a login screen.  Never restart an
+/// expired window: a reboot or persistent capture failure must still close the
+/// viewer rather than retrying forever.
+fn console_login_handoff_deadline(
+    last_state: Option<HostConsoleState>,
+    current_deadline: Option<std::time::Instant>,
+    now: std::time::Instant,
+    grace: std::time::Duration,
+) -> Option<std::time::Instant> {
+    match current_deadline {
+        Some(deadline) if deadline > now => Some(deadline),
+        Some(_) => None,
+        None if last_state == Some(HostConsoleState::GdmLogin) => Some(now + grace),
+        None => None,
+    }
+}
+
+#[cfg(test)]
+mod console_handoff_tests {
+    use super::console_login_handoff_deadline;
+    use rivetlink_protocol::HostConsoleState;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn retries_only_after_a_viewed_login_screen_and_never_restarts_an_expired_window() {
+        let now = Instant::now();
+        let grace = Duration::from_secs(60);
+        let deadline =
+            console_login_handoff_deadline(Some(HostConsoleState::GdmLogin), None, now, grace)
+                .expect("a login-to-desktop handoff gets a grace window");
+        assert_eq!(deadline.duration_since(now), grace);
+        assert_eq!(
+            console_login_handoff_deadline(Some(HostConsoleState::DesktopReady), None, now, grace,),
+            None
+        );
+        assert_eq!(
+            console_login_handoff_deadline(
+                Some(HostConsoleState::GdmLogin),
+                Some(deadline),
+                deadline,
+                grace,
+            ),
+            None
+        );
+    }
 }
 
 /// True while `open_viewer` is closing a stale viewer to rebuild a fresh one, so

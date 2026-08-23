@@ -293,7 +293,8 @@
         "disconnect": "Verbreken",
         "takeControl": "Overnemen (muis + toetsenbord)",
         "releaseControl": "Overname stoppen",
-        "controlling": "Aan het besturen"
+        "controlling": "Aan het besturen",
+        "loginHandoff": "Inloggen — opnieuw verbinden met het bureaublad…"
     },
     "overlay": {
         "watching": "{name} kijkt mee",

@@ -293,7 +293,8 @@
         "disconnect": "Disconnect",
         "takeControl": "Take control (mouse + keyboard)",
         "releaseControl": "Release control",
-        "controlling": "Controlling"
+        "controlling": "Controlling",
+        "loginHandoff": "Signing in — reconnecting to the desktop…"
     },
     "overlay": {
         "watching": "{name} is viewing",

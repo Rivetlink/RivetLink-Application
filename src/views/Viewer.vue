@@ -54,6 +54,16 @@
 			>
 				{{ t("viewer.controlling") }}
 			</VChip>
+			<VChip
+				v-if="consoleHandoff"
+				class="handoff-chip"
+				color="info"
+				size="small"
+				variant="flat"
+				prepend-icon="mdi-login-variant"
+			>
+				{{ t("viewer.loginHandoff") }}
+			</VChip>
 		</div>
 		<!-- Always-on toolbar — never folds, so zoom/control/disconnect stay one
 		     click away. Docked in its own row below the stage (no overlap). -->
@@ -223,6 +233,7 @@
 	const unlistenConsoleFrame = ref<UnlistenFn | null>(null);
 	const unlistenEnd = ref<UnlistenFn | null>(null);
 	const unlistenError = ref<UnlistenFn | null>(null);
+	const unlistenConsoleHandoff = ref<UnlistenFn | null>(null);
 	const unlistenDisplays = ref<UnlistenFn | null>(null);
 	const unlistenBlur = ref<UnlistenFn | null>(null);
 	// The host sends a heartbeat frame ~every second; if nothing arrives for a
@@ -231,6 +242,7 @@
 	const slowTimer = ref<ReturnType<typeof setInterval>>();
 	const closeTimer = ref<ReturnType<typeof setTimeout>>();
 	const SLOW_AFTER_MS = 2000;
+	const consoleHandoff = ref(false);
 
 	function base64ToBytes(b64: string): Uint8Array {
 		const bin = atob(b64);
@@ -274,6 +286,7 @@
 
 		hasFrame.value = true;
 		ended.value = false;
+		consoleHandoff.value = false;
 		errorMessage.value = null;
 		// Frames are flowing again — if this window was lingering on a "connection
 		// ended" screen (about to self-close in 5s) it's a live reconnect now, so
@@ -307,6 +320,7 @@
 		bitmap.close();
 		hasFrame.value = true;
 		ended.value = false;
+		consoleHandoff.value = false;
 		errorMessage.value = null;
 		lastFrameAt.value = performance.now();
 		slow.value = false;
@@ -509,10 +523,20 @@
 		unlistenError.value = await listen<string>("lan://error", (e) => {
 			errorMessage.value = e.payload || "unknown error";
 		});
+		unlistenConsoleHandoff.value = await listen("lan://console-handoff", () => {
+			consoleHandoff.value = true;
+			// Keyboard events immediately after Enter must not leak into the new
+			// desktop worker while the authenticated session is being replaced.
+			if (controlling.value) {
+				controlling.value = false;
+				detachControl(canvasEl.value);
+			}
+		});
 		unlistenEnd.value = await listen("lan://disconnected", () => {
 			ended.value = true;
 			hasFrame.value = false;
 			slow.value = false;
+			consoleHandoff.value = false;
 			// Stop capturing input — there's no host to drive anymore.
 			if (controlling.value) {
 				controlling.value = false;
@@ -561,6 +585,7 @@
 		unlistenConsoleFrame.value?.();
 		unlistenEnd.value?.();
 		unlistenError.value?.();
+		unlistenConsoleHandoff.value?.();
 		unlistenDisplays.value?.();
 		unlistenBlur.value?.();
 		detachControl(canvasEl.value); // drop any input listeners
@@ -614,6 +639,13 @@
 		position: absolute;
 		top: 12px;
 		left: 12px;
+		opacity: 0.9;
+	}
+
+	.handoff-chip {
+		position: absolute;
+		top: 12px;
+		right: 12px;
 		opacity: 0.9;
 	}
 
