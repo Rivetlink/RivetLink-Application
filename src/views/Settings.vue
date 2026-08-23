@@ -119,8 +119,17 @@
 							</VListItem>
 							<VListItem :title="t('physicalConsole.loginScreen')">
 								<template #append>
-									<VChip size="x-small" :color="physicalConsole.lightdmLoginEnabled ? 'success' : 'warning'">
-										{{ physicalConsole.lightdmLoginEnabled ? t('physicalConsole.lightdmEnabled') : t('physicalConsole.gdmProtected') }}
+									<VChip
+										size="x-small"
+										:color="physicalConsole.lightdmLoginEnabled ? 'success' : 'warning'"
+									>
+										{{
+											physicalConsole.lightdmLoginEnabled
+												? t('physicalConsole.lightdmEnabled')
+												: physicalConsole.lightdmLoginConfigured
+													? t('physicalConsole.lightdmPending')
+													: t('physicalConsole.gdmProtected')
+										}}
 									</VChip>
 								</template>
 							</VListItem>
@@ -149,7 +158,7 @@
 						</VBtn>
 						<template v-else>
 							<VBtn
-								v-if="physicalConsole.lightdmLoginEnabled"
+								v-if="physicalConsole.lightdmLoginConfigured"
 								color="warning"
 								variant="text"
 								prepend-icon="mdi-restore"
@@ -157,6 +166,16 @@
 								@click="restorePhysicalConsoleGdm"
 							>
 								{{ t("physicalConsole.restoreGdm") }}
+							</VBtn>
+							<VBtn
+								v-if="physicalConsole.lightdmLoginConfigured && !physicalConsole.lightdmLoginEnabled"
+								color="primary"
+								variant="text"
+								prepend-icon="mdi-refresh"
+								:loading="physicalConsoleBusy"
+								@click="retryPhysicalConsoleLightdm"
+							>
+								{{ t("physicalConsole.retryLightdm") }}
 							</VBtn>
 							<VBtn
 								v-if="!physicalConsole.nativeServiceAgentCurrent"
@@ -416,6 +435,7 @@
 		nativeServiceAgentCurrent: false,
 		gdmAvailable: false,
 		lightdmLoginEnabled: false,
+		lightdmLoginConfigured: false,
 		loginManager: "unknown",
 		lanListening: false,
 		lanPort: null as number | null,
@@ -452,6 +472,18 @@
 			closePhysicalConsoleDialog();
 		} catch (error) {
 			physicalConsoleError.value = String(error);
+		} finally {
+			physicalConsoleBusy.value = false;
+		}
+	}
+
+	async function retryPhysicalConsoleLightdm() {
+		physicalConsoleBusy.value = true;
+		physicalConsoleServiceError.value = "";
+		try {
+			physicalConsole.value = await invoke<typeof physicalConsole.value>("enable_physical_console_lightdm");
+		} catch (error) {
+			physicalConsoleServiceError.value = String(error);
 		} finally {
 			physicalConsoleBusy.value = false;
 		}
