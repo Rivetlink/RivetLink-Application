@@ -1649,9 +1649,8 @@ where
         || device_name.len() > 100
         || (!lan && !relay)
         || (lan && lan_port == 0)
-        || (relay && (!relay_url.starts_with("ws://") && !relay_url.starts_with("wss://")))
-        || (relay
-            && (!relay_http_url.starts_with("http://") && !relay_http_url.starts_with("https://")))
+        || (relay && !relay_url.starts_with("wss://"))
+        || (relay && !relay_http_url.starts_with("https://"))
     {
         return Err("invalid physical-console installer request".to_string());
     }
@@ -3464,18 +3463,14 @@ fn install_tray(app: &tauri::App) -> tauri::Result<()> {
 
 // ---- Relays ----------------------------------------------------------------
 
-/// Derive the WebSocket URL from the server's HTTP URL: http -> ws, https ->
-/// wss, same host/port, with the relay's `/ws` signaling path. The user only
-/// enters the HTTP URL.
+/// Derive the WebSocket URL from the relay's HTTPS URL. Relay bootstrap carries
+/// bearer tokens and host identity pins, so public relay endpoints are TLS-only.
 fn derive_ws_url(http_url: &str) -> Result<String, String> {
     let trimmed = http_url.trim().trim_end_matches('/');
-    let ws_base = if let Some(rest) = trimmed.strip_prefix("https://") {
-        format!("wss://{rest}")
-    } else if let Some(rest) = trimmed.strip_prefix("http://") {
-        format!("ws://{rest}")
-    } else {
-        return Err("server-URL moet met http:// of https:// beginnen".to_string());
-    };
+    let rest = trimmed
+		.strip_prefix("https://")
+		.ok_or_else(|| "server-URL moet met https:// beginnen; onbeveiligde relay-verbindingen zijn niet toegestaan".to_string())?;
+    let ws_base = format!("wss://{rest}");
     Ok(format!("{ws_base}/ws"))
 }
 
@@ -3592,6 +3587,57 @@ async fn list_devices(state: State<'_, AppState>) -> Result<Vec<DeviceDto>, Stri
     Ok(devices.into_iter().map(DeviceDto::from).collect())
 }
 
+/// Pin a relay host identity on explicit first use and reject any later key
+/// replacement. The REST relay is TLS-authenticated, but it is not trusted to
+/// silently rotate an already-known host identity.
+async fn verify_or_pin_relay_host(state: &AppState, device: &Device) -> Result<(), String> {
+    let public_key = device.public_key.trim();
+    let raw = base64::engine::general_purpose::STANDARD
+        .decode(public_key)
+        .map_err(|_| "relay returned an invalid host identity key".to_string())?;
+    if raw.len() != 32 {
+        return Err("relay returned an invalid host identity key".to_string());
+    }
+
+    let mut settings = state.settings.lock().await;
+    let relay_id = settings.active_relay_id.clone().ok_or("no active relay")?;
+    if !update_relay_host_pin(&mut settings, &relay_id, &device.id, public_key)? {
+        return Ok(());
+    }
+    settings.save(&state.data_dir)
+}
+
+/// Record an explicit first-use relay pin; a known `(relay, device)` pair can
+/// only keep the same key. Returns true only when persistence is required.
+fn update_relay_host_pin(
+    settings: &mut AppSettings,
+    relay_id: &str,
+    device_id: &str,
+    public_key: &str,
+) -> Result<bool, String> {
+    if let Some(pinned) = settings
+        .trusted_relay_hosts
+        .iter()
+        .find(|host| host.relay_id == relay_id && host.device_id == device_id)
+    {
+        if pinned.public_key.trim() != public_key.trim() {
+            return Err(
+                "host identity changed; refusing the relay connection. Remove and explicitly re-pair this host if you intentionally rotated its identity."
+                    .to_string(),
+            );
+        }
+        return Ok(false);
+    }
+    settings
+        .trusted_relay_hosts
+        .push(settings::TrustedRelayHost {
+            relay_id: relay_id.to_string(),
+            device_id: device_id.to_string(),
+            public_key: public_key.trim().to_string(),
+        });
+    Ok(true)
+}
+
 /// Capture one screenshot from `device_id`, returned as a PNG data URL.
 #[tauri::command]
 async fn capture_screenshot(
@@ -3599,19 +3645,27 @@ async fn capture_screenshot(
     state: State<'_, AppState>,
     device_id: String,
 ) -> Result<ConsoleCaptureDto, String> {
-    let guard = state.client.lock().await;
-    let client = guard.as_ref().ok_or("not connected")?;
-
-    let device = client
-        .find_device(&device_id)
-        .await
-        .map_err(|e| e.to_string())?;
+    let device = {
+        let guard = state.client.lock().await;
+        guard
+            .as_ref()
+            .ok_or("not connected")?
+            .find_device(&device_id)
+            .await
+            .map_err(|e| e.to_string())?
+    };
+    verify_or_pin_relay_host(&state, &device).await?;
 
     let dir = app.path().app_cache_dir().map_err(|e| e.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let out = dir.join("last_capture.png");
 
-    let outcome = client
+    let outcome = state
+        .client
+        .lock()
+        .await
+        .as_ref()
+        .ok_or("not connected")?
         .capture_screenshot_outcome(&device, out)
         .await
         .map_err(|e| e.to_string())?;
@@ -3641,19 +3695,28 @@ async fn console_input_and_capture(
     device_id: String,
     event: ConsoleInputPacket,
 ) -> Result<ConsoleCaptureDto, String> {
-    let guard = state.client.lock().await;
-    let client = guard.as_ref().ok_or("not connected")?;
-    let device = client
-        .find_device(&device_id)
-        .await
-        .map_err(|error| error.to_string())?;
+    let device = {
+        let guard = state.client.lock().await;
+        guard
+            .as_ref()
+            .ok_or("not connected")?
+            .find_device(&device_id)
+            .await
+            .map_err(|error| error.to_string())?
+    };
+    verify_or_pin_relay_host(&state, &device).await?;
     let dir = app
         .path()
         .app_cache_dir()
         .map_err(|error| error.to_string())?;
     std::fs::create_dir_all(&dir).map_err(|error| error.to_string())?;
     let out = dir.join("console_capture.png");
-    let outcome = client
+    let outcome = state
+        .client
+        .lock()
+        .await
+        .as_ref()
+        .ok_or("not connected")?
         .console_input_and_capture_outcome(&device, event, out)
         .await
         .map_err(|error| error.to_string())?;
@@ -3879,6 +3942,32 @@ mod bonjour_tests {
     }
 }
 
+#[cfg(test)]
+mod relay_host_pin_tests {
+    use super::update_relay_host_pin;
+    use crate::settings::AppSettings;
+
+    #[test]
+    fn relay_host_pin_rejects_key_replacement_from_a_malicious_relay() {
+        let mut settings = AppSettings::default();
+        assert!(update_relay_host_pin(&mut settings, "relay-a", "host-a", "original").unwrap());
+        assert!(!update_relay_host_pin(&mut settings, "relay-a", "host-a", "original").unwrap());
+        assert!(
+            update_relay_host_pin(&mut settings, "relay-a", "host-a", "attacker")
+                .unwrap_err()
+                .contains("identity changed")
+        );
+    }
+
+    #[test]
+    fn relay_host_pins_are_scoped_to_the_relay_and_device() {
+        let mut settings = AppSettings::default();
+        assert!(update_relay_host_pin(&mut settings, "relay-a", "host-a", "key-a").unwrap());
+        assert!(update_relay_host_pin(&mut settings, "relay-b", "host-a", "key-b").unwrap());
+        assert!(update_relay_host_pin(&mut settings, "relay-a", "host-b", "key-c").unwrap());
+    }
+}
+
 #[cfg(all(test, target_os = "linux"))]
 mod console_service_tests {
     use super::{
@@ -3971,16 +4060,41 @@ async fn add_lan_device(
     physical_console: bool,
 ) -> Result<AppSettings, String> {
     let mut settings = state.settings.lock().await;
-    // De-duplicate on address:port; refresh the stored entry if it exists.
-    settings
+    // Discovery is routing information, never an authority to rotate a host
+    // identity. A hostile LAN can advertise the same name/address with its own
+    // key; replacing an existing pin here would turn mDNS spoofing into a MITM.
+    // The owner must explicitly remove and re-pair a host whose identity key
+    // legitimately changed.
+    if let Some(existing) = settings
         .lan_devices
-        .retain(|d| !(d.address == address && d.port == port));
+        .iter_mut()
+        .find(|device| device.address == address && device.port == port)
+    {
+        match (&existing.public_key, &public_key) {
+            (Some(pinned), Some(advertised)) if pinned.trim() != advertised.trim() => {
+                return Err(
+                    "host identity changed; refusing to replace the saved key. Remove and explicitly re-pair this host if you intentionally rotated its identity."
+                        .to_string(),
+                );
+            }
+            (Some(_), _) => {}
+            (None, Some(advertised)) => existing.public_key = Some(advertised.trim().to_string()),
+            (None, None) => {}
+        }
+        existing.name = name.trim().to_string();
+        existing.physical_console = physical_console;
+        settings.save(&state.data_dir)?;
+        return Ok(settings.clone());
+    }
+    let public_key = public_key
+        .filter(|key| !key.trim().is_empty())
+        .ok_or("a host identity key is required to save a LAN host securely")?;
     settings.lan_devices.push(settings::SavedLanDevice {
         id: uuid::Uuid::new_v4().to_string(),
         name: name.trim().to_string(),
         address,
         port,
-        public_key,
+        public_key: Some(public_key.trim().to_string()),
         physical_console,
     });
     settings.save(&state.data_dir)?;

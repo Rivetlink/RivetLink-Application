@@ -487,7 +487,7 @@
 		physicalConsoleError.value = "";
 		try {
 			physicalConsole.value = await invoke<typeof physicalConsole.value>("setup_physical_console", {
-			setup: {
+				setup: {
 					deviceName: physicalConsoleName.value,
 					controllerPublicKey: physicalConsoleControllerKey.value,
 					controllerPublicKeys: physicalConsoleControllerKeys.value,

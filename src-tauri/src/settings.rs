@@ -42,6 +42,16 @@ pub struct TrustedKey {
     pub public_key: String,
 }
 
+/// A relay host identity accepted during an explicit first connection.  The
+/// relay is routing infrastructure, not a host identity authority after this
+/// point: a changed key must be deliberately removed and paired again.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TrustedRelayHost {
+    pub relay_id: String,
+    pub device_id: String,
+    pub public_key: String,
+}
+
 /// Everything the app remembers between launches.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct AppSettings {
@@ -63,6 +73,9 @@ pub struct AppSettings {
     /// Hosts found on the local network and remembered by the user.
     #[serde(default)]
     pub lan_devices: Vec<SavedLanDevice>,
+    /// Pinned identity keys for relay hosts, scoped to their relay endpoint.
+    #[serde(default)]
+    pub trusted_relay_hosts: Vec<TrustedRelayHost>,
     /// Clients allowed to connect to this host without the session code.
     #[serde(default)]
     pub trusted_keys: Vec<TrustedKey>,

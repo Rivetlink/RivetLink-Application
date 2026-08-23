@@ -114,7 +114,7 @@
 
 <script setup lang="ts">
 	import {
-		computed, onMounted, onUnmounted, ref, shallowRef,
+		computed, markRaw, onMounted, onUnmounted, ref, shallowRef,
 	} from "vue";
 	import { useI18n } from "vue-i18n";
 	import {
@@ -183,7 +183,7 @@
 	const frameH = ref(0);
 	const stageW = ref(window.innerWidth);
 	const stageH = ref(window.innerHeight);
-	let stageObserver: ResizeObserver | null = null;
+	const stageObserver = ref<ResizeObserver | null>(null);
 
 	// Explicit display size = fit-to-window × zoom. At zoom 1 this matches an
 	// object-fit:contain (one dimension fills the window); zooming in overflows
@@ -595,9 +595,9 @@
 		}, 500);
 		window.addEventListener("resize", onResize);
 		onResize();
-		stageObserver = new ResizeObserver(onResize);
+		stageObserver.value = markRaw(new ResizeObserver(onResize));
 		if (stageEl.value) {
-			stageObserver.observe(stageEl.value);
+			stageObserver.value.observe(stageEl.value);
 		}
 		// Raise above every app now the window is mapped — the OS honours
 		// always_on_top reliably here but not always at build time, so a reconnect
@@ -626,8 +626,8 @@
 		unlistenBlur.value?.();
 		detachControl(canvasEl.value); // drop any input listeners
 		window.removeEventListener("resize", onResize);
-		stageObserver?.disconnect();
-		stageObserver = null;
+		stageObserver.value?.disconnect();
+		stageObserver.value = null;
 		if (slowTimer.value) {
 			clearInterval(slowTimer.value);
 		}
