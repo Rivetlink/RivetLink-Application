@@ -95,6 +95,16 @@
 						<p class="text-body-2 mb-3">
 							{{ physicalConsole.configured ? t("physicalConsole.configuredHint") : t("physicalConsole.intro") }}
 						</p>
+						<VAlert
+							v-if="physicalConsole.lightdmLoginConfigured && !physicalConsole.lightdmLoginEnabled && physicalConsole.loginManager === 'lightdm' && physicalConsole.gdmAvailable"
+							type="warning"
+							variant="tonal"
+							icon="mdi-restart-alert"
+							class="mb-3"
+						>
+							<strong>{{ t("physicalConsole.lightdmRebootRequiredTitle") }}</strong>
+							<div>{{ t("physicalConsole.lightdmRebootRequiredHint") }}</div>
+						</VAlert>
 						<VList v-if="physicalConsole.configured" density="compact" class="bg-transparent mb-2">
 							<VListItem :title="t('physicalConsole.bootService')">
 								<template #append>
