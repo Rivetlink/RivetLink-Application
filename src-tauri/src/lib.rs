@@ -141,7 +141,7 @@ impl HostSession {
 }
 
 /// A saved LAN device the frontend asks to connect to.
-#[derive(serde::Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct LanTarget {
     name: String,
@@ -4081,6 +4081,7 @@ async fn lan_console_connect(
     state: State<'_, AppState>,
     target: LanTarget,
 ) -> Result<(), String> {
+    let upgrade_target = target.clone();
     let ip: std::net::IpAddr = target
         .address
         .parse()
@@ -4121,6 +4122,7 @@ async fn lan_console_connect(
         const LOGIN_HANDOFF_RETRY: std::time::Duration = std::time::Duration::from_secs(1);
         let mut last_console_state = None;
         let mut handoff_deadline = None;
+        let mut upgraded_to_desktop = false;
         loop {
             let mut inputs = Vec::new();
             let mut latest_move = None;
@@ -4153,6 +4155,18 @@ async fn lan_console_connect(
             .await;
             match capture {
                 Ok(Ok(capture)) => {
+                    // Once the authenticated GNOME session owns the worker,
+                    // stop polling PNG physical-console frames. The same
+                    // pinned direct-LAN listener now exposes the existing
+                    // 30fps desktop tile stream; keep the viewer and trust
+                    // session lifecycle intact while it swaps backend.
+                    if console_should_upgrade_to_desktop(capture.state) {
+                        tracing::info!("physical-console handoff: desktop ready; upgrading to normal desktop engine");
+                        let _ = app_for_task.emit("lan://console-handoff", ());
+                        let _ = app_for_task.emit("lan://console-upgrade", upgrade_target.clone());
+                        upgraded_to_desktop = true;
+                        break;
+                    }
                     last_console_state = capture.state;
                     handoff_deadline = None;
                     let image = format!(
@@ -4214,14 +4228,23 @@ async fn lan_console_connect(
             }
             tokio::time::sleep(POLL_INTERVAL).await;
         }
-        let _ = app_for_task.emit("lan://disconnected", ());
+        if !upgraded_to_desktop {
+            let _ = app_for_task.emit("lan://disconnected", ());
+        }
     });
 
     if let Ok(mut guard) = state.stream.lock() {
         *guard = Some(task);
     }
     let _ = app.emit("lan://connected", target.device_id);
-    tracing::info!(name = %target.name, %addr, "lan_console_connect: viewer polling started");
+    tracing::info!(
+        name = %target.name,
+        %addr,
+        backend = "PhysicalConsole",
+        state = "LoginScreen",
+        max_fps = 25_u16,
+        "lan_console_connect: physical-console bootstrap started"
+    );
     Ok(())
 }
 
@@ -4243,9 +4266,20 @@ fn console_login_handoff_deadline(
     }
 }
 
+fn console_should_upgrade_to_desktop(state: Option<HostConsoleState>) -> bool {
+    state == Some(HostConsoleState::DesktopReady)
+}
+
+fn desktop_stream_should_fallback(error: &str) -> bool {
+    error.contains("physical-console login screen is available")
+}
+
 #[cfg(test)]
 mod console_handoff_tests {
-    use super::console_login_handoff_deadline;
+    use super::{
+        console_login_handoff_deadline, console_should_upgrade_to_desktop,
+        desktop_stream_should_fallback,
+    };
     use rivetlink_protocol::HostConsoleState;
     use std::time::{Duration, Instant};
 
@@ -4270,6 +4304,22 @@ mod console_handoff_tests {
             ),
             None
         );
+    }
+
+    #[test]
+    fn handoff_and_logout_fallback_are_explicit_not_timing_inferences() {
+        assert!(console_should_upgrade_to_desktop(Some(
+            HostConsoleState::DesktopReady
+        )));
+        assert!(!console_should_upgrade_to_desktop(Some(
+            HostConsoleState::GdmLogin
+        )));
+        assert!(desktop_stream_should_fallback(
+            "direct-LAN error: physical-console login screen is available"
+        ));
+        assert!(!desktop_stream_should_fallback(
+            "normal desktop engine ended"
+        ));
     }
 }
 
@@ -4470,6 +4520,20 @@ async fn lan_connect(
     target: LanTarget,
     pin: Option<String>,
 ) -> Result<(), String> {
+    lan_connect_inner(app, state, target, pin, true, false).await
+}
+
+/// Start the regular high-performance direct-LAN engine. During a physical
+/// console handoff the existing viewer stays open and only its authenticated
+/// video/control sub-session is replaced.
+async fn lan_connect_inner(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    target: LanTarget,
+    pin: Option<String>,
+    rebuild_viewer: bool,
+    allow_login_fallback: bool,
+) -> Result<(), String> {
     // Build the address from the parsed IP so IPv6 is handled correctly —
     // `format!("{}:{}", v6, port)` produces an unbracketed, unparseable string.
     let ip: std::net::IpAddr = target
@@ -4521,7 +4585,9 @@ async fn lan_connect(
 
     // Stop any previous session before starting a new one.
     stop_stream(&state);
-    open_viewer(&app, &format!("RivetLink — {}", target.name)).await?;
+    if rebuild_viewer {
+        open_viewer(&app, &format!("RivetLink — {}", target.name)).await?;
+    }
 
     // Ask the host which screens it can share and hand it to the viewer for a
     // screen picker. Bounded: an unresponsive host shouldn't stall the stream.
@@ -4569,6 +4635,7 @@ async fn lan_connect(
     let app_for_task = app.clone();
     let app_for_displays = app.clone();
     let displays_for_viewer = displays.clone();
+    let fallback_target = target.clone();
     let task = tokio::spawn(async move {
         let mut announced = false;
         let result = rivetlink_sdk::lan::stream_frames(
@@ -4602,10 +4669,21 @@ async fn lan_connect(
             },
         )
         .await;
-        if let Err(e) = result {
+        let fallback_to_console = allow_login_fallback
+            && result
+                .as_ref()
+                .is_err_and(|error| desktop_stream_should_fallback(&error.to_string()));
+        if fallback_to_console {
+            tracing::info!(
+                "normal desktop engine ended after logout; returning to physical-console backend"
+            );
+            let _ = app_for_task.emit("lan://desktop-fallback", fallback_target);
+        } else if let Err(e) = result {
             let _ = app_for_task.emit("lan://error", e.to_string());
         }
-        let _ = app_for_task.emit("lan://disconnected", ());
+        if !fallback_to_console {
+            let _ = app_for_task.emit("lan://disconnected", ());
+        }
     });
 
     if let Ok(mut guard) = state.stream.lock() {
@@ -4614,6 +4692,19 @@ async fn lan_connect(
     let _ = app.emit("lan://connected", target.device_id);
     tracing::info!(displays = displays.len(), "lan_connect: streaming");
     Ok(())
+}
+
+/// Upgrade an already trusted physical-console connection after the broker
+/// reports `DesktopReady`. It connects to the same host/port with the same
+/// pinned identity; the physical broker then selects its desktop-stream backend
+/// instead of the LightDM PNG capture path.
+#[tauri::command]
+async fn lan_console_upgrade(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    target: LanTarget,
+) -> Result<(), String> {
+    lan_connect_inner(app, state, target, None, false, true).await
 }
 
 /// Switch the live stream to another of the host's displays (by id). No-op if
@@ -5746,6 +5837,7 @@ pub fn run() {
             lan_screenshot,
             lan_console_capture,
             lan_console_connect,
+            lan_console_upgrade,
             lan_connect,
             lan_switch_display,
             lan_send_input,

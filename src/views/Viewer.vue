@@ -233,6 +233,8 @@
 	const unlistenEnd = ref<UnlistenFn | null>(null);
 	const unlistenError = ref<UnlistenFn | null>(null);
 	const unlistenConsoleHandoff = ref<UnlistenFn | null>(null);
+	const unlistenConsoleUpgrade = ref<UnlistenFn | null>(null);
+	const unlistenDesktopFallback = ref<UnlistenFn | null>(null);
 	const unlistenDisplays = ref<UnlistenFn | null>(null);
 	const unlistenBlur = ref<UnlistenFn | null>(null);
 	// The host sends a heartbeat frame ~every second; if nothing arrives for a
@@ -242,6 +244,14 @@
 	const closeTimer = ref<ReturnType<typeof setTimeout>>();
 	const SLOW_AFTER_MS = 2000;
 	const consoleHandoff = ref(false);
+
+	type ConsoleUpgradeTarget = {
+		name: string;
+		address: string;
+		port: number;
+		deviceId: string;
+		publicKey?: string;
+	};
 
 	function base64ToBytes(b64: string): Uint8Array {
 		const bin = atob(b64);
@@ -531,6 +541,26 @@
 				detachControl(canvasEl.value);
 			}
 		});
+		unlistenConsoleUpgrade.value = await listen<ConsoleUpgradeTarget>("lan://console-upgrade", (e) => {
+			consoleHandoff.value = true;
+			errorMessage.value = null;
+			// Keep this viewer window and its input surface alive. The backend
+			// swaps only the authenticated video/control sub-session from the
+			// LightDM physical console to the normal desktop stream.
+			void invoke("lan_console_upgrade", { target: e.payload }).catch((error: unknown) => {
+				errorMessage.value = String(error);
+			});
+		});
+		unlistenDesktopFallback.value = await listen<ConsoleUpgradeTarget>("lan://desktop-fallback", (e) => {
+			consoleHandoff.value = true;
+			errorMessage.value = null;
+			// Logout replaces the GNOME worker with LightDM. Re-open the same
+			// trusted physical-console route automatically; its dedicated viewer
+			// setup safely rebuilds the window if the platform requires it.
+			void invoke("lan_console_connect", { target: e.payload }).catch((error: unknown) => {
+				errorMessage.value = String(error);
+			});
+		});
 		unlistenEnd.value = await listen("lan://disconnected", () => {
 			ended.value = true;
 			hasFrame.value = false;
@@ -590,6 +620,8 @@
 		unlistenEnd.value?.();
 		unlistenError.value?.();
 		unlistenConsoleHandoff.value?.();
+		unlistenConsoleUpgrade.value?.();
+		unlistenDesktopFallback.value?.();
 		unlistenDisplays.value?.();
 		unlistenBlur.value?.();
 		detachControl(canvasEl.value); // drop any input listeners
