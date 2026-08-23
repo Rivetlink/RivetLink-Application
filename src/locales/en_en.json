@@ -92,7 +92,7 @@
         "lanAdd": "Add",
         "lanConnect": "Connect",
         "lanOpenConsole": "Open console",
-        "lanPhysicalConsole": "Physical console · Local network",
+        "lanPhysicalConsole": "Login screen & desktop · Local network",
         "lanConnecting": "Connecting over the local network…",
         "lanConnectTitle": "Connect to {name}",
         "lanPinLabel": "PIN (if the other computer shows one)",

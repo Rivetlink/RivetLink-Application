@@ -92,7 +92,7 @@
         "lanAdd": "Toevoegen",
         "lanConnect": "Verbinden",
         "lanOpenConsole": "Console openen",
-        "lanPhysicalConsole": "Fysieke console · Lokaal netwerk",
+        "lanPhysicalConsole": "Inlogscherm & bureaublad · Lokaal netwerk",
         "lanConnecting": "Verbinden via het lokale netwerk…",
         "lanConnectTitle": "Verbinden met {name}",
         "lanPinLabel": "PIN (als de andere computer er een toont)",

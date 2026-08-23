@@ -4362,6 +4362,80 @@ async fn lan_console_connect(
     Ok(())
 }
 
+/// Pick the appropriate backend before opening the viewer. The boot-time
+/// broker keeps one pinned LAN endpoint across LightDM and GNOME: LightDM uses
+/// request/response console frames, while a ready desktop uses the normal live
+/// stream. Starting with the latter avoids an unnecessary PNG capture attempt
+/// and its visible loading stall for a new post-login connection.
+#[tauri::command]
+async fn lan_console_auto_connect(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    target: LanTarget,
+) -> Result<(), String> {
+    let identity_path = state.identity_path();
+    if physical_console_desktop_is_ready(&target, &identity_path).await? {
+        tracing::info!(
+            name = %target.name,
+            backend = "NormalDesktopEngine",
+            state = "DesktopReady",
+            "physical-console LAN route selected normal desktop engine"
+        );
+        // Keep fallback enabled for the small race where logout happens after
+        // this probe but before the stream has been opened.
+        lan_connect_inner(app, state, target, None, true, true).await
+    } else {
+        tracing::info!(
+            name = %target.name,
+            backend = "PhysicalConsole",
+            state = "LoginScreen",
+            "physical-console LAN route selected login backend"
+        );
+        lan_console_connect(app, state, target).await
+    }
+}
+
+/// Ask only the authenticated broker whether its normal desktop backend is
+/// ready. This request neither captures a frame nor injects input, and the
+/// host identity is pinned before its answer influences routing.
+async fn physical_console_desktop_is_ready(
+    target: &LanTarget,
+    identity_path: &std::path::Path,
+) -> Result<bool, String> {
+    let ip: std::net::IpAddr = target
+        .address
+        .parse()
+        .map_err(|_| format!("bad address: {}", target.address))?;
+    let host_key = target
+        .public_key
+        .as_deref()
+        .filter(|key| !key.trim().is_empty())
+        .ok_or(
+            "physical-console LAN access requires the host identity from discovery or a saved key",
+        )?;
+    let identity = Identity::load_or_create(identity_path).map_err(|error| error.to_string())?;
+    let addr = std::net::SocketAddr::new(ip, target.port);
+    let (mut stream, channel) = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        rivetlink_sdk::lan::connect_key_pinned(addr, &identity, Some(host_key)),
+    )
+    .await
+    .map_err(|_| "physical-console availability check timed out".to_string())?
+    .map_err(|error| error.to_string())?;
+
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        rivetlink_sdk::lan::list_displays(&mut stream, &channel),
+    )
+    .await
+    {
+        Ok(Ok(_)) => Ok(true),
+        Ok(Err(error)) if desktop_stream_should_fallback(&error.to_string()) => Ok(false),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err("physical-console availability check timed out".to_string()),
+    }
+}
+
 /// The LightDM → GNOME worker replacement is an expected one-time interruption
 /// only after the client has actually viewed a login screen.  Never restart an
 /// expired window: a reboot or persistent capture failure must still close the
@@ -4386,6 +4460,7 @@ fn console_should_upgrade_to_desktop(state: Option<HostConsoleState>) -> bool {
 
 fn desktop_stream_should_fallback(error: &str) -> bool {
     error.contains("physical-console login screen is available")
+        || error.contains("normal desktop engine is not ready")
 }
 
 #[cfg(test)]
@@ -4430,6 +4505,9 @@ mod console_handoff_tests {
         )));
         assert!(desktop_stream_should_fallback(
             "direct-LAN error: physical-console login screen is available"
+        ));
+        assert!(desktop_stream_should_fallback(
+            "direct-LAN error: normal desktop engine is not ready"
         ));
         assert!(!desktop_stream_should_fallback(
             "normal desktop engine ended"
@@ -5951,6 +6029,7 @@ pub fn run() {
             lan_screenshot,
             lan_console_capture,
             lan_console_connect,
+            lan_console_auto_connect,
             lan_console_upgrade,
             lan_connect,
             lan_switch_display,

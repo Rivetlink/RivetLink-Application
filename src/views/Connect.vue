@@ -440,7 +440,7 @@
 		lanPing,
 		lanScreenshot,
 		lanConsoleCapture,
-		lanConsoleConnect,
+		lanConsoleAutoConnect,
 		listDevices,
 		login,
 		type NetworkInfo,
@@ -796,10 +796,11 @@
 		} catch (e) { fail(e); } finally { lanCaptureId.value = null; }
 	}
 
-	// Prefer the exact advertised host key on the local network. If it is not
-	// currently discoverable, try the same public device identity through the
-	// already authenticated relay. Route selection never changes the identity
-	// pinned for LAN or the relay's normal cryptographic authentication.
+	// Prefer the exact advertised host key on the local network. Its boot-time
+	// broker selects the normal desktop stream once GNOME is ready, otherwise
+	// the LightDM physical-console backend. If it is not currently discoverable,
+	// try the same public device identity through the authenticated relay.
+	// Route selection never changes the identity pinned for LAN or relay.
 	async function smartConnect(device: SavedLanDevice) {
 		error.value = null;
 		lanCaptureId.value = device.id;
@@ -812,7 +813,7 @@
 				&& candidate.public_key === device.public_key,
 			);
 			if (local) {
-				await lanConsoleConnect({
+				await lanConsoleAutoConnect({
 					...device,
 					address: local.address,
 					port: local.port,

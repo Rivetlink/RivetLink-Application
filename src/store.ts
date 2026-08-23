@@ -280,6 +280,21 @@ export async function lanConsoleConnect(device: SavedLanDevice): Promise<void> {
 	});
 }
 
+/// A physical-console broker owns one pinned LAN endpoint across LightDM and
+/// the authenticated desktop. Let the host select login capture before
+/// authentication or the normal live desktop stream after it.
+export async function lanConsoleAutoConnect(device: SavedLanDevice): Promise<void> {
+	await invoke("lan_console_auto_connect", {
+		target: {
+			name: device.name,
+			address: device.address,
+			port: device.port,
+			deviceId: device.id,
+			publicKey: device.public_key,
+		},
+	});
+}
+
 /// Open a live screen stream to a saved LAN device (renders in its own window).
 export async function lanConnect(
 	device: SavedLanDevice,
