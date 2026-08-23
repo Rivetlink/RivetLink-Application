@@ -377,8 +377,36 @@ fn bundled_console_agent(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 #[cfg(target_os = "linux")]
+fn host_system_command(program: &str) -> std::process::Command {
+    let mut command = std::process::Command::new(program);
+    // An AppImage sets these so *its* executable can load its bundled GTK,
+    // GLib and GStreamer libraries.  They must never escape to Ubuntu tools:
+    // maintainer scripts can invoke host helpers such as `/usr/bin/gdbus`,
+    // which then need to load their matching host libraries.  Inheriting the
+    // AppImage GLib caused `g_string_free_and_steal` lookup failures during
+    // the LightDM package transaction on Ubuntu 26.04.
+    for variable in [
+        "LD_LIBRARY_PATH",
+        "LD_PRELOAD",
+        "GIO_MODULE_DIR",
+        "GI_TYPELIB_PATH",
+        "GST_PLUGIN_PATH",
+        "GST_PLUGIN_PATH_1_0",
+        "GST_PLUGIN_SYSTEM_PATH",
+        "GST_PLUGIN_SYSTEM_PATH_1_0",
+        "GST_PLUGIN_SCANNER",
+        "GST_REGISTRY",
+        "APPDIR",
+        "APPIMAGE",
+    ] {
+        command.env_remove(variable);
+    }
+    command
+}
+
+#[cfg(target_os = "linux")]
 fn run_checked(program: &str, args: &[std::ffi::OsString]) -> Result<(), String> {
-    let status = std::process::Command::new(program)
+    let status = host_system_command(program)
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -394,7 +422,7 @@ fn run_checked(program: &str, args: &[std::ffi::OsString]) -> Result<(), String>
 
 #[cfg(target_os = "linux")]
 fn run_checked_output(program: &str, args: &[std::ffi::OsString]) -> Result<String, String> {
-    let output = std::process::Command::new(program)
+    let output = host_system_command(program)
         .args(args)
         .stdin(std::process::Stdio::null())
         .output()
@@ -411,7 +439,7 @@ fn command_status(
     program: &str,
     args: &[std::ffi::OsString],
 ) -> Result<std::process::ExitStatus, String> {
-    std::process::Command::new(program)
+    host_system_command(program)
         .args(args)
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
@@ -969,7 +997,7 @@ fn run_checked_with_input(
     input: &[u8],
 ) -> Result<(), String> {
     use std::io::Write;
-    let mut child = std::process::Command::new(program)
+    let mut child = host_system_command(program)
         .args(args)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::null())
@@ -995,7 +1023,7 @@ fn run_checked_with_input(
 
 #[cfg(target_os = "linux")]
 fn run_checked_noninteractive(program: &str, args: &[std::ffi::OsString]) -> Result<(), String> {
-    let output = std::process::Command::new(program)
+    let output = host_system_command(program)
         .args(args)
         .env("DEBIAN_FRONTEND", "noninteractive")
         .stdin(std::process::Stdio::null())
@@ -3433,8 +3461,29 @@ mod bonjour_tests {
 #[cfg(all(test, target_os = "linux"))]
 mod console_service_tests {
     use super::{
-        extracted_console_agent, physical_console_units, same_regular_file, CONSOLE_AGENT_PATH,
+        extracted_console_agent, host_system_command, physical_console_units, same_regular_file,
+        CONSOLE_AGENT_PATH,
     };
+
+    #[test]
+    fn system_commands_cannot_inherit_appimage_dynamic_loader_paths() {
+        let command = host_system_command("/usr/bin/true");
+        let removed = command
+            .get_envs()
+            .filter_map(|(name, value)| value.is_none().then_some(name))
+            .map(|name| name.to_string_lossy().into_owned())
+            .collect::<std::collections::BTreeSet<_>>();
+        for variable in [
+            "LD_LIBRARY_PATH",
+            "LD_PRELOAD",
+            "GIO_MODULE_DIR",
+            "GST_PLUGIN_PATH",
+            "APPDIR",
+            "APPIMAGE",
+        ] {
+            assert!(removed.contains(variable), "{variable} must be removed");
+        }
+    }
 
     #[test]
     fn services_execute_only_the_native_agent_and_keep_worker_out_of_appimage_sandbox() {
