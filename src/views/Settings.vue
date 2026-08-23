@@ -338,9 +338,24 @@
 						density="comfortable"
 						class="mb-2"
 					/>
+					<VSelect
+						v-if="store.settings.trusted_keys.length > 0"
+						v-model="physicalConsoleControllerKeys"
+						:items="store.settings.trusted_keys"
+						item-title="name"
+						item-value="public_key"
+						:label="t('physicalConsole.savedControllers')"
+						:hint="t('physicalConsole.savedControllersHint')"
+						multiple
+						chips
+						closable-chips
+						persistent-hint
+						density="comfortable"
+						class="mb-2"
+					/>
 					<VTextField
 						v-model="physicalConsoleControllerKey"
-						:label="t('physicalConsole.controllerKey')"
+						:label="t('physicalConsole.additionalControllerKey')"
 						:hint="t('physicalConsole.controllerKeyHint')"
 						persistent-hint
 						density="comfortable"
@@ -387,7 +402,7 @@
 					<VBtn
 						color="primary"
 						:loading="physicalConsoleBusy"
-						:disabled="!physicalConsoleName.trim() || !physicalConsoleControllerKey.trim() || (!physicalConsoleLan && !physicalConsoleRelay)"
+						:disabled="!canInstallPhysicalConsole()"
 						@click="installPhysicalConsole"
 					>
 						{{ t("physicalConsole.confirm") }}
@@ -433,6 +448,7 @@
 	const physicalConsoleServiceError = ref("");
 	const physicalConsoleName = ref("");
 	const physicalConsoleControllerKey = ref("");
+	const physicalConsoleControllerKeys = ref<string[]>([]);
 	const physicalConsoleLan = ref(true);
 	const physicalConsoleRelay = ref(true);
 	const physicalConsoleLightdmLogin = ref(false);
@@ -471,9 +487,10 @@
 		physicalConsoleError.value = "";
 		try {
 			physicalConsole.value = await invoke<typeof physicalConsole.value>("setup_physical_console", {
-				setup: {
+			setup: {
 					deviceName: physicalConsoleName.value,
 					controllerPublicKey: physicalConsoleControllerKey.value,
+					controllerPublicKeys: physicalConsoleControllerKeys.value,
 					enableLan: physicalConsoleLan.value,
 					enableRelay: physicalConsoleRelay.value,
 					enableLightdmLogin: physicalConsoleLightdmLogin.value,
@@ -485,6 +502,18 @@
 		} finally {
 			physicalConsoleBusy.value = false;
 		}
+	}
+
+	function canInstallPhysicalConsole(): boolean {
+		if (!physicalConsoleName.value.trim() || (!physicalConsoleLan.value && !physicalConsoleRelay.value)) {
+			return false;
+		}
+		// An already installed broker owns its existing root-managed allow-list;
+		// reconfigure/update may safely reuse it without making the owner paste a
+		// key again. A first installation must name at least one controller.
+		return physicalConsole.value.configured
+			|| physicalConsoleControllerKeys.value.length > 0
+			|| physicalConsoleControllerKey.value.trim().length > 0;
 	}
 
 	async function retryPhysicalConsoleLightdm() {
@@ -580,6 +609,7 @@
 		// as the remote controller key: doing so would leave the actual laptop
 		// untrusted and make the console handshake fail after setup.
 		physicalConsoleControllerKey.value = "";
+		physicalConsoleControllerKeys.value = store.settings.trusted_keys.map((key) => key.public_key);
 		await refreshPhysicalConsoleStatus();
 	});
 

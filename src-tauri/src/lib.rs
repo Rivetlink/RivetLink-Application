@@ -476,7 +476,15 @@ struct PhysicalConsoleStatus {
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
 struct PhysicalConsoleSetup {
     device_name: String,
+    /// Legacy single-key field. Kept so a previously installed desktop app can
+    /// still ask a newer backend to add one controller.
+    #[serde(default)]
     controller_public_key: String,
+    /// Existing trusted controllers selected in the setup dialog. Every key is
+    /// independently validated and receives the explicit unattended-console
+    /// capability; a reconfiguration never discards keys already on the broker.
+    #[serde(default)]
+    controller_public_keys: Vec<String>,
     #[serde(default)]
     enable_lan: bool,
     #[serde(default = "default_true")]
@@ -494,6 +502,80 @@ fn default_true() -> bool {
 }
 fn default_lan_port() -> u16 {
     rivetlink_sdk::lan::DEFAULT_LAN_PORT
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn validated_console_controller_keys(
+    setup: &PhysicalConsoleSetup,
+    local_key: &str,
+) -> Result<Vec<String>, String> {
+    let mut keys = std::collections::BTreeSet::new();
+    for key in setup
+        .controller_public_keys
+        .iter()
+        .chain(std::iter::once(&setup.controller_public_key))
+        .map(|key| key.trim())
+        .filter(|key| !key.is_empty())
+    {
+        let raw = base64::engine::general_purpose::STANDARD
+            .decode(key)
+            .map_err(|_| "enter a controller's valid RivetLink public key".to_string())?;
+        if raw.len() != 32 {
+            return Err("enter a controller's valid RivetLink public key".to_string());
+        }
+        if key == local_key {
+            return Err(
+                "use public keys from separate controlling devices; this Ubuntu device cannot authorize itself"
+                    .to_string(),
+            );
+        }
+        keys.insert(key.to_string());
+    }
+    Ok(keys.into_iter().collect())
+}
+
+#[cfg(test)]
+mod console_controller_key_tests {
+    use super::{validated_console_controller_keys, PhysicalConsoleSetup};
+    use base64::Engine;
+
+    fn key(byte: u8) -> String {
+        base64::engine::general_purpose::STANDARD.encode([byte; 32])
+    }
+
+    #[test]
+    fn combines_saved_and_new_controller_keys_without_duplicates() {
+        let first = key(1);
+        let second = key(2);
+        let setup = PhysicalConsoleSetup {
+            device_name: "Home Node".into(),
+            controller_public_key: first.clone(),
+            controller_public_keys: vec![second.clone(), first.clone()],
+            enable_lan: true,
+            enable_relay: false,
+            lan_port: 47823,
+            enable_lightdm_login: false,
+        };
+        assert_eq!(
+            validated_console_controller_keys(&setup, &key(9)).unwrap(),
+            vec![first, second]
+        );
+    }
+
+    #[test]
+    fn refuses_the_local_device_as_a_console_controller() {
+        let local = key(9);
+        let setup = PhysicalConsoleSetup {
+            device_name: "Home Node".into(),
+            controller_public_key: local.clone(),
+            controller_public_keys: Vec::new(),
+            enable_lan: true,
+            enable_relay: false,
+            lan_port: 47823,
+            enable_lightdm_login: false,
+        };
+        assert!(validated_console_controller_keys(&setup, &local).is_err());
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -1507,20 +1589,48 @@ where
     I: IntoIterator<Item = std::ffi::OsString>,
 {
     let values: Vec<_> = args.into_iter().collect();
-    let mut value = |name: &str| -> Result<String, String> {
-        let index = values
-            .iter()
-            .position(|arg| arg == name)
-            .ok_or_else(|| format!("missing installer argument: {name}"))?;
-        values
-            .get(index + 1)
-            .and_then(|arg| arg.to_str())
-            .map(str::to_string)
-            .ok_or_else(|| format!("invalid installer argument: {name}"))
+    let mut single = std::collections::BTreeMap::new();
+    let mut controller_keys = Vec::new();
+    let mut iterator = values.iter();
+    while let Some(flag) = iterator.next() {
+        let name = flag
+            .to_str()
+            .ok_or("invalid physical-console installer request")?;
+        let value = iterator
+            .next()
+            .and_then(|value| value.to_str())
+            .ok_or("invalid physical-console installer request")?;
+        if name == "--controller-key" {
+            controller_keys.push(value.to_string());
+        } else if [
+            "--owner",
+            "--device-name",
+            "--source-exe",
+            "--service-agent-source",
+            "--relay-url",
+            "--relay-http-url",
+            "--appimage",
+            "--lan",
+            "--relay",
+            "--lan-port",
+        ]
+        .contains(&name)
+        {
+            if single.insert(name, value.to_string()).is_some() {
+                return Err("invalid physical-console installer request".to_string());
+            }
+        } else {
+            return Err("invalid physical-console installer request".to_string());
+        }
+    }
+    let value = |name: &str| -> Result<String, String> {
+        single
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("missing installer argument: {name}"))
     };
     let owner = value("--owner")?;
     let device_name = value("--device-name")?;
-    let controller_key = value("--controller-key")?;
     let source = PathBuf::from(value("--source-exe")?);
     let service_agent = PathBuf::from(value("--service-agent-source")?);
     let relay_url = value("--relay-url")?;
@@ -1531,7 +1641,7 @@ where
     let lan_port = value("--lan-port")?
         .parse::<u16>()
         .map_err(|_| "invalid LAN port".to_string())?;
-    if values.len() != 22
+    if single.len() != 10
         || !owner
             .chars()
             .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
@@ -1545,15 +1655,32 @@ where
     {
         return Err("invalid physical-console installer request".to_string());
     }
-    let controller = base64::engine::general_purpose::STANDARD
-        .decode(controller_key.trim())
-        .map_err(|_| "invalid controller identity".to_string())?;
-    if controller.len() != 32 {
-        return Err("invalid controller identity".to_string());
+    let mut unique_controller_keys = std::collections::BTreeSet::new();
+    for controller_key in controller_keys {
+        let controller = base64::engine::general_purpose::STANDARD
+            .decode(controller_key.trim())
+            .map_err(|_| "invalid controller identity".to_string())?;
+        if controller.len() != 32 {
+            return Err("invalid controller identity".to_string());
+        }
+        unique_controller_keys.insert(controller_key.trim().to_string());
     }
     let root = run_checked_output("/usr/bin/id", &["-u".into()])?;
     if root.trim() != "0" {
         return Err("physical-console installer must be authorized by PolicyKit".to_string());
+    }
+    // A reconfiguration may intentionally omit keys and retain the broker's
+    // existing allow-list. A first installation must name a controller, and we
+    // check that before creating users, units, or other persistent state.
+    if unique_controller_keys.is_empty()
+        && TrustedClients::load_or_empty(Path::new("/var/lib/rivetlink/keys/trusted_clients.json"))
+            .map_err(|error| error.to_string())?
+            .is_empty()
+    {
+        return Err(
+            "provide at least one controller public key because this physical console has no trusted controllers yet"
+                .to_string(),
+        );
     }
     if !source.is_absolute() || !source.is_file() {
         return Err("installer source executable is unavailable".to_string());
@@ -1738,17 +1865,19 @@ where
         .map_err(|error| error.to_string())?;
     let mut trusted = TrustedClients::load_or_empty(&key_path.join("trusted_clients.json"))
         .map_err(|error| error.to_string())?;
-    trusted
-        .trust(
-            controller_key.trim(),
-            TrustedEntry {
-                name: "Owner controller".to_string(),
-                can_view: true,
-                can_control: true,
-                can_unattended_console: true,
-            },
-        )
-        .map_err(|error| error.to_string())?;
+    for controller_key in unique_controller_keys {
+        trusted
+            .trust(
+                &controller_key,
+                TrustedEntry {
+                    name: "Owner controller".to_string(),
+                    can_view: true,
+                    can_control: true,
+                    can_unattended_console: true,
+                },
+            )
+            .map_err(|error| error.to_string())?;
+    }
     run_checked(
         "/usr/bin/chown",
         &[
@@ -1895,22 +2024,10 @@ async fn setup_physical_console(
         // restarting the broker so the system service becomes the sole
         // advertiser/listener for this device identity.
         stop_host_inner(&state);
-        let controller_key = setup.controller_public_key.trim();
-        if base64::engine::general_purpose::STANDARD
-            .decode(controller_key)
-            .is_err()
-        {
-            return Err("enter the controller's valid RivetLink public key".to_string());
-        }
         let local_key = Identity::load_or_create(&state.identity_path())
             .map_err(|error| error.to_string())?
             .public_key_b64();
-        if controller_key == local_key {
-            return Err(
-                "use the public key from the separate computer that will control this Ubuntu host; this Ubuntu device cannot authorize itself"
-                    .to_string(),
-            );
-        }
+        let controller_keys = validated_console_controller_keys(&setup, &local_key)?;
         let relay = if setup.enable_relay {
             let settings = state.settings.lock().await;
             Some(
@@ -1940,14 +2057,7 @@ async fn setup_physical_console(
         command
             .arg(&executable)
             .arg("--rivetlink-console-install")
-            .args([
-                "--owner",
-                &owner,
-                "--device-name",
-                setup.device_name.trim(),
-                "--controller-key",
-                controller_key,
-            ])
+            .args(["--owner", &owner, "--device-name", setup.device_name.trim()])
             .args([
                 "--source-exe",
                 executable
@@ -1982,6 +2092,9 @@ async fn setup_physical_console(
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null());
+        for controller_key in &controller_keys {
+            command.args(["--controller-key", controller_key]);
+        }
         let mut child = command
             .spawn()
             .map_err(|_| "could not start the authorized Ubuntu installer")?;
@@ -2042,6 +2155,27 @@ async fn setup_physical_console(
             return Err(
                 "Ubuntu physical-console installation failed; check the system journal".to_string(),
             );
+        }
+        // Remember newly supplied controller identities locally, too. This is
+        // convenience metadata only; the root-owned broker trust store remains
+        // authoritative. A later reconfigure can therefore preselect these
+        // devices without asking the owner to paste the same public key again.
+        if !controller_keys.is_empty() {
+            let mut settings = state.settings.lock().await;
+            let mut changed = false;
+            for controller_key in &controller_keys {
+                if !settings
+                    .trusted_keys
+                    .iter()
+                    .any(|key| key.public_key == *controller_key)
+                {
+                    push_trusted_key(&mut settings, "Physical console controller", controller_key)?;
+                    changed = true;
+                }
+            }
+            if changed {
+                settings.save(&state.data_dir)?;
+            }
         }
         if setup.enable_lightdm_login {
             // This is deliberately a second, explicit privileged operation.

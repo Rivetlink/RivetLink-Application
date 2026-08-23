@@ -239,6 +239,9 @@
         "name": "Naam voor deze Ubuntu Home Node",
         "controllerKey": "Publieke sleutel van het bedienende apparaat",
         "controllerKeyHint": "Open op de aparte bedienende laptop/desktop RivetLink → Instellingen → Beveiliging en kopieer daar de publieke sleutel. Gebruik niet de sleutel van deze Ubuntu-computer zelf.",
+        "savedControllers": "Vertrouwde bedienende apparaten",
+        "savedControllersHint": "Geselecteerde sleutels worden opnieuw gebruikt voor deze console. Apparaten kun je toevoegen of verwijderen via Instellingen → Beveiliging.",
+        "additionalControllerKey": "Nog een publieke sleutel van een bedienend apparaat toevoegen",
         "confirm": "Installeren en inschakelen"
     },
     "resources": {

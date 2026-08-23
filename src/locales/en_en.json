@@ -239,6 +239,9 @@
         "name": "Name for this Ubuntu Home Node",
         "controllerKey": "Controlling device public key",
         "controllerKeyHint": "On the separate controlling laptop/desktop, open RivetLink → Settings → Security and copy its public key. Do not use this Ubuntu computer's own key.",
+        "savedControllers": "Trusted controlling devices",
+        "savedControllersHint": "Selected keys are reused for this console. Add or remove devices under Settings → Security.",
+        "additionalControllerKey": "Add another controlling device public key",
         "confirm": "Install and enable"
     },
     "resources": {

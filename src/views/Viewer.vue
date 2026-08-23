@@ -3,7 +3,7 @@
 		<!-- The screen stage: the share fills it and every floating overlay (chips,
 		     display picker, waiting state) sits over it. The toolbar below is a
 		     separate row, so it never covers the shared screen. -->
-		<div class="stage">
+		<div ref="stageEl" class="stage">
 			<div class="scroll">
 				<canvas
 					ref="canvasEl"
@@ -148,6 +148,7 @@
 
 	const { t } = useI18n();
 	const canvasEl = ref<HTMLCanvasElement | null>(null);
+	const stageEl = ref<HTMLElement | null>(null);
 	const hasFrame = ref(false);
 	const ended = ref(false);
 	// A console capture can be authenticated and connected while the host's
@@ -167,9 +168,6 @@
 	const MAX_ZOOM = 5;
 	const ZOOM_STEP = 0.25;
 	const zoom = ref(1);
-	// Height of the docked toolbar row, subtracted from the window when fitting the
-	// frame so the screen share sits fully above it (the bar never overlaps it).
-	const TOOLBAR_H = 52;
 	// Remote control: when on, local mouse/keyboard over the canvas is captured and
 	// forwarded to the host (which only acts on it if it granted control). The host
 	// maps the platform command modifier itself, so we just flag ours as such.
@@ -183,8 +181,9 @@
 	// the "fit" scale that zoom multiplies.
 	const frameW = ref(0);
 	const frameH = ref(0);
-	const winW = ref(window.innerWidth);
-	const winH = ref(window.innerHeight);
+	const stageW = ref(window.innerWidth);
+	const stageH = ref(window.innerHeight);
+	let stageObserver: ResizeObserver | null = null;
 
 	// Explicit display size = fit-to-window × zoom. At zoom 1 this matches an
 	// object-fit:contain (one dimension fills the window); zooming in overflows
@@ -193,8 +192,7 @@
 		if (!frameW.value || !frameH.value) {
 			return {};
 		}
-		const stageH = Math.max(1, winH.value - TOOLBAR_H);
-		const fit = Math.min(winW.value / frameW.value, stageH / frameH.value);
+		const fit = Math.min(stageW.value / frameW.value, stageH.value / frameH.value);
 		const scale = fit * zoom.value;
 		return {
 			width: `${Math.round(frameW.value * scale)}px`,
@@ -220,8 +218,9 @@
 	}
 
 	function onResize(): void {
-		winW.value = window.innerWidth;
-		winH.value = window.innerHeight;
+		const rect = stageEl.value?.getBoundingClientRect();
+		stageW.value = Math.max(1, rect?.width ?? window.innerWidth);
+		stageH.value = Math.max(1, rect?.height ?? window.innerHeight);
 	}
 
 	// shallowRef (not ref) for the canvas context and the frame-chain promise:
@@ -565,6 +564,11 @@
 			}
 		}, 500);
 		window.addEventListener("resize", onResize);
+		onResize();
+		stageObserver = new ResizeObserver(onResize);
+		if (stageEl.value) {
+			stageObserver.observe(stageEl.value);
+		}
 		// Raise above every app now the window is mapped — the OS honours
 		// always_on_top reliably here but not always at build time, so a reconnect
 		// (fresh window) would otherwise come up behind other apps.
@@ -590,6 +594,8 @@
 		unlistenBlur.value?.();
 		detachControl(canvasEl.value); // drop any input listeners
 		window.removeEventListener("resize", onResize);
+		stageObserver?.disconnect();
+		stageObserver = null;
 		if (slowTimer.value) {
 			clearInterval(slowTimer.value);
 		}
@@ -601,10 +607,10 @@
 
 <style scoped>
 	.viewer {
+		position: fixed;
+		inset: 0;
 		display: flex;
 		flex-direction: column;
-		width: 100vw;
-		height: 100vh;
 		background: #000;
 		overflow: hidden;
 	}
