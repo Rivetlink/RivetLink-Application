@@ -139,10 +139,10 @@ jobs:
         working-directory: RivetLink
         run: cargo build --release --bin rivet-agent
 
-      - name: Test Linux Mutter one-shot capture safeguards
+      - name: Test Linux agent capture and console safeguards
         if: startsWith(matrix.os, 'ubuntu')
         working-directory: RivetLink
-        run: cargo test -p rivetlink-agent --lib capture::mutter::tests
+        run: cargo test -p rivetlink-agent --lib
 
       # Executes the unit-rendering regression test under Linux. It protects
       # restricted Ubuntu/AppArmor hosts from a future AppRun or PrivateTmp
