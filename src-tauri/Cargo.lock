@@ -4258,7 +4258,7 @@ dependencies = [
 
 [[package]]
 name = "rivetlink-app"
-version = "0.1.96"
+version = "0.1.97"
 dependencies = [
  "base64 0.22.1",
  "pam",
