@@ -122,6 +122,9 @@
 	} from "@tauri-apps/api/event";
 	import { invoke } from "@tauri-apps/api/core";
 	import { getCurrentWindow } from "@tauri-apps/api/window";
+	import {
+		store, type ScrollSpeed,
+	} from "../store";
 
 	type TilePatch = {
 		i: number;
@@ -177,6 +180,16 @@
 	// control channel shouldn't be flooded. ~120 Hz is smooth and cheap.
 	const MOVE_INTERVAL_MS = 8;
 	const lastMoveAt = ref(0);
+	// Convert the browser's high-resolution trackpad deltas into the discrete
+	// wheel steps understood by both remote input backends. In particular, do
+	// not turn every tiny macOS trackpad event into a full wheel click.
+	const WHEEL_PIXELS_PER_STEP: Record<ScrollSpeed, number> = {
+		slow: 100,
+		normal: 60,
+		fast: 30,
+	};
+	const wheelRemainderX = ref(0);
+	const wheelRemainderY = ref(0);
 	// The source frame's pixel size and the live window size — together they give
 	// the "fit" scale that zoom multiplies.
 	const frameW = ref(0);
@@ -441,10 +454,8 @@
 
 	function onWheel(e: WheelEvent): void {
 		e.preventDefault();
-		// Browsers report deltas in pixels; the host wants wheel notches. One notch
-		// per ~40px keeps fast flicks responsive without runaway scrolling.
-		const dy = Math.trunc(e.deltaY / 40) || Math.sign(e.deltaY);
-		const dx = Math.trunc(e.deltaX / 40) || Math.sign(e.deltaX);
+		const dx = consumeWheelDelta(normalizeWheelDelta(e.deltaX, e.deltaMode), "x");
+		const dy = consumeWheelDelta(normalizeWheelDelta(e.deltaY, e.deltaMode), "y");
 		if (dx === 0 && dy === 0) {
 			return;
 		}
@@ -453,6 +464,32 @@
 			dx,
 			dy,
 		});
+	}
+
+	function normalizeWheelDelta(delta: number, mode: number): number {
+		if (mode === WheelEvent.DOM_DELTA_LINE) {
+			return delta * 40;
+		}
+		if (mode === WheelEvent.DOM_DELTA_PAGE) {
+			return delta * 800;
+		}
+		return delta;
+	}
+
+	function consumeWheelDelta(delta: number, axis: "x" | "y"): number {
+		const remainder = axis === "x" ? wheelRemainderX : wheelRemainderY;
+		// A direction change must not first pay off a stale partial gesture in the
+		// opposite direction; that would make the trackpad feel briefly unresponsive.
+		if (remainder.value !== 0 && delta !== 0 && Math.sign(remainder.value) !== Math.sign(delta)) {
+			remainder.value = 0;
+		}
+		const threshold = WHEEL_PIXELS_PER_STEP[store.settings.scroll_speed] ?? WHEEL_PIXELS_PER_STEP.slow;
+		const total = remainder.value + delta;
+		const unboundedSteps = Math.trunc(total / threshold);
+		remainder.value = total - (unboundedSteps * threshold);
+		// Match the host-side safety limit and discard implausibly large synthetic
+		// wheel bursts instead of overflowing the signed protocol field.
+		return Math.max(-120, Math.min(120, unboundedSteps));
 	}
 
 	function onKey(e: KeyboardEvent, down: boolean): void {
@@ -506,6 +543,8 @@
 		}
 		window.removeEventListener("keydown", onKeyDown);
 		window.removeEventListener("keyup", onKeyUp);
+		wheelRemainderX.value = 0;
+		wheelRemainderY.value = 0;
 	}
 
 	function toggleControl(): void {

@@ -161,6 +161,12 @@
         "startupTitle": "Startup",
         "startupToggle": "Start RivetLink when I log in",
         "startupHint": "Recommended for a device that should always be reachable, like a computer at home you connect back to.",
+        "scrollTitle": "Controls",
+        "scrollSpeed": "Scroll speed",
+        "scrollHint": "Controls wheel and trackpad sensitivity while remotely controlling another computer.",
+        "scrollSlow": "Slow",
+        "scrollNormal": "Normal",
+        "scrollFast": "Fast",
         "editDevice": "Edit this device",
         "rolesRequired": "Choose at least one.",
         "tabs": {

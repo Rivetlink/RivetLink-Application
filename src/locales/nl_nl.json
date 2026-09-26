@@ -161,6 +161,12 @@
         "startupTitle": "Opstarten",
         "startupToggle": "RivetLink starten als ik inlog",
         "startupHint": "Handig voor een apparaat dat altijd bereikbaar moet zijn, zoals een computer thuis waarmee je terugverbindt.",
+        "scrollTitle": "Bediening",
+        "scrollSpeed": "Scrollsnelheid",
+        "scrollHint": "Bepaalt hoe gevoelig het scrollwiel en trackpad zijn tijdens bediening op afstand.",
+        "scrollSlow": "Langzaam",
+        "scrollNormal": "Normaal",
+        "scrollFast": "Snel",
         "editDevice": "Dit apparaat wijzigen",
         "rolesRequired": "Kies er minstens één.",
         "tabs": {

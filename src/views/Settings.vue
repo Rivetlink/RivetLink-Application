@@ -65,6 +65,28 @@
 					</VCardText>
 				</VCard>
 
+				<VCard variant="tonal" class="mb-4">
+					<VCardTitle>{{ t("settings.scrollTitle") }}</VCardTitle>
+					<VCardText>
+						<VSelect
+							:model-value="store.settings.scroll_speed"
+							:items="scrollSpeedOptions"
+							item-title="label"
+							item-value="value"
+							:label="t('settings.scrollSpeed')"
+							:loading="scrollSpeedBusy"
+							:disabled="scrollSpeedBusy"
+							density="comfortable"
+							hide-details
+							prepend-inner-icon="mdi-mouse-scroll-wheel"
+							@update:model-value="onScrollSpeedChange"
+						/>
+						<p class="text-caption text-medium-emphasis mt-2 mb-0">
+							{{ t("settings.scrollHint") }}
+						</p>
+					</VCardText>
+				</VCard>
+
 				<VCard variant="tonal">
 					<VCardTitle>{{ t("settings.startupTitle") }}</VCardTitle>
 					<VCardText>
@@ -415,7 +437,7 @@
 
 <script setup lang="ts">
 	import {
-		onMounted, ref,
+		computed, onMounted, ref,
 	} from "vue";
 	import { invoke } from "@tauri-apps/api/core";
 	import {
@@ -423,7 +445,7 @@
 	} from "@tauri-apps/plugin-autostart";
 	import { useI18n } from "vue-i18n";
 	import {
-		isClient, isHost, loadPublicKey, store, type TrustedKey,
+		isClient, isHost, loadPublicKey, setScrollSpeed, store, type ScrollSpeed, type TrustedKey,
 	} from "../store";
 	import {
 		SUPPORTED, setLocale,
@@ -442,6 +464,21 @@
 	const accessTarget = ref<TrustedKey | null>(null);
 	const autostart = ref(false);
 	const autostartBusy = ref(false);
+	const scrollSpeedBusy = ref(false);
+	const scrollSpeedOptions = computed(() => [
+		{
+			label: t("settings.scrollSlow"),
+			value: "slow" as ScrollSpeed,
+		},
+		{
+			label: t("settings.scrollNormal"),
+			value: "normal" as ScrollSpeed,
+		},
+		{
+			label: t("settings.scrollFast"),
+			value: "fast" as ScrollSpeed,
+		},
+	]);
 	const physicalConsoleDialog = ref(false);
 	const physicalConsoleBusy = ref(false);
 	const physicalConsoleError = ref("");
@@ -582,6 +619,18 @@
 			// Keep the previous value if the platform can't report it.
 		}
 		autostartBusy.value = false;
+	}
+
+	async function onScrollSpeedChange(value: ScrollSpeed | null) {
+		if (value === null) {
+			return;
+		}
+		scrollSpeedBusy.value = true;
+		try {
+			await setScrollSpeed(value);
+		} finally {
+			scrollSpeedBusy.value = false;
+		}
 	}
 
 	function openAdd() {

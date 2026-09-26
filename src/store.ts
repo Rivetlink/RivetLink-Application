@@ -28,6 +28,8 @@ export type TrustedKey = {
 	public_key: string;
 };
 
+export type ScrollSpeed = "slow" | "normal" | "fast";
+
 export type AppSettings = {
 	setup_complete: boolean;
 	device_name: string;
@@ -36,6 +38,7 @@ export type AppSettings = {
 	active_relay_id: string | null;
 	lan_devices: SavedLanDevice[];
 	trusted_keys: TrustedKey[];
+	scroll_speed: ScrollSpeed;
 };
 
 /// A host found on the local network (not yet remembered).
@@ -71,6 +74,7 @@ const emptySettings: AppSettings = {
 	active_relay_id: null,
 	lan_devices: [],
 	trusted_keys: [],
+	scroll_speed: "slow",
 };
 
 export const store = reactive({
@@ -127,6 +131,10 @@ export async function updateDevice(deviceName: string, roles: string[]): Promise
 		deviceName,
 		roles,
 	});
+}
+
+export async function setScrollSpeed(scrollSpeed: ScrollSpeed): Promise<void> {
+	store.settings = await invoke<AppSettings>("set_scroll_speed", { scrollSpeed });
 }
 
 export async function addRelay(name: string, httpUrl: string): Promise<void> {

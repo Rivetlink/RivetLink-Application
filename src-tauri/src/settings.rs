@@ -53,7 +53,7 @@ pub struct TrustedRelayHost {
 }
 
 /// Everything the app remembers between launches.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppSettings {
     /// Onboarding finished — skip the wizard on next launch.
     #[serde(default)]
@@ -79,6 +79,29 @@ pub struct AppSettings {
     /// Clients allowed to connect to this host without the session code.
     #[serde(default)]
     pub trusted_keys: Vec<TrustedKey>,
+    /// Remote wheel/trackpad sensitivity: "slow", "normal", or "fast".
+    #[serde(default = "default_scroll_speed")]
+    pub scroll_speed: String,
+}
+
+fn default_scroll_speed() -> String {
+    "slow".to_string()
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            setup_complete: false,
+            device_name: String::new(),
+            roles: Vec::new(),
+            relays: Vec::new(),
+            active_relay_id: None,
+            lan_devices: Vec::new(),
+            trusted_relay_hosts: Vec::new(),
+            trusted_keys: Vec::new(),
+            scroll_speed: default_scroll_speed(),
+        }
+    }
 }
 
 impl AppSettings {
@@ -90,10 +113,14 @@ impl AppSettings {
     /// Load settings from `dir`, returning defaults if the file is absent.
     pub fn load(dir: &Path) -> Self {
         let path = Self::path(dir);
-        match std::fs::read_to_string(&path) {
+        let mut settings = match std::fs::read_to_string(&path) {
             Ok(body) => serde_json::from_str(&body).unwrap_or_default(),
             Err(_) => Self::default(),
+        };
+        if !matches!(settings.scroll_speed.as_str(), "slow" | "normal" | "fast") {
+            settings.scroll_speed = default_scroll_speed();
         }
+        settings
     }
 
     /// Persist settings as pretty JSON, creating the dir if needed.
@@ -107,5 +134,28 @@ impl AppSettings {
     pub fn active_relay(&self) -> Option<&Relay> {
         let id = self.active_relay_id.as_ref()?;
         self.relays.iter().find(|r| &r.id == id)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn missing_scroll_speed_defaults_to_slow() {
+        let settings: AppSettings = serde_json::from_str("{}").unwrap();
+        assert_eq!(settings.scroll_speed, "slow");
+        assert_eq!(AppSettings::default().scroll_speed, "slow");
+    }
+
+    #[test]
+    fn scroll_speed_round_trips() {
+        let settings = AppSettings {
+            scroll_speed: "normal".to_string(),
+            ..AppSettings::default()
+        };
+        let encoded = serde_json::to_string(&settings).unwrap();
+        let decoded: AppSettings = serde_json::from_str(&encoded).unwrap();
+        assert_eq!(decoded.scroll_speed, "normal");
     }
 }

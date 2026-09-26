@@ -221,6 +221,21 @@ async fn update_device(
     Ok(settings.clone())
 }
 
+/// Persist the controlling client's remote wheel/trackpad sensitivity.
+#[tauri::command]
+async fn set_scroll_speed(
+    state: State<'_, AppState>,
+    scroll_speed: String,
+) -> Result<AppSettings, String> {
+    if !matches!(scroll_speed.as_str(), "slow" | "normal" | "fast") {
+        return Err("invalid scroll speed".to_string());
+    }
+    let mut settings = state.settings.lock().await;
+    settings.scroll_speed = scroll_speed;
+    settings.save(&state.data_dir)?;
+    Ok(settings.clone())
+}
+
 /// This client's identity public key (base64) — what a host trusts (TOFU).
 #[tauri::command]
 async fn public_key(state: State<'_, AppState>) -> Result<String, String> {
@@ -6005,6 +6020,7 @@ pub fn run() {
             get_settings,
             complete_setup,
             update_device,
+            set_scroll_speed,
             public_key,
             app_version,
             is_appimage,
