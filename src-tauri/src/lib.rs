@@ -13,6 +13,7 @@
 #![cfg_attr(windows, allow(dead_code))]
 
 mod settings;
+mod sharing;
 
 #[cfg(target_os = "linux")]
 use std::path::Path;
@@ -81,6 +82,8 @@ struct AppState {
     pending_consents: std::sync::Mutex<std::collections::HashMap<u64, ConsentPending>>,
     /// Monotonic id source for consent prompts.
     consent_seq: std::sync::atomic::AtomicU64,
+    /// Clipboard and file sharing for the active LAN stream.
+    sharing: sharing::Sharing,
 }
 
 /// A pending host-consent prompt awaiting the user's accept/reject.
@@ -4798,14 +4801,15 @@ async fn lan_connect_inner(
 
     // Ask the host which screens it can share and hand it to the viewer for a
     // screen picker. Bounded: an unresponsive host shouldn't stall the stream.
-    let displays = match tokio::time::timeout(
+    // The same reply says whether this host lets us share clipboard/files.
+    let (displays, features) = match tokio::time::timeout(
         std::time::Duration::from_secs(5),
-        rivetlink_sdk::lan::list_displays(&mut stream, &channel),
+        rivetlink_sdk::lan::list_displays_and_features(&mut stream, &channel),
     )
     .await
     {
-        Ok(Ok(d)) => d,
-        _ => Vec::new(),
+        Ok(Ok(listing)) => listing,
+        _ => (Vec::new(), Vec::new()),
     };
     // First (optimistic) emit; the viewer window may not have registered its
     // listener yet, so the stream task re-emits on the first frame too.
@@ -4819,6 +4823,12 @@ async fn lan_connect_inner(
     // The viewer's input capture pushes mouse/keyboard events here when it has
     // control. Sized for high-frequency pointer moves bursting between frames.
     let (input_tx, input_rx) = tokio::sync::mpsc::channel::<rivetlink_sdk::lan::LanRequest>(256);
+    // Clipboard/file sharing rides the same channel. Only ask a host that
+    // listed the features: older hosts don't understand the request.
+    state.sharing.attach(input_tx.clone());
+    if !features.is_empty() {
+        let _ = input_tx.try_send(rivetlink_sdk::lan::LanRequest::EnableSharing);
+    }
     if let Ok(mut guard) = state.input_tx.lock() {
         *guard = Some(input_tx);
     }
@@ -4841,6 +4851,8 @@ async fn lan_connect_inner(
 
     let app_for_task = app.clone();
     let app_for_displays = app.clone();
+    let app_for_share = app.clone();
+    let sharing = state.sharing.clone();
     let displays_for_viewer = displays.clone();
     let fallback_target = target.clone();
     let task = tokio::spawn(async move {
@@ -4874,6 +4886,8 @@ async fn lan_connect_inner(
             move |displays| {
                 let _ = app_for_displays.emit("lan://displays", displays);
             },
+            // Clipboard text, transfer progress and shared-folder listings.
+            move |response| sharing.handle(&app_for_share, response),
         )
         .await;
         let fallback_to_console = allow_login_fallback
@@ -5063,6 +5077,78 @@ fn stop_stream(state: &AppState) {
     if let Ok(mut guard) = state.console_input_tx.lock() {
         *guard = None;
     }
+    state.sharing.reset();
+}
+
+/// Upload local files and folders to the host's shared folder.
+#[tauri::command]
+async fn lan_share_upload(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let sharing = state.sharing.clone();
+    sharing
+        .upload(app, paths.into_iter().map(PathBuf::from).collect())
+        .await
+}
+
+/// Let the user pick files (or one folder) to upload to the host.
+#[tauri::command]
+async fn lan_share_pick(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    folder: bool,
+) -> Result<(), String> {
+    use tauri_plugin_dialog::DialogExt;
+    let picker = app.dialog().file();
+    let picked = if folder {
+        picker.blocking_pick_folder().map(|path| vec![path])
+    } else {
+        picker.blocking_pick_files()
+    };
+    let paths: Vec<PathBuf> = picked
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|path| path.into_path().ok())
+        .collect();
+    if paths.is_empty() {
+        return Ok(());
+    }
+    let sharing = state.sharing.clone();
+    sharing.upload(app, paths).await
+}
+
+/// Ask the host for its shared folder (answered as `lan://shared-files`).
+#[tauri::command]
+async fn lan_share_list(state: State<'_, AppState>) -> Result<(), String> {
+    let sharing = state.sharing.clone();
+    sharing.list().await
+}
+
+/// Download host files (relative paths) into Downloads/RivetLink.
+#[tauri::command]
+fn lan_share_download(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    state.sharing.download(&app, paths)
+}
+
+/// Open Downloads/RivetLink in the OS file manager.
+#[tauri::command]
+fn lan_share_open_folder(app: tauri::AppHandle) -> Result<(), String> {
+    use tauri_plugin_opener::OpenerExt;
+    let dir = app
+        .path()
+        .download_dir()
+        .map_err(|e| e.to_string())?
+        .join("RivetLink");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    app.opener()
+        .open_path(dir.to_string_lossy(), None::<&str>)
+        .map_err(|e| e.to_string())
 }
 
 /// Disconnect the current LAN stream and close the viewer window.
@@ -5927,6 +6013,7 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_autostart::init(
@@ -5984,6 +6071,7 @@ pub fn run() {
                 sys: std::sync::Mutex::new(sysinfo::System::new()),
                 pending_consents: std::sync::Mutex::new(std::collections::HashMap::new()),
                 consent_seq: std::sync::atomic::AtomicU64::new(0),
+                sharing: sharing::Sharing::default(),
             });
 
             // Native menu bar (RivetLink + Edit). The "Check for Updates" item
@@ -6050,6 +6138,11 @@ pub fn run() {
             lan_connect,
             lan_switch_display,
             lan_send_input,
+            lan_share_upload,
+            lan_share_pick,
+            lan_share_list,
+            lan_share_download,
+            lan_share_open_folder,
             lan_disconnect,
             resource_usage,
             start_host,
