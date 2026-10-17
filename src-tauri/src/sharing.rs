@@ -66,7 +66,17 @@ struct Inner {
     downloads: Mutex<BTreeMap<u32, Download>>,
     /// Downloads waiting for the active one to finish (host path, local root).
     queued_downloads: Mutex<VecDeque<(u32, String, PathBuf)>>,
+    /// What the host enabled for this stream, for a viewer that opens after
+    /// the `lan://sharing` event was emitted.
+    enabled: Mutex<Option<SharingState>>,
     next_id: AtomicU32,
+}
+
+/// What the host enabled, emitted as `lan://sharing`.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct SharingState {
+    clipboard: bool,
+    files: bool,
 }
 
 /// Per-app sharing state; cheap to clone into the stream task.
@@ -89,6 +99,9 @@ impl Sharing {
         if let Ok(mut guard) = self.inner.tx.lock() {
             *guard = None;
         }
+        if let Ok(mut guard) = self.inner.enabled.lock() {
+            *guard = None;
+        }
         if let Ok(mut guard) = self.inner.clipboard.lock() {
             *guard = None;
         }
@@ -106,6 +119,11 @@ impl Sharing {
         if let Ok(mut names) = self.inner.upload_names.lock() {
             names.clear();
         }
+    }
+
+    /// What the host enabled for the current stream, if anything.
+    pub fn state(&self) -> Option<SharingState> {
+        self.inner.enabled.lock().ok().and_then(|guard| *guard)
     }
 
     fn sender(&self) -> Option<Sender<LanRequest>> {
@@ -130,10 +148,11 @@ impl Sharing {
                         }
                     }
                 }
-                let _ = app.emit(
-                    "lan://sharing",
-                    serde_json::json!({ "clipboard": clipboard, "files": files }),
-                );
+                let state = SharingState { clipboard, files };
+                if let Ok(mut guard) = self.inner.enabled.lock() {
+                    *guard = Some(state);
+                }
+                let _ = app.emit("lan://sharing", state);
             }
             LanResponse::ClipboardText { text } => {
                 if let Ok(guard) = self.inner.clipboard.lock() {

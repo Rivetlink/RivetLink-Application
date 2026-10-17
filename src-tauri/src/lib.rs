@@ -5126,6 +5126,12 @@ async fn lan_share_list(state: State<'_, AppState>) -> Result<(), String> {
     sharing.list().await
 }
 
+/// What the host enabled for the current stream (`null` when nothing).
+#[tauri::command]
+fn lan_share_state(state: State<'_, AppState>) -> Option<sharing::SharingState> {
+    state.sharing.state()
+}
+
 /// Download host files (relative paths) into Downloads/RivetLink.
 #[tauri::command]
 fn lan_share_download(
@@ -6141,6 +6147,7 @@ pub fn run() {
             lan_share_upload,
             lan_share_pick,
             lan_share_list,
+            lan_share_state,
             lan_share_download,
             lan_share_open_folder,
             lan_disconnect,

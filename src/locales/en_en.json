@@ -332,6 +332,7 @@
         "clipboardOn": "Clipboard is shared: text you copy here or on the host can be pasted on the other side.",
         "clipboardOff": "The host clipboard is unavailable; file transfer still works.",
         "clipboardReceived": "Clipboard received from the host",
+        "unavailable": "File sharing is unavailable: update RivetLink on the host",
         "send": "Send to the host",
         "files": "Files…",
         "folder": "Folder…",
