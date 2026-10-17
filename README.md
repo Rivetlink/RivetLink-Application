@@ -10,9 +10,11 @@ trusted authority; session content is encrypted end to end.
 
 ## Status
 
-Client-mode MVP: configure a relay → sign in → list devices → capture one
-screenshot from a host (the host may prompt its operator to approve). Live
-video, input control, and Host mode are on the roadmap.
+Both roles work. As a **client**, connect to a host via a relay or directly on
+the LAN and get a live view with mouse/keyboard control (the host may prompt
+its operator to approve). As a **host** (*This device*), share this machine:
+live view on Linux and macOS, remote input on Linux only. Windows is
+viewer-only for now.
 
 On **Ubuntu Desktop 24.04 LTS or newer**, use **Settings → Ubuntu physical
 console** with a permanent HDMI dummy/EDID emulator. After one owner-approved
@@ -74,9 +76,13 @@ npm run tauri build    # native installer for the current OS
 ```
 .
 ├── src/                 Vue 3 + Vuetify frontend
-│   ├── App.vue          client-mode UI (connect → login → devices → capture)
-│   └── main.ts          app + Vuetify bootstrap
+│   ├── views/           Connect, ThisDevice, Viewer, Relays, Settings, …
+│   ├── components/      consent, trusted-key, LAN-connect, update modals
+│   ├── locales/         en + nl strings (vue-i18n)
+│   ├── router.ts        routes
+│   └── store.ts         app state
 ├── src-tauri/           Rust backend (Tauri 2)
 │   └── src/lib.rs       Tauri commands over rivetlink-sdk
+│                        (+ host agent and Ubuntu console broker setup)
 └── eslint.config.js     house style
 ```
