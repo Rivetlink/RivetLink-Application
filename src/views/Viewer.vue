@@ -64,6 +64,21 @@
 			>
 				{{ t("viewer.loginHandoff") }}
 			</VChip>
+			<VChip
+				v-if="clipboardReceived"
+				class="clipboard-chip"
+				color="success"
+				size="small"
+				variant="flat"
+				prepend-icon="mdi-clipboard-check-outline"
+			>
+				{{ t("share.clipboardReceived") }}
+			</VChip>
+			<SharePanel
+				v-if="showShare && sharing?.files"
+				:clipboard="sharing.clipboard"
+				@close="showShare = false"
+			/>
 		</div>
 		<!-- Always-on toolbar — never folds, so zoom/control/disconnect stay one
 		     click away. Docked in its own row below the stage (no overlap). -->
@@ -99,6 +114,17 @@
 				:title="controlling ? t('viewer.releaseControl') : t('viewer.takeControl')"
 				@click="toggleControl"
 			/>
+			<template v-if="sharing?.files">
+				<div class="sep" />
+				<VBtn
+					icon="mdi-folder-swap-outline"
+					size="small"
+					variant="text"
+					:color="showShare ? 'primary' : undefined"
+					:title="t('share.title')"
+					@click="showShare = !showShare"
+				/>
+			</template>
 			<div class="sep" />
 			<VBtn
 				icon="mdi-close-circle-outline"
@@ -122,6 +148,8 @@
 	} from "@tauri-apps/api/event";
 	import { invoke } from "@tauri-apps/api/core";
 	import { getCurrentWindow } from "@tauri-apps/api/window";
+	import { getCurrentWebview } from "@tauri-apps/api/webview";
+	import SharePanel from "../components/SharePanel.vue";
 	import {
 		store, type ScrollSpeed,
 	} from "../store";
@@ -142,6 +170,11 @@
 		tile: number;
 		keyframe: boolean;
 		tiles: TilePatch[];
+	};
+
+	type SharingState = {
+		clipboard: boolean;
+		files: boolean;
 	};
 
 	type ConsoleFrame = {
@@ -250,6 +283,16 @@
 	const unlistenDesktopFallback = ref<UnlistenFn | null>(null);
 	const unlistenDisplays = ref<UnlistenFn | null>(null);
 	const unlistenBlur = ref<UnlistenFn | null>(null);
+	const unlistenSharing = ref<UnlistenFn | null>(null);
+	const unlistenClipboard = ref<UnlistenFn | null>(null);
+	const unlistenDrop = ref<UnlistenFn | null>(null);
+
+	// Clipboard/file sharing: set once the host enabled it for this stream.
+	const sharing = ref<SharingState | null>(null);
+	const showShare = ref(false);
+	// Briefly confirm that text copied on the host is now on our clipboard.
+	const clipboardReceived = ref(false);
+	const clipboardTimer = ref<ReturnType<typeof setTimeout> | undefined>(undefined);
 	// The host sends a heartbeat frame ~every second; if nothing arrives for a
 	// while the link is slow/stalled rather than just a static screen.
 	const lastFrameAt = ref(0);
@@ -600,8 +643,27 @@
 				errorMessage.value = String(error);
 			});
 		});
+		unlistenSharing.value = await listen<SharingState>("lan://sharing", (e) => {
+			sharing.value = e.payload;
+		});
+		unlistenClipboard.value = await listen("lan://clipboard", () => {
+			clipboardReceived.value = true;
+			clearTimeout(clipboardTimer.value);
+			clipboardTimer.value = setTimeout(() => {
+				clipboardReceived.value = false;
+			}, 2000);
+		});
+		// Dropping files/folders on the viewer sends them to the host.
+		unlistenDrop.value = await getCurrentWebview().onDragDropEvent((e) => {
+			if (e.payload.type === "drop" && sharing.value?.files && e.payload.paths.length) {
+				showShare.value = true;
+				void invoke("lan_share_upload", { paths: e.payload.paths }).catch(() => { /* stream gone */ });
+			}
+		});
 		unlistenEnd.value = await listen("lan://disconnected", () => {
 			ended.value = true;
+			sharing.value = null;
+			showShare.value = false;
 			hasFrame.value = false;
 			slow.value = false;
 			consoleHandoff.value = false;
@@ -663,6 +725,10 @@
 		unlistenDesktopFallback.value?.();
 		unlistenDisplays.value?.();
 		unlistenBlur.value?.();
+		unlistenSharing.value?.();
+		unlistenClipboard.value?.();
+		unlistenDrop.value?.();
+		clearTimeout(clipboardTimer.value);
 		detachControl(canvasEl.value); // drop any input listeners
 		window.removeEventListener("resize", onResize);
 		stageObserver.value?.disconnect();
@@ -723,6 +789,14 @@
 		position: absolute;
 		top: 12px;
 		right: 12px;
+		opacity: 0.9;
+	}
+
+	.clipboard-chip {
+		position: absolute;
+		bottom: 12px;
+		left: 50%;
+		transform: translateX(-50%);
 		opacity: 0.9;
 	}
 

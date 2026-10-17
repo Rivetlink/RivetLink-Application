@@ -27,6 +27,10 @@ tauri-plugin-process = "2"
 # Start the app on OS login (Linux .desktop autostart / macOS LaunchAgent /
 # Windows Run key) so an always-on host comes back up after a reboot.
 tauri-plugin-autostart = "2"
+# File pickers for sending files/folders to a host during a session.
+tauri-plugin-dialog = "2"
+# The OS clipboard, for sharing copied text with a host during a session.
+arboard = "3"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["sync", "rt", "net", "time"] }
