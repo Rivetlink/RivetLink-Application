@@ -265,9 +265,8 @@
 	}
 
 	// End the session from the viewer side and fully close this window, so a later
-	// reconnect builds a brand-new window — GNOME/Wayland only reliably honours
-	// always_on_top on a fresh window, so a reused one comes back up behind other
-	// apps. The CloseRequested handler stops the stream on the backend.
+	// reconnect builds a brand-new window. The CloseRequested handler stops the
+	// stream on the backend.
 	async function disconnect(): Promise<void> {
 		await invoke("lan_disconnect").catch(() => { /* already gone */ });
 		await getCurrentWindow().close().catch(() => { /* already gone */ });
@@ -793,18 +792,12 @@
 		if (stageEl.value) {
 			stageObserver.value.observe(stageEl.value);
 		}
-		// Raise above every app now the window is mapped — the OS honours
-		// always_on_top reliably here but not always at build time, so a reconnect
-		// (fresh window) would otherwise come up behind other apps.
+		// Bring the new window to the front once now it is mapped, so a
+		// reconnect doesn't open behind other apps. It stays a normal window.
 		void invoke("viewer_raise").catch(() => { /* window gone */ });
-		// Keep it on top across app switches: switching to another app (Chrome →
-		// Firefox) demotes this window in the stack, so re-assert always_on_top
-		// each time it loses focus. viewer_raise doesn't steal focus, so the other
-		// app keeps focus — the viewer just floats back above it.
 		unlistenBlur.value = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
 			if (!focused) {
 				releaseHeldKeys();
-				void invoke("viewer_raise").catch(() => { /* window gone */ });
 			}
 		});
 	});
