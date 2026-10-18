@@ -74,6 +74,16 @@
 			>
 				{{ t("share.clipboardReceived") }}
 			</VChip>
+			<VChip
+				v-if="dropRefused"
+				class="clipboard-chip"
+				color="warning"
+				size="small"
+				variant="flat"
+				prepend-icon="mdi-folder-alert-outline"
+			>
+				{{ t("share.unavailable") }}
+			</VChip>
 			<SharePanel
 				v-if="showShare && sharing?.files"
 				:clipboard="sharing.clipboard"
@@ -293,6 +303,9 @@
 	// Briefly confirm that text copied on the host is now on our clipboard.
 	const clipboardReceived = ref(false);
 	const clipboardTimer = ref<ReturnType<typeof setTimeout> | undefined>(undefined);
+	// A drop while the host doesn't share files: say so instead of ignoring it.
+	const dropRefused = ref(false);
+	const dropTimer = ref<ReturnType<typeof setTimeout> | undefined>(undefined);
 	// The host sends a heartbeat frame ~every second; if nothing arrives for a
 	// while the link is slow/stalled rather than just a static screen.
 	const lastFrameAt = ref(0);
@@ -646,19 +659,35 @@
 		unlistenSharing.value = await listen<SharingState>("lan://sharing", (e) => {
 			sharing.value = e.payload;
 		});
+		// The host may have answered before this window started listening.
+		void invoke<SharingState | null>("lan_share_state").then((state) => {
+			if (state) {
+				sharing.value = state;
+			}
+		}).catch(() => { /* no stream */ });
 		unlistenClipboard.value = await listen("lan://clipboard", () => {
 			clipboardReceived.value = true;
 			clearTimeout(clipboardTimer.value);
+			clearTimeout(dropTimer.value);
 			clipboardTimer.value = setTimeout(() => {
 				clipboardReceived.value = false;
 			}, 2000);
 		});
 		// Dropping files/folders on the viewer sends them to the host.
 		unlistenDrop.value = await getCurrentWebview().onDragDropEvent((e) => {
-			if (e.payload.type === "drop" && sharing.value?.files && e.payload.paths.length) {
-				showShare.value = true;
-				void invoke("lan_share_upload", { paths: e.payload.paths }).catch(() => { /* stream gone */ });
+			if (e.payload.type !== "drop" || !e.payload.paths.length) {
+				return;
 			}
+			if (!sharing.value?.files) {
+				dropRefused.value = true;
+				clearTimeout(dropTimer.value);
+				dropTimer.value = setTimeout(() => {
+					dropRefused.value = false;
+				}, 4000);
+				return;
+			}
+			showShare.value = true;
+			void invoke("lan_share_upload", { paths: e.payload.paths }).catch(() => { /* stream gone */ });
 		});
 		unlistenEnd.value = await listen("lan://disconnected", () => {
 			ended.value = true;

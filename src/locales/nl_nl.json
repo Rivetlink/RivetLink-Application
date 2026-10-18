@@ -332,6 +332,7 @@
         "clipboardOn": "Klembord wordt gedeeld: tekst die je hier of op de host kopieert, kun je aan de andere kant plakken.",
         "clipboardOff": "Het klembord van de host is niet beschikbaar; bestanden overzetten werkt wel.",
         "clipboardReceived": "Klembord van de host ontvangen",
+        "unavailable": "Bestanden delen is niet beschikbaar: werk RivetLink op de host bij",
         "send": "Naar de host sturen",
         "files": "Bestanden…",
         "folder": "Map…",
