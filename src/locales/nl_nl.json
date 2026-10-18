@@ -108,6 +108,7 @@
         "errTimeout": "De verbinding duurde te lang. Deelt de andere computer nog op dit netwerk?",
         "errAuth": "De verbinding werd geweigerd. Klopt de code?",
         "errNotTrusted": "Dit apparaat is nog niet toegelaten. Voer de code in, of laat de andere computer het toelaten bij Toegang.",
+        "errKeyRejected": "De host kent de sleutel van dit apparaat niet. Voeg je sleutel (Instellingen → Beveiliging) toe op de host; voor een Ubuntu-console via de setup van de physical console.",
         "errNoRoute": "Deze computer is niet beschikbaar op je lokale netwerk en er is geen passende relay-verbinding gereed. Schakel bij een Ubuntu fysieke console eerst de fysieke-console-service in."
     },
     "device": {

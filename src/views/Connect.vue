@@ -527,6 +527,10 @@
 		if (m.includes("unreachable") || m.includes("no route") || m.includes("os error 65") || m.includes("os error 113")) {
 			return t("connect.errUnreachable");
 		}
+		// A key-authenticated host that doesn't list this device's identity.
+		if (m.includes("host rejected connection")) {
+			return t("connect.errKeyRejected");
+		}
 		if (m.includes("not trusted") || m.includes("trust")) {
 			return t("connect.errNotTrusted");
 		}

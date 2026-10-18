@@ -482,6 +482,7 @@
 			return;
 		}
 		e.preventDefault();
+		syncModifiers(e);
 		// Move first so the press lands exactly under the cursor.
 		sendInput({
 			kind: "move",
@@ -548,6 +549,59 @@
 		return Math.max(-120, Math.min(120, unboundedSteps));
 	}
 
+	// Keys the host currently holds down. A key released while this window
+	// has no focus (Alt+Tab, the Windows key, a dialog) never sends its keyup,
+	// so the host would keep it pressed and turn later letters into shortcuts.
+	const heldKeys = new Set<string>();
+
+	function releaseHeldKeys(): void {
+		heldKeys.forEach((code) => {
+			sendInput({
+				kind: "key",
+				code,
+				down: false,
+			});
+		});
+		heldKeys.clear();
+	}
+
+	// Which event flag says a held modifier is really still down.
+	function modifierFlag(code: string): "shiftKey" | "altKey" | "ctrlKey" | "metaKey" | null {
+		if (code === "ShiftLeft" || code === "ShiftRight") {
+			return "shiftKey";
+		}
+		if (code === "AltLeft" || code === "AltRight") {
+			return "altKey";
+		}
+		if (code === "ControlLeft" || code === "ControlRight") {
+			return "ctrlKey";
+		}
+		if (code === "MetaLeft" || code === "MetaRight") {
+			return "metaKey";
+		}
+		if (code === "CommandMod") {
+			return isMac ? "metaKey" : "ctrlKey";
+		}
+		return null;
+	}
+
+	// Release modifiers the host holds but the OS reports as up. Catches a
+	// keyup the viewer never saw even without a focus change (e.g. the
+	// Windows key, whose release the Start menu swallows).
+	function syncModifiers(e: MouseEvent | KeyboardEvent): void {
+		heldKeys.forEach((code) => {
+			const flag = modifierFlag(code);
+			if (flag && !e[flag]) {
+				heldKeys.delete(code);
+				sendInput({
+					kind: "key",
+					code,
+					down: false,
+				});
+			}
+		});
+	}
+
 	function onKey(e: KeyboardEvent, down: boolean): void {
 		// Capture the key for the remote — don't let it trigger viewer shortcuts.
 		e.preventDefault();
@@ -559,6 +613,13 @@
 			: (code === "ControlLeft" || code === "ControlRight");
 		if (isCommandMod) {
 			code = "CommandMod";
+		}
+		syncModifiers(e);
+		if (down) {
+			heldKeys.add(code);
+		} else if (!heldKeys.delete(code)) {
+			// Its keydown went elsewhere (e.g. the shortcut that focused us).
+			return;
 		}
 		sendInput({
 			kind: "key",
@@ -587,6 +648,7 @@
 		canvas.addEventListener("contextmenu", onContextMenu);
 		window.addEventListener("keydown", onKeyDown);
 		window.addEventListener("keyup", onKeyUp);
+		window.addEventListener("blur", releaseHeldKeys);
 	}
 
 	function detachControl(canvas: HTMLCanvasElement | null): void {
@@ -599,6 +661,8 @@
 		}
 		window.removeEventListener("keydown", onKeyDown);
 		window.removeEventListener("keyup", onKeyUp);
+		window.removeEventListener("blur", releaseHeldKeys);
+		releaseHeldKeys();
 		wheelRemainderX.value = 0;
 		wheelRemainderY.value = 0;
 	}
@@ -739,6 +803,7 @@
 		// app keeps focus — the viewer just floats back above it.
 		unlistenBlur.value = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
 			if (!focused) {
+				releaseHeldKeys();
 				void invoke("viewer_raise").catch(() => { /* window gone */ });
 			}
 		});
