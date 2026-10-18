@@ -548,6 +548,22 @@
 		return Math.max(-120, Math.min(120, unboundedSteps));
 	}
 
+	// Keys the host currently holds down. A key released while this window
+	// has no focus (Alt+Tab, the Windows key, a dialog) never sends its keyup,
+	// so the host would keep it pressed and turn later letters into shortcuts.
+	const heldKeys = new Set<string>();
+
+	function releaseHeldKeys(): void {
+		heldKeys.forEach((code) => {
+			sendInput({
+				kind: "key",
+				code,
+				down: false,
+			});
+		});
+		heldKeys.clear();
+	}
+
 	function onKey(e: KeyboardEvent, down: boolean): void {
 		// Capture the key for the remote — don't let it trigger viewer shortcuts.
 		e.preventDefault();
@@ -559,6 +575,12 @@
 			: (code === "ControlLeft" || code === "ControlRight");
 		if (isCommandMod) {
 			code = "CommandMod";
+		}
+		if (down) {
+			heldKeys.add(code);
+		} else if (!heldKeys.delete(code)) {
+			// Its keydown went elsewhere (e.g. the shortcut that focused us).
+			return;
 		}
 		sendInput({
 			kind: "key",
@@ -587,6 +609,7 @@
 		canvas.addEventListener("contextmenu", onContextMenu);
 		window.addEventListener("keydown", onKeyDown);
 		window.addEventListener("keyup", onKeyUp);
+		window.addEventListener("blur", releaseHeldKeys);
 	}
 
 	function detachControl(canvas: HTMLCanvasElement | null): void {
@@ -599,6 +622,8 @@
 		}
 		window.removeEventListener("keydown", onKeyDown);
 		window.removeEventListener("keyup", onKeyUp);
+		window.removeEventListener("blur", releaseHeldKeys);
+		releaseHeldKeys();
 		wheelRemainderX.value = 0;
 		wheelRemainderY.value = 0;
 	}
@@ -739,6 +764,7 @@
 		// app keeps focus — the viewer just floats back above it.
 		unlistenBlur.value = await getCurrentWindow().onFocusChanged(({ payload: focused }) => {
 			if (!focused) {
+				releaseHeldKeys();
 				void invoke("viewer_raise").catch(() => { /* window gone */ });
 			}
 		});
