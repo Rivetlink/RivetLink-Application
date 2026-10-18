@@ -4539,11 +4539,8 @@ mod console_handoff_tests {
 static VIEWER_REBUILDING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Open the standalone viewer window that renders the live stream. Always builds
-/// a *fresh* window: a reused one's always_on_top doesn't reliably stay above
-/// newly-opened apps after a reconnect (it covers the current app once, but the
-/// next app to open maps over it), whereas a fresh window gets a sticky
-/// always_on_top at build — like the first connect. Closing the window stops the
-/// stream.
+/// a *fresh* window so a reconnect starts from a clean window state. Closing the
+/// window stops the stream.
 async fn open_viewer(app: &tauri::AppHandle, title: &str) -> Result<(), String> {
     use std::sync::atomic::Ordering;
     if let Some(win) = app.get_webview_window("viewer") {
@@ -4568,16 +4565,11 @@ async fn open_viewer(app: &tauri::AppHandle, title: &str) -> Result<(), String> 
     .title(title)
     .inner_size(1280.0, 800.0)
     .min_inner_size(640.0, 400.0)
-    // Keep the live screen above other windows for the whole session — it's the
-    // thing the operator is working in during a takeover.
-    .always_on_top(true)
     .build()
     .map_err(|e| e.to_string())?;
 
-    // Re-assert always_on_top + raise once mapped (the builder hint is sometimes
-    // ignored on a fresh window). The viewer also re-raises from its onMounted and
-    // on every focus-loss, so it floats back above whatever app the user switches to.
-    let _ = window.set_always_on_top(true);
+    // A normal window: it opens in front, but other apps can cover it. The
+    // viewer brings itself to the front once more from its onMounted.
     let _ = window.set_focus();
 
     // Closing the viewer disconnects the live stream — unless we closed it
@@ -5502,25 +5494,16 @@ async fn host_control(state: State<'_, AppState>) -> Result<bool, String> {
     Ok(guard.as_ref().is_some_and(|s| *s.control.borrow()))
 }
 
-/// Raise the viewer window above every other app and focus it. Called from the
-/// viewer's onMounted (lands after the window is mapped, when GNOME/Wayland
-/// actually honours always_on_top) so a reconnect always comes up on top.
+/// Bring the viewer to the front once, when it opens. Called from the viewer's
+/// onMounted, after the window is mapped. The viewer is a normal window, not
+/// always on top: other apps the user switches to may cover it.
 #[tauri::command]
 fn viewer_raise(app: tauri::AppHandle) {
     if let Some(win) = app.get_webview_window("viewer") {
-        raise_above_all(&win);
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
     }
-}
-
-/// Force a window to the top of the always-on-top layer. A plain
-/// `set_always_on_top(true)` is a no-op on GNOME when the hint is already set
-/// (Tauri caches the state), so a reused/reconnected window keeps whatever
-/// stacking it drifted to (behind the app the user alt-tabbed to). Toggling
-/// off→on re-applies `_NET_WM_STATE_ABOVE`, which restacks it to the top of the
-/// above-layer without stealing focus (GNOME blocks programmatic focus anyway).
-fn raise_above_all(win: &tauri::WebviewWindow) {
-    let _ = win.set_always_on_top(false);
-    let _ = win.set_always_on_top(true);
 }
 
 /// Debug sink for the overlay badge's collapse timing: the overlay forwards
