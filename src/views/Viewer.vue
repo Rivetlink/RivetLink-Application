@@ -482,6 +482,7 @@
 			return;
 		}
 		e.preventDefault();
+		syncModifiers(e);
 		// Move first so the press lands exactly under the cursor.
 		sendInput({
 			kind: "move",
@@ -564,6 +565,43 @@
 		heldKeys.clear();
 	}
 
+	// Which event flag says a held modifier is really still down.
+	function modifierFlag(code: string): "shiftKey" | "altKey" | "ctrlKey" | "metaKey" | null {
+		if (code === "ShiftLeft" || code === "ShiftRight") {
+			return "shiftKey";
+		}
+		if (code === "AltLeft" || code === "AltRight") {
+			return "altKey";
+		}
+		if (code === "ControlLeft" || code === "ControlRight") {
+			return "ctrlKey";
+		}
+		if (code === "MetaLeft" || code === "MetaRight") {
+			return "metaKey";
+		}
+		if (code === "CommandMod") {
+			return isMac ? "metaKey" : "ctrlKey";
+		}
+		return null;
+	}
+
+	// Release modifiers the host holds but the OS reports as up. Catches a
+	// keyup the viewer never saw even without a focus change (e.g. the
+	// Windows key, whose release the Start menu swallows).
+	function syncModifiers(e: MouseEvent | KeyboardEvent): void {
+		heldKeys.forEach((code) => {
+			const flag = modifierFlag(code);
+			if (flag && !e[flag]) {
+				heldKeys.delete(code);
+				sendInput({
+					kind: "key",
+					code,
+					down: false,
+				});
+			}
+		});
+	}
+
 	function onKey(e: KeyboardEvent, down: boolean): void {
 		// Capture the key for the remote — don't let it trigger viewer shortcuts.
 		e.preventDefault();
@@ -576,6 +614,7 @@
 		if (isCommandMod) {
 			code = "CommandMod";
 		}
+		syncModifiers(e);
 		if (down) {
 			heldKeys.add(code);
 		} else if (!heldKeys.delete(code)) {
