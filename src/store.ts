@@ -39,6 +39,7 @@ export type AppSettings = {
 	lan_devices: SavedLanDevice[];
 	trusted_keys: TrustedKey[];
 	scroll_speed: ScrollSpeed;
+	video_h264: boolean;
 };
 
 /// A host found on the local network (not yet remembered).
@@ -75,6 +76,7 @@ const emptySettings: AppSettings = {
 	lan_devices: [],
 	trusted_keys: [],
 	scroll_speed: "slow",
+	video_h264: true,
 };
 
 export const store = reactive({
@@ -135,6 +137,10 @@ export async function updateDevice(deviceName: string, roles: string[]): Promise
 
 export async function setScrollSpeed(scrollSpeed: ScrollSpeed): Promise<void> {
 	store.settings = await invoke<AppSettings>("set_scroll_speed", { scrollSpeed });
+}
+
+export async function setVideoH264(enabled: boolean): Promise<void> {
+	store.settings = await invoke<AppSettings>("set_video_h264", { enabled });
 }
 
 export async function addRelay(name: string, httpUrl: string): Promise<void> {

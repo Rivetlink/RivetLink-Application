@@ -82,10 +82,18 @@ pub struct AppSettings {
     /// Remote wheel/trackpad sensitivity: "slow", "normal", or "fast".
     #[serde(default = "default_scroll_speed")]
     pub scroll_speed: String,
+    /// Ask hosts for H.264 video when this device can decode it. Off falls
+    /// back to the tile stream (a switch in case a decoder misbehaves).
+    #[serde(default = "default_true")]
+    pub video_h264: bool,
 }
 
 fn default_scroll_speed() -> String {
     "slow".to_string()
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 impl Default for AppSettings {
@@ -100,6 +108,7 @@ impl Default for AppSettings {
             trusted_relay_hosts: Vec::new(),
             trusted_keys: Vec::new(),
             scroll_speed: default_scroll_speed(),
+            video_h264: true,
         }
     }
 }
@@ -146,6 +155,14 @@ mod tests {
         let settings: AppSettings = serde_json::from_str("{}").unwrap();
         assert_eq!(settings.scroll_speed, "slow");
         assert_eq!(AppSettings::default().scroll_speed, "slow");
+    }
+
+    #[test]
+    fn h264_video_is_on_unless_turned_off() {
+        let settings: AppSettings = serde_json::from_str("{}").unwrap();
+        assert!(settings.video_h264);
+        let settings: AppSettings = serde_json::from_str(r#"{"video_h264":false}"#).unwrap();
+        assert!(!settings.video_h264);
     }
 
     #[test]

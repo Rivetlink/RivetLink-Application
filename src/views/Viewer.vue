@@ -136,6 +136,8 @@
 				/>
 			</template>
 			<div class="sep" />
+			<span class="stats" :title="t('viewer.statsHint')">{{ statsLabel }}</span>
+			<div class="sep" />
 			<VBtn
 				icon="mdi-close-circle-outline"
 				size="small"
@@ -160,6 +162,7 @@
 	import { getCurrentWindow } from "@tauri-apps/api/window";
 	import { getCurrentWebview } from "@tauri-apps/api/webview";
 	import SharePanel from "../components/SharePanel.vue";
+	import { H264_CODEC } from "../video";
 	import {
 		store, type ScrollSpeed,
 	} from "../store";
@@ -180,6 +183,14 @@
 		tile: number;
 		keyframe: boolean;
 		tiles: TilePatch[];
+	};
+
+	// One H.264 access unit from the host (Annex-B, base64).
+	type VideoPacket = {
+		w: number;
+		h: number;
+		keyframe: boolean;
+		data_b64: string;
 	};
 
 	type SharingState = {
@@ -284,6 +295,7 @@
 	const ctx = shallowRef<CanvasRenderingContext2D | null>(null);
 	const pending = shallowRef<Promise<void>>(Promise.resolve());
 	const unlistenFrame = ref<UnlistenFn | null>(null);
+	const unlistenVideo = ref<UnlistenFn | null>(null);
 	const unlistenConsoleFrame = ref<UnlistenFn | null>(null);
 	const unlistenEnd = ref<UnlistenFn | null>(null);
 	const unlistenError = ref<UnlistenFn | null>(null);
@@ -330,27 +342,33 @@
 		return bytes;
 	}
 
-	async function applyDelta(delta: FrameDelta): Promise<void> {
+	// Size the canvas to the stream's frame and return its 2D context.
+	function canvasFor(w: number, h: number): CanvasRenderingContext2D | null {
 		const canvas = canvasEl.value;
 		if (!canvas) {
-			return;
+			return null;
 		}
-		if (canvas.width !== delta.w || canvas.height !== delta.h) {
-			canvas.width = delta.w;
-			canvas.height = delta.h;
+		if (canvas.width !== w || canvas.height !== h) {
+			canvas.width = w;
+			canvas.height = h;
 			// Drive the fit/zoom sizing off the real frame dimensions (they change
 			// when the host switches to a differently-shaped screen).
-			frameW.value = delta.w;
-			frameH.value = delta.h;
+			frameW.value = w;
+			frameH.value = h;
 		}
 		if (!ctx.value) {
 			ctx.value = canvas.getContext("2d");
 		}
-		const context = ctx.value;
+		return ctx.value;
+	}
+
+	async function applyDelta(delta: FrameDelta): Promise<void> {
+		const context = canvasFor(delta.w, delta.h);
 		if (!context) {
 			return;
 		}
 
+		countFrame("JPEG", delta.tiles.reduce((n, patch) => n + patch.jpeg_b64.length, 0));
 		const cols = Math.ceil(delta.w / delta.tile);
 		await Promise.all(delta.tiles.map(async (patch) => {
 			const blob = new Blob([base64ToBytes(patch.jpeg_b64)], { type: "image/jpeg" });
@@ -360,7 +378,11 @@
 			context.drawImage(bitmap, col * delta.tile, row * delta.tile);
 			bitmap.close();
 		}));
+		frameShown();
+	}
 
+	// A frame reached the screen: clear waiting/error states.
+	function frameShown(): void {
 		hasFrame.value = true;
 		ended.value = false;
 		consoleHandoff.value = false;
@@ -374,6 +396,102 @@
 		}
 		lastFrameAt.value = performance.now();
 		slow.value = false;
+	}
+
+	// H.264 via WebCodecs. Deltas only decode after their keyframe, so after a
+	// decoder error (or before the first keyframe) ask the host for a new one
+	// and drop deltas until it arrives.
+	const decoder = shallowRef<VideoDecoder | null>(null);
+	const videoTimestamp = ref(0);
+	const lastKeyframeRequest = ref(0);
+	const KEYFRAME_RETRY_MS = 1000;
+
+	function requestKeyframe(): void {
+		const now = performance.now();
+		if (now - lastKeyframeRequest.value < KEYFRAME_RETRY_MS) {
+			return;
+		}
+		lastKeyframeRequest.value = now;
+		void invoke("lan_request_keyframe").catch(() => { /* stream gone */ });
+	}
+
+	function closeDecoder(): void {
+		if (decoder.value && decoder.value.state !== "closed") {
+			decoder.value.close();
+		}
+		decoder.value = null;
+	}
+
+	function drawVideoFrame(frame: VideoFrame): void {
+		const context = canvasFor(frame.displayWidth, frame.displayHeight);
+		context?.drawImage(frame, 0, 0);
+		frame.close();
+		frameShown();
+	}
+
+	function applyVideo(packet: VideoPacket): void {
+		countFrame("H.264", packet.data_b64.length);
+		if (!decoder.value) {
+			if (!packet.keyframe) {
+				requestKeyframe();
+				return;
+			}
+			const next = new VideoDecoder({
+				output: drawVideoFrame,
+				error: () => {
+					// A late error from a decoder already replaced is moot.
+					if (decoder.value === next) {
+						closeDecoder();
+						requestKeyframe();
+					}
+				},
+			});
+			next.configure({
+				codec: H264_CODEC,
+				optimizeForLatency: true,
+			});
+			decoder.value = next;
+		}
+		try {
+			decoder.value.decode(new EncodedVideoChunk({
+				type: packet.keyframe ? "key" : "delta",
+				timestamp: videoTimestamp.value,
+				data: base64ToBytes(packet.data_b64),
+			}));
+			videoTimestamp.value += 33_333;
+		} catch {
+			closeDecoder();
+			requestKeyframe();
+		}
+	}
+
+	// Toolbar readout: codec, frames and (base64) megabits per second.
+	const statsLabel = ref("");
+	const statsCodec = ref("");
+	const statsFrames = ref(0);
+	const statsChars = ref(0);
+	const statsSince = ref(performance.now());
+
+	function countFrame(codec: string, chars: number): void {
+		statsCodec.value = codec;
+		statsFrames.value += 1;
+		statsChars.value += chars;
+	}
+
+	function updateStats(): void {
+		const seconds = (performance.now() - statsSince.value) / 1000;
+		if (seconds < 1) {
+			return;
+		}
+		// Base64 carries 6 bits per character.
+		const mbps = (statsChars.value * 6) / seconds / 1_000_000;
+		const fps = Math.round(statsFrames.value / seconds);
+		statsLabel.value = statsCodec.value
+			? `${statsCodec.value} · ${fps} fps · ${mbps.toFixed(1)} Mb/s`
+			: "";
+		statsFrames.value = 0;
+		statsChars.value = 0;
+		statsSince.value = performance.now();
 	}
 
 	async function applyConsoleFrame(frame: ConsoleFrame): Promise<void> {
@@ -684,6 +802,10 @@
 			// Serialise frames so tile draws never interleave out of order.
 			pending.value = pending.value.then(() => applyDelta(e.payload)).catch(() => { /* drop */ });
 		});
+		unlistenVideo.value = await listen<VideoPacket>("lan://video", (e) => {
+			// The decoder queues work itself and delivers frames in order.
+			applyVideo(e.payload);
+		});
 		unlistenConsoleFrame.value = await listen<ConsoleFrame>("lan://console-frame", (e) => {
 			pending.value = pending.value.then(() => applyConsoleFrame(e.payload)).catch(() => { /* drop */ });
 		});
@@ -754,6 +876,7 @@
 		});
 		unlistenEnd.value = await listen("lan://disconnected", () => {
 			ended.value = true;
+			closeDecoder();
 			sharing.value = null;
 			showShare.value = false;
 			hasFrame.value = false;
@@ -785,6 +908,7 @@
 			if (hasFrame.value && !ended.value) {
 				slow.value = performance.now() - lastFrameAt.value > SLOW_AFTER_MS;
 			}
+			updateStats();
 		}, 500);
 		window.addEventListener("resize", onResize);
 		onResize();
@@ -804,6 +928,8 @@
 
 	onUnmounted(() => {
 		unlistenFrame.value?.();
+		unlistenVideo.value?.();
+		closeDecoder();
 		unlistenConsoleFrame.value?.();
 		unlistenEnd.value?.();
 		unlistenError.value?.();
@@ -904,6 +1030,13 @@
 		height: 20px;
 		margin: 0 4px;
 		background: rgba(255, 255, 255, 0.2);
+	}
+
+	.stats {
+		color: rgba(255, 255, 255, 0.6);
+		font-size: 0.75rem;
+		font-variant-numeric: tabular-nums;
+		white-space: nowrap;
 	}
 
 	.zoom-label {
