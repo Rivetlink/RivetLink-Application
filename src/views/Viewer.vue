@@ -405,6 +405,11 @@
 	const videoTimestamp = ref(0);
 	const lastKeyframeRequest = ref(0);
 	const KEYFRAME_RETRY_MS = 1000;
+	// Decoder errors in a row with no frame shown in between. At the limit the
+	// webview's H.264 is treated as broken: stop asking for keyframes and make
+	// the next connection fall back to JPEG tiles.
+	const videoFailures = ref(0);
+	const MAX_VIDEO_FAILURES = 3;
 
 	function requestKeyframe(): void {
 		const now = performance.now();
@@ -422,7 +427,20 @@
 		decoder.value = null;
 	}
 
+	function videoFailed(): void {
+		closeDecoder();
+		videoFailures.value += 1;
+		if (videoFailures.value < MAX_VIDEO_FAILURES) {
+			requestKeyframe();
+			return;
+		}
+		void invoke("lan_set_decoders", { codecs: [] }).catch(() => { /* app closing */ });
+		hasFrame.value = false;
+		errorMessage.value = t("viewer.videoFailed");
+	}
+
 	function drawVideoFrame(frame: VideoFrame): void {
+		videoFailures.value = 0;
 		const context = canvasFor(frame.displayWidth, frame.displayHeight);
 		context?.drawImage(frame, 0, 0);
 		frame.close();
@@ -431,6 +449,9 @@
 
 	function applyVideo(packet: VideoPacket): void {
 		countFrame("H.264", packet.data_b64.length);
+		if (videoFailures.value >= MAX_VIDEO_FAILURES) {
+			return;
+		}
 		if (!decoder.value) {
 			if (!packet.keyframe) {
 				requestKeyframe();
@@ -441,8 +462,7 @@
 				error: () => {
 					// A late error from a decoder already replaced is moot.
 					if (decoder.value === next) {
-						closeDecoder();
-						requestKeyframe();
+						videoFailed();
 					}
 				},
 			});
@@ -460,8 +480,7 @@
 			}));
 			videoTimestamp.value += 33_333;
 		} catch {
-			closeDecoder();
-			requestKeyframe();
+			videoFailed();
 		}
 	}
 

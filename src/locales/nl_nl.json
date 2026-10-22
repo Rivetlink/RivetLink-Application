@@ -307,7 +307,8 @@
         "releaseControl": "Overname stoppen",
         "controlling": "Aan het besturen",
         "loginHandoff": "Inloggen — opnieuw verbinden met het bureaublad…",
-        "statsHint": "Streamformaat, beelden per seconde en bandbreedte"
+        "statsHint": "Streamformaat, beelden per seconde en bandbreedte",
+        "videoFailed": "H.264-video kan hier niet worden gedecodeerd. Verbind opnieuw om JPEG te gebruiken."
     },
     "overlay": {
         "watching": "{name} kijkt mee",
