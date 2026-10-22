@@ -84,6 +84,20 @@
 						<p class="text-caption text-medium-emphasis mt-2 mb-0">
 							{{ t("settings.scrollHint") }}
 						</p>
+						<VSwitch
+							:model-value="store.settings.video_h264"
+							:label="t('settings.videoToggle')"
+							color="primary"
+							density="comfortable"
+							hide-details
+							class="mt-2"
+							:loading="videoBusy"
+							:disabled="videoBusy"
+							@update:model-value="onVideoChange"
+						/>
+						<p class="text-caption text-medium-emphasis mt-1 mb-0">
+							{{ t("settings.videoHint") }}
+						</p>
 					</VCardText>
 				</VCard>
 
@@ -445,7 +459,7 @@
 	} from "@tauri-apps/plugin-autostart";
 	import { useI18n } from "vue-i18n";
 	import {
-		isClient, isHost, loadPublicKey, setScrollSpeed, store, type ScrollSpeed, type TrustedKey,
+		isClient, isHost, loadPublicKey, setScrollSpeed, setVideoH264, store, type ScrollSpeed, type TrustedKey,
 	} from "../store";
 	import {
 		SUPPORTED, setLocale,
@@ -465,6 +479,7 @@
 	const autostart = ref(false);
 	const autostartBusy = ref(false);
 	const scrollSpeedBusy = ref(false);
+	const videoBusy = ref(false);
 	const scrollSpeedOptions = computed(() => [
 		{
 			label: t("settings.scrollSlow"),
@@ -630,6 +645,15 @@
 			await setScrollSpeed(value);
 		} finally {
 			scrollSpeedBusy.value = false;
+		}
+	}
+
+	async function onVideoChange(value: boolean | null) {
+		videoBusy.value = true;
+		try {
+			await setVideoH264(Boolean(value));
+		} finally {
+			videoBusy.value = false;
 		}
 	}
 

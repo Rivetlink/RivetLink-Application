@@ -2,6 +2,7 @@ import { createApp } from "vue";
 import App from "./App.vue";
 import { router } from "./router";
 import { i18n } from "./i18n";
+import { reportDecoders } from "./video";
 
 // Vuetify
 import "vuetify/styles";
@@ -24,5 +25,7 @@ const vuetify = createVuetify({
 window.addEventListener("contextmenu", (e) => {
 	e.preventDefault();
 });
+
+reportDecoders();
 
 createApp(App).use(vuetify).use(router).use(i18n).mount("#app");

@@ -168,6 +168,8 @@
         "scrollSlow": "Langzaam",
         "scrollNormal": "Normaal",
         "scrollFast": "Snel",
+        "videoToggle": "H.264-video gebruiken",
+        "videoHint": "Scherper en vloeiender beeld van hosts die het ondersteunen. Zet uit als het scherm op afstand haperingen of beeldfouten toont; dan worden JPEG-tegels gebruikt. Geldt vanaf de volgende verbinding.",
         "editDevice": "Dit apparaat wijzigen",
         "rolesRequired": "Kies er minstens één.",
         "tabs": {
@@ -304,7 +306,9 @@
         "takeControl": "Overnemen (muis + toetsenbord)",
         "releaseControl": "Overname stoppen",
         "controlling": "Aan het besturen",
-        "loginHandoff": "Inloggen — opnieuw verbinden met het bureaublad…"
+        "loginHandoff": "Inloggen — opnieuw verbinden met het bureaublad…",
+        "statsHint": "Streamformaat, beelden per seconde en bandbreedte",
+        "videoFailed": "H.264-video kan hier niet worden gedecodeerd. Verbind opnieuw om JPEG te gebruiken."
     },
     "overlay": {
         "watching": "{name} kijkt mee",

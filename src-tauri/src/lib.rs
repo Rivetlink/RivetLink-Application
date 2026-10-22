@@ -84,6 +84,9 @@ struct AppState {
     consent_seq: std::sync::atomic::AtomicU64,
     /// Clipboard and file sharing for the active LAN stream.
     sharing: sharing::Sharing,
+    /// Video codecs this device's webview can decode, as reported by the
+    /// frontend (see `lan_set_decoders`). Empty until then: tiles only.
+    decoders: std::sync::Mutex<Vec<String>>,
 }
 
 /// A pending host-consent prompt awaiting the user's accept/reject.
@@ -237,6 +240,39 @@ async fn set_scroll_speed(
     settings.scroll_speed = scroll_speed;
     settings.save(&state.data_dir)?;
     Ok(settings.clone())
+}
+
+/// Turn H.264 video for LAN streams on or off (off = tile stream).
+#[tauri::command]
+async fn set_video_h264(state: State<'_, AppState>, enabled: bool) -> Result<AppSettings, String> {
+    let mut settings = state.settings.lock().await;
+    settings.video_h264 = enabled;
+    settings.save(&state.data_dir)?;
+    Ok(settings.clone())
+}
+
+/// The frontend reports which video codecs its webview decodes (WebCodecs).
+/// Only codecs the SDK knows are kept.
+#[tauri::command]
+fn lan_set_decoders(state: State<'_, AppState>, codecs: Vec<String>) {
+    let known: Vec<String> = codecs
+        .into_iter()
+        .filter(|c| c == rivetlink_sdk::lan::CODEC_H264)
+        .take(1)
+        .collect();
+    if let Ok(mut guard) = state.decoders.lock() {
+        *guard = known;
+    }
+}
+
+/// The viewer could not decode a video frame: ask the host for a keyframe.
+#[tauri::command]
+fn lan_request_keyframe(state: State<'_, AppState>) {
+    if let Ok(guard) = state.input_tx.lock() {
+        if let Some(tx) = guard.as_ref() {
+            let _ = tx.try_send(rivetlink_sdk::lan::LanRequest::RequestKeyframe);
+        }
+    }
 }
 
 /// This client's identity public key (base64) — what a host trusts (TOFU).
@@ -4827,14 +4863,21 @@ async fn lan_connect_inner(
 
     // Our own device name travels with the stream so the host can show *who* is
     // viewing instead of a bare IP.
-    let my_name = {
+    let (my_name, video_h264) = {
         let s = state.settings.lock().await;
         let n = s.device_name.trim();
-        if n.is_empty() {
+        let name = if n.is_empty() {
             None
         } else {
             Some(n.to_string())
-        }
+        };
+        (name, s.video_h264)
+    };
+    // Offer the host H.264 only when our webview can decode it.
+    let codecs = if video_h264 {
+        state.decoders.lock().map(|d| d.clone()).unwrap_or_default()
+    } else {
+        Vec::new()
     };
     // Announce our identity (signed) with the stream so a host we reached by PIN
     // can offer to remember this device (trust-on-connect). Same identity the
@@ -4859,9 +4902,10 @@ async fn lan_connect_inner(
             None,
             my_name,
             Some(&identity),
+            codecs,
             switch_rx,
             input_rx,
-            |delta| {
+            |frame| {
                 // The first frame proves the viewer window is mounted + listening,
                 // so re-send the display list now — the optimistic emit above can
                 // beat the viewer's listener registration, leaving the picker empty.
@@ -4869,9 +4913,16 @@ async fn lan_connect_inner(
                     announced = true;
                     let _ = app_for_task.emit("lan://displays", &displays_for_viewer);
                 }
-                // Forward the delta frame to the viewer window. If emit fails the
+                // Forward the frame to the viewer window. If emit fails the
                 // window is gone — stop the stream.
-                app_for_task.emit("lan://frame", delta).is_ok()
+                match frame {
+                    rivetlink_sdk::lan::StreamFrame::Tiles(delta) => {
+                        app_for_task.emit("lan://frame", delta).is_ok()
+                    }
+                    rivetlink_sdk::lan::StreamFrame::Video(video) => {
+                        app_for_task.emit("lan://video", video).is_ok()
+                    }
+                }
             },
             // The host pushes a fresh display list when it grants/revokes "share
             // all screens" mid-stream — relay it so the viewer's picker updates.
@@ -6061,6 +6112,7 @@ pub fn run() {
                 pending_consents: std::sync::Mutex::new(std::collections::HashMap::new()),
                 consent_seq: std::sync::atomic::AtomicU64::new(0),
                 sharing: sharing::Sharing::default(),
+                decoders: std::sync::Mutex::new(Vec::new()),
             });
 
             // Native menu bar (RivetLink + Edit). The "Check for Updates" item
@@ -6098,6 +6150,9 @@ pub fn run() {
             complete_setup,
             update_device,
             set_scroll_speed,
+            set_video_h264,
+            lan_set_decoders,
+            lan_request_keyframe,
             public_key,
             app_version,
             is_appimage,

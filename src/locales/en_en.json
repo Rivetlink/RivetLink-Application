@@ -168,6 +168,8 @@
         "scrollSlow": "Slow",
         "scrollNormal": "Normal",
         "scrollFast": "Fast",
+        "videoToggle": "Use H.264 video",
+        "videoHint": "Sharper, smoother screens from hosts that support it. Turn off if the remote screen shows glitches; it then uses JPEG tiles. Applies to the next connection.",
         "editDevice": "Edit this device",
         "rolesRequired": "Choose at least one.",
         "tabs": {
@@ -304,7 +306,9 @@
         "takeControl": "Take control (mouse + keyboard)",
         "releaseControl": "Release control",
         "controlling": "Controlling",
-        "loginHandoff": "Signing in — reconnecting to the desktop…"
+        "loginHandoff": "Signing in — reconnecting to the desktop…",
+        "statsHint": "Stream format, frames per second and bandwidth",
+        "videoFailed": "H.264 video could not be decoded here. Reconnect to use JPEG instead."
     },
     "overlay": {
         "watching": "{name} is viewing",
