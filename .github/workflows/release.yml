@@ -1,8 +1,9 @@
 name: Release
 
 # Builds native installers for Linux, macOS, and Windows, signs the updater
-# artifacts, and publishes them + a `latest.json`. tauri-action uploads to a
-# draft release; the rename-assets job renames the assets and publishes it so
+# artifacts, and publishes them + a `latest.json`. create-release makes one
+# draft release, tauri-action uploads every platform into it, and the
+# rename-assets job renames the assets and publishes it so
 # the `releases/latest/download/latest.json` updater endpoint resolves.
 # Triggered by pushing a version tag (v1.2.3) or manually.
 #
@@ -28,7 +29,44 @@ permissions:
   contents: write
 
 jobs:
+  # One draft release up front. Without it every matrix job's tauri-action
+  # looks for a draft with this tag and creates one when it finds none, so
+  # jobs finishing at the same time made duplicate drafts and their assets
+  # (v0.1.102 lost macOS that way). Reused on a rerun.
+  create-release:
+    runs-on: ubuntu-latest
+    outputs:
+      id: ${{ steps.draft.outputs.id }}
+    steps:
+      - name: Create (or reuse) the draft release
+        id: draft
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          BODY: |
+            Native installers for Linux, macOS, and Windows. macOS/Windows + the Linux AppImage update in place; the .deb/.rpm install via your package manager.
+
+            **Minimum OS versions:**
+            - **Linux — AppImage** (`*_linux_amd64.AppImage`): glibc ≥ 2.35 → Ubuntu/Kubuntu 22.04+, Debian 12+, Fedora 36+. No install needed: `chmod +x` and run.
+            - **Linux — .deb / .rpm**: glibc ≥ 2.39 → Ubuntu/Kubuntu 24.04+, Debian 13+, Fedora 39+. On older systems use the AppImage instead.
+            - **macOS**: 11 Big Sur or newer (universal: Apple Silicon + Intel).
+            - **Windows**: 10 (1809) or newer, 64-bit.
+        run: |
+          set -euo pipefail
+          # Drafts are not found by /releases/tags/, so list instead.
+          ID=$(gh api --paginate "repos/$REPO/releases" \
+            --jq ".[] | select(.tag_name == \"$TAG\") | .id" | head -1)
+          if [ -z "$ID" ]; then
+            ID=$(gh api -X POST "repos/$REPO/releases" \
+              -f tag_name="$TAG" -f name="RivetLink $TAG" -f body="$BODY" \
+              -F draft=true -F prerelease=false --jq .id)
+          fi
+          echo "release id: $ID"
+          echo "id=$ID" >> "$GITHUB_OUTPUT"
+
   release:
+    needs: create-release
     strategy:
       fail-fast: false
       matrix:
@@ -180,18 +218,10 @@ jobs:
           APPIMAGE_EXTRACT_AND_RUN: "1"
         with:
           projectPath: RivetLink-Application
+          releaseId: ${{ needs.create-release.outputs.id }}
+          # With releaseId set this no longer creates a release; it only puts
+          # the tag in latest.json's download URLs.
           tagName: ${{ github.ref_name }}
-          releaseName: "RivetLink ${{ github.ref_name }}"
-          releaseBody: |
-            Native installers for Linux, macOS, and Windows. macOS/Windows + the Linux AppImage update in place; the .deb/.rpm install via your package manager.
-
-            **Minimum OS versions:**
-            - **Linux — AppImage** (`*_linux_amd64.AppImage`): glibc ≥ 2.35 → Ubuntu/Kubuntu 22.04+, Debian 12+, Fedora 36+. No install needed: `chmod +x` and run.
-            - **Linux — .deb / .rpm**: glibc ≥ 2.39 → Ubuntu/Kubuntu 24.04+, Debian 13+, Fedora 39+. On older systems use the AppImage instead.
-            - **macOS**: 11 Big Sur or newer (universal: Apple Silicon + Intel).
-            - **Windows**: 10 (1809) or newer, 64-bit.
-          releaseDraft: true
-          prerelease: false
           args: ${{ matrix.args }}
 
       # --- AppImage post-processing (only the matrix.appimage entry) ----------
@@ -354,6 +384,11 @@ jobs:
               p["linux-x86_64"] = {"signature": sig, "url": url}
           json.dump(m, open("latest.json", "w"), indent=2)
           print("linux-x86_64:", "set" if sig else "left as-is (no .sig found)")
+          # Never publish an updater manifest that misses a platform: the
+          # release then stays a draft and this job fails.
+          missing = {"darwin-aarch64", "darwin-x86_64", "windows-x86_64", "linux-x86_64"} - p.keys()
+          if missing:
+              raise SystemExit(f"latest.json misses {sorted(missing)}")
           PY
           gh release upload "$TAG" latest.json --repo "$REPO" --clobber
 
