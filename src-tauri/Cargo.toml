@@ -65,4 +65,5 @@ rivetlink-agent = { path = "../../RivetLink/crates/rivetlink-agent" }
 # remotely access this device. Linux only for now (macOS/Windows use their own
 # auth mechanisms when they become hosts). Needs libpam at build + runtime.
 [target.'cfg(target_os = "linux")'.dependencies]
+libc = "0.2"
 pam = "0.8"

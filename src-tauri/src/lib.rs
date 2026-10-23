@@ -1038,136 +1038,94 @@ where
     }
 }
 
-/// Remove one controller from the physical-console broker's trust store (same
-/// `{"clients": {key: entry}}` layout as `TrustedClients`). The `rivetlink`
-/// service user owns the directory, so root edits the file in place only after
-/// proving the opened file is the regular file at that path, never a planted
-/// symlink. The LAN listener re-reads the store per connection, but the relay
-/// transport keeps a snapshot, so a running broker restarts.
+/// Whether `public_key` is a base64 ed25519 identity, the only form the
+/// physical-console installer ever writes to the broker's trust store.
 #[cfg(target_os = "linux")]
-fn revoke_console_trusted_key(public_key: &str) -> Result<(), String> {
-    let path = Path::new("/var/lib/rivetlink/keys/trusted_clients.json");
-    if !remove_trusted_key_in_place(path, public_key)? {
-        return Ok(());
-    }
-    run_checked(
-        "/usr/bin/systemctl",
-        &[
-            "try-restart".into(),
-            "rivetlink-console-broker.service".into(),
-        ],
-    )
+fn is_controller_key(public_key: &str) -> bool {
+    base64::engine::general_purpose::STANDARD
+        .decode(public_key)
+        .is_ok_and(|raw| raw.len() == 32)
 }
 
-/// Returns whether the key was present and removed.
+/// Remove one controller from the physical-console broker's trust store. The
+/// broker also writes that store at runtime, so it is stopped around the edit
+/// and started again only if it was running.
 #[cfg(target_os = "linux")]
-fn remove_trusted_key_in_place(path: &Path, public_key: &str) -> Result<bool, String> {
-    use std::io::{Read, Seek, Write};
-    use std::os::unix::fs::MetadataExt;
-
-    if base64::engine::general_purpose::STANDARD
-        .decode(public_key)
-        .map_or(true, |raw| raw.len() != 32)
-    {
+fn revoke_console_trusted_key(public_key: &str) -> Result<(), String> {
+    const UNIT: &str = "rivetlink-console-broker.service";
+    if !is_controller_key(public_key) {
         return Err("invalid controller identity".to_string());
     }
-    // No truncate on open: nothing is written before the check below.
-    let mut file = match std::fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .open(path)
-    {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
-        Err(error) => return Err(format!("open console trust store: {error}")),
+    let was_active = run_checked(
+        "/usr/bin/systemctl",
+        &["is-active".into(), "--quiet".into(), UNIT.into()],
+    )
+    .is_ok();
+    if was_active {
+        run_checked("/usr/bin/systemctl", &["stop".into(), UNIT.into()])?;
+    }
+    let revoked = as_console_service_user(|| {
+        let mut trusted = TrustedClients::load_or_empty(Path::new(
+            "/var/lib/rivetlink/keys/trusted_clients.json",
+        ))
+        .map_err(|error| error.to_string())?;
+        if trusted.is_trusted(public_key) {
+            trusted
+                .revoke(public_key)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    });
+    if was_active {
+        run_checked("/usr/bin/systemctl", &["start".into(), UNIT.into()])?;
+    }
+    revoked
+}
+
+/// Run `edit` with only the `rivetlink` service user's file access. That user
+/// owns `/var/lib/rivetlink`, so as root a planted symlink or device node there
+/// could make the helper open or overwrite any file; as `rivetlink` it gains
+/// nothing the service user could not already do.
+#[cfg(target_os = "linux")]
+fn as_console_service_user(edit: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    let id = |flag: &str| -> Result<u32, String> {
+        run_checked_output("/usr/bin/id", &[flag.into(), "rivetlink".into()])?
+            .trim()
+            .parse()
+            .map_err(|_| "invalid rivetlink service user".to_string())
     };
-    let opened = file.metadata().map_err(|error| error.to_string())?;
-    let linked = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
-    if !linked.file_type().is_file() || (opened.dev(), opened.ino()) != (linked.dev(), linked.ino())
-    {
-        return Err("console trust store is not a regular file".to_string());
+    let (uid, gid) = (id("-u")?, id("-g")?);
+    // SAFETY: plain credential syscalls in the single-threaded PolicyKit
+    // helper; root's real and saved ids stay 0, so root can be restored.
+    let dropped = unsafe {
+        libc::setgroups(0, std::ptr::null()) == 0
+            && libc::setegid(gid) == 0
+            && libc::seteuid(uid) == 0
+    };
+    let result = if dropped {
+        edit()
+    } else {
+        Err("could not switch to the rivetlink service user".to_string())
+    };
+    // SAFETY: as above.
+    if unsafe { libc::seteuid(0) != 0 || libc::setegid(0) != 0 } {
+        return Err("could not restore root after the trust-store edit".to_string());
     }
-    let mut body = String::new();
-    file.read_to_string(&mut body)
-        .map_err(|error| format!("read console trust store: {error}"))?;
-    let mut stored: serde_json::Value =
-        serde_json::from_str(&body).map_err(|_| "invalid console trust store".to_string())?;
-    let removed = stored
-        .get_mut("clients")
-        .and_then(serde_json::Value::as_object_mut)
-        .ok_or("invalid console trust store")?
-        .remove(public_key)
-        .is_some();
-    if !removed {
-        return Ok(false);
-    }
-    let body = serde_json::to_string_pretty(&stored).map_err(|error| error.to_string())?;
-    file.set_len(0)
-        .and_then(|()| file.rewind())
-        .and_then(|()| file.write_all(body.as_bytes()))
-        .and_then(|()| file.sync_all())
-        .map_err(|error| format!("write console trust store: {error}"))?;
-    Ok(true)
+    result
 }
 
 #[cfg(all(test, target_os = "linux"))]
-mod console_trust_revoke_tests {
-    use super::remove_trusted_key_in_place;
+mod controller_key_check_tests {
+    use super::is_controller_key;
     use base64::Engine;
-    use std::path::PathBuf;
-
-    fn key(byte: u8) -> String {
-        base64::engine::general_purpose::STANDARD.encode([byte; 32])
-    }
-
-    fn scratch() -> PathBuf {
-        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join(format!("trust-revoke-{}", uuid::Uuid::new_v4().simple()));
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
-    }
-
-    fn store(keys: &[String]) -> String {
-        let clients: serde_json::Map<_, _> = keys
-            .iter()
-            .map(|key| {
-                (
-                    key.clone(),
-                    serde_json::json!({"name": "c", "can_view": true}),
-                )
-            })
-            .collect();
-        serde_json::json!({ "clients": clients }).to_string()
-    }
 
     #[test]
-    fn removes_only_the_named_key() {
-        let dir = scratch();
-        let path = dir.join("trusted_clients.json");
-        std::fs::write(&path, store(&[key(1), key(2)])).unwrap();
-        assert!(remove_trusted_key_in_place(&path, &key(1)).unwrap());
-        assert!(!remove_trusted_key_in_place(&path, &key(1)).unwrap());
-        let left: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert_eq!(left["clients"].as_object().unwrap().len(), 1);
-        assert!(left["clients"].get(key(2)).is_some());
-        std::fs::remove_dir_all(dir).unwrap();
-    }
-
-    #[test]
-    fn refuses_a_symlink_and_bad_keys() {
-        let dir = scratch();
-        let target = dir.join("victim");
-        let body = store(&[key(1)]);
-        std::fs::write(&target, &body).unwrap();
-        let path = dir.join("trusted_clients.json");
-        std::os::unix::fs::symlink(&target, &path).unwrap();
-        assert!(remove_trusted_key_in_place(&path, &key(1)).is_err());
-        assert_eq!(std::fs::read_to_string(&target).unwrap(), body);
-        assert!(remove_trusted_key_in_place(&target, "not-a-key").is_err());
-        assert!(!remove_trusted_key_in_place(&dir.join("missing"), &key(1)).unwrap());
-        std::fs::remove_dir_all(dir).unwrap();
+    fn only_32_byte_base64_keys_count() {
+        let engine = base64::engine::general_purpose::STANDARD;
+        assert!(is_controller_key(&engine.encode([7u8; 32])));
+        assert!(!is_controller_key(&engine.encode([7u8; 31])));
+        assert!(!is_controller_key("not a key"));
+        assert!(!is_controller_key(""));
     }
 }
 
@@ -6116,7 +6074,11 @@ fn revoke_headless_trusted_key(_public_key: &str) -> Result<(), String> {
 /// device allowed everywhere instead of silently keeping console access.
 #[cfg(target_os = "linux")]
 async fn revoke_console_trusted_key_authorized(public_key: &str) -> Result<(), String> {
-    if !Path::new("/etc/systemd/system/rivetlink-console-broker.service").exists() {
+    // A malformed key can never be in the broker's store (the installer
+    // validates keys), so it must not block removing the entry here.
+    if !is_controller_key(public_key)
+        || !Path::new("/etc/systemd/system/rivetlink-console-broker.service").exists()
+    {
         return Ok(());
     }
     let executable = appimage_or_current_exe()?;
