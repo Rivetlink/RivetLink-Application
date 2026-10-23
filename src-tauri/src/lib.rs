@@ -972,24 +972,32 @@ fn physical_console_units(
 
 /// Fixed, non-shell service controls for an already installed console.  This
 /// deliberately has no file, command or unit-name parameters: PolicyKit can
-/// only start/stop RivetLink's two known units.
+/// only start/stop RivetLink's two known units, or revoke one validated
+/// controller key from the broker's trust store.
 #[cfg(target_os = "linux")]
 pub fn run_console_service_action<I>(args: I) -> Result<(), String>
 where
     I: IntoIterator<Item = std::ffi::OsString>,
 {
     let values: Vec<_> = args.into_iter().collect();
-    if values.len() != 2 || values.first().and_then(|arg| arg.to_str()) != Some("--action") {
-        return Err("invalid physical-console service request".to_string());
-    }
-    let action = values[1]
-        .to_str()
-        .ok_or("invalid physical-console service action")?;
+    let values: Vec<&str> = values
+        .iter()
+        .map(|arg| arg.to_str())
+        .collect::<Option<_>>()
+        .ok_or("invalid physical-console service request")?;
+    let (action, public_key) = match values.as_slice() {
+        ["--action", action] => (*action, None),
+        ["--action", action @ "revoke-key", "--public-key", key] => (*action, Some(*key)),
+        _ => return Err("invalid physical-console service request".to_string()),
+    };
     let root = run_checked_output("/usr/bin/id", &["-u".into()])?;
     if root.trim() != "0" {
         return Err("physical-console service action must be authorized by PolicyKit".to_string());
     }
     match action {
+        "revoke-key" => revoke_console_trusted_key(
+            public_key.ok_or("invalid physical-console service request")?,
+        ),
         "enable" => {
             run_checked(
                 "/usr/bin/systemctl",
@@ -1027,6 +1035,139 @@ where
             )
         }
         _ => Err("invalid physical-console service action".to_string()),
+    }
+}
+
+/// Remove one controller from the physical-console broker's trust store (same
+/// `{"clients": {key: entry}}` layout as `TrustedClients`). The `rivetlink`
+/// service user owns the directory, so root edits the file in place only after
+/// proving the opened file is the regular file at that path, never a planted
+/// symlink. The LAN listener re-reads the store per connection, but the relay
+/// transport keeps a snapshot, so a running broker restarts.
+#[cfg(target_os = "linux")]
+fn revoke_console_trusted_key(public_key: &str) -> Result<(), String> {
+    let path = Path::new("/var/lib/rivetlink/keys/trusted_clients.json");
+    if !remove_trusted_key_in_place(path, public_key)? {
+        return Ok(());
+    }
+    run_checked(
+        "/usr/bin/systemctl",
+        &[
+            "try-restart".into(),
+            "rivetlink-console-broker.service".into(),
+        ],
+    )
+}
+
+/// Returns whether the key was present and removed.
+#[cfg(target_os = "linux")]
+fn remove_trusted_key_in_place(path: &Path, public_key: &str) -> Result<bool, String> {
+    use std::io::{Read, Seek, Write};
+    use std::os::unix::fs::MetadataExt;
+
+    if base64::engine::general_purpose::STANDARD
+        .decode(public_key)
+        .map_or(true, |raw| raw.len() != 32)
+    {
+        return Err("invalid controller identity".to_string());
+    }
+    // No truncate on open: nothing is written before the check below.
+    let mut file = match std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(path)
+    {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("open console trust store: {error}")),
+    };
+    let opened = file.metadata().map_err(|error| error.to_string())?;
+    let linked = std::fs::symlink_metadata(path).map_err(|error| error.to_string())?;
+    if !linked.file_type().is_file() || (opened.dev(), opened.ino()) != (linked.dev(), linked.ino())
+    {
+        return Err("console trust store is not a regular file".to_string());
+    }
+    let mut body = String::new();
+    file.read_to_string(&mut body)
+        .map_err(|error| format!("read console trust store: {error}"))?;
+    let mut stored: serde_json::Value =
+        serde_json::from_str(&body).map_err(|_| "invalid console trust store".to_string())?;
+    let removed = stored
+        .get_mut("clients")
+        .and_then(serde_json::Value::as_object_mut)
+        .ok_or("invalid console trust store")?
+        .remove(public_key)
+        .is_some();
+    if !removed {
+        return Ok(false);
+    }
+    let body = serde_json::to_string_pretty(&stored).map_err(|error| error.to_string())?;
+    file.set_len(0)
+        .and_then(|()| file.rewind())
+        .and_then(|()| file.write_all(body.as_bytes()))
+        .and_then(|()| file.sync_all())
+        .map_err(|error| format!("write console trust store: {error}"))?;
+    Ok(true)
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod console_trust_revoke_tests {
+    use super::remove_trusted_key_in_place;
+    use base64::Engine;
+    use std::path::PathBuf;
+
+    fn key(byte: u8) -> String {
+        base64::engine::general_purpose::STANDARD.encode([byte; 32])
+    }
+
+    fn scratch() -> PathBuf {
+        let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join(format!("trust-revoke-{}", uuid::Uuid::new_v4().simple()));
+        std::fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    fn store(keys: &[String]) -> String {
+        let clients: serde_json::Map<_, _> = keys
+            .iter()
+            .map(|key| {
+                (
+                    key.clone(),
+                    serde_json::json!({"name": "c", "can_view": true}),
+                )
+            })
+            .collect();
+        serde_json::json!({ "clients": clients }).to_string()
+    }
+
+    #[test]
+    fn removes_only_the_named_key() {
+        let dir = scratch();
+        let path = dir.join("trusted_clients.json");
+        std::fs::write(&path, store(&[key(1), key(2)])).unwrap();
+        assert!(remove_trusted_key_in_place(&path, &key(1)).unwrap());
+        assert!(!remove_trusted_key_in_place(&path, &key(1)).unwrap());
+        let left: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        assert_eq!(left["clients"].as_object().unwrap().len(), 1);
+        assert!(left["clients"].get(key(2)).is_some());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn refuses_a_symlink_and_bad_keys() {
+        let dir = scratch();
+        let target = dir.join("victim");
+        let body = store(&[key(1)]);
+        std::fs::write(&target, &body).unwrap();
+        let path = dir.join("trusted_clients.json");
+        std::os::unix::fs::symlink(&target, &path).unwrap();
+        assert!(remove_trusted_key_in_place(&path, &key(1)).is_err());
+        assert_eq!(std::fs::read_to_string(&target).unwrap(), body);
+        assert!(remove_trusted_key_in_place(&target, "not-a-key").is_err());
+        assert!(!remove_trusted_key_in_place(&dir.join("missing"), &key(1)).unwrap());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 }
 
@@ -5970,6 +6111,36 @@ fn revoke_headless_trusted_key(_public_key: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The physical-console broker keeps its own root-owned trust store. Revoke the
+/// key there first (one PolicyKit prompt), so a cancelled prompt leaves the
+/// device allowed everywhere instead of silently keeping console access.
+#[cfg(target_os = "linux")]
+async fn revoke_console_trusted_key_authorized(public_key: &str) -> Result<(), String> {
+    if !Path::new("/etc/systemd/system/rivetlink-console-broker.service").exists() {
+        return Ok(());
+    }
+    let executable = appimage_or_current_exe()?;
+    let status = tokio::process::Command::new("/usr/bin/pkexec")
+        .arg(executable)
+        .arg("--rivetlink-console-service")
+        .args(["--action", "revoke-key", "--public-key", public_key])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .await
+        .map_err(|_| "could not start the authorized console key revocation".to_string())?;
+    if !status.success() {
+        return Err("console-revoke-failed".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn revoke_console_trusted_key_authorized(_public_key: &str) -> Result<(), String> {
+    Ok(())
+}
+
 /// Remove a trusted client, after the owner confirms with their OS password.
 #[tauri::command]
 async fn remove_trusted_key(
@@ -5980,12 +6151,19 @@ async fn remove_trusted_key(
     if !os_password_ok(&os_password) {
         return Err("wrong-os-password".to_string());
     }
-    let mut settings = state.settings.lock().await;
-    let removed_key = settings
+    let removed_key = state
+        .settings
+        .lock()
+        .await
         .trusted_keys
         .iter()
         .find(|key| key.id == id)
         .map(|key| key.public_key.clone());
+    // Outside the settings lock: the PolicyKit prompt can stay open a while.
+    if let Some(public_key) = &removed_key {
+        revoke_console_trusted_key_authorized(public_key.trim()).await?;
+    }
+    let mut settings = state.settings.lock().await;
     settings.trusted_keys.retain(|k| k.id != id);
     settings.save(&state.data_dir)?;
     let result = settings.clone();
