@@ -1048,35 +1048,37 @@ fn is_controller_key(public_key: &str) -> bool {
 }
 
 /// Remove one controller from the physical-console broker's trust store. The
-/// broker also writes that store at runtime, so it is stopped around the edit
-/// and started again only if it was running.
+/// broker also writes that store at runtime and its relay transport keeps a
+/// snapshot, so it is always stopped around the edit (even while activating)
+/// and started again when the owner has it enabled.
 #[cfg(target_os = "linux")]
 fn revoke_console_trusted_key(public_key: &str) -> Result<(), String> {
     const UNIT: &str = "rivetlink-console-broker.service";
     if !is_controller_key(public_key) {
         return Err("invalid controller identity".to_string());
     }
-    let was_active = run_checked(
-        "/usr/bin/systemctl",
-        &["is-active".into(), "--quiet".into(), UNIT.into()],
-    )
-    .is_ok();
-    if was_active {
-        run_checked("/usr/bin/systemctl", &["stop".into(), UNIT.into()])?;
-    }
-    let revoked = as_console_service_user(|| {
-        let mut trusted = TrustedClients::load_or_empty(Path::new(
-            "/var/lib/rivetlink/keys/trusted_clients.json",
-        ))
-        .map_err(|error| error.to_string())?;
-        if trusted.is_trusted(public_key) {
-            trusted
-                .revoke(public_key)
-                .map_err(|error| error.to_string())?;
-        }
-        Ok(())
+    let revoked = run_checked("/usr/bin/systemctl", &["stop".into(), UNIT.into()]).and_then(|()| {
+        as_console_service_user(|| {
+            let mut trusted = TrustedClients::load_or_empty(Path::new(
+                "/var/lib/rivetlink/keys/trusted_clients.json",
+            ))
+            .map_err(|error| error.to_string())?;
+            if trusted.is_trusted(public_key) {
+                trusted
+                    .revoke(public_key)
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(())
+        })
     });
-    if was_active {
+    // Start again even when the stop or the edit failed, so a revoke never
+    // leaves an enabled console down.
+    if run_checked(
+        "/usr/bin/systemctl",
+        &["is-enabled".into(), "--quiet".into(), UNIT.into()],
+    )
+    .is_ok()
+    {
         run_checked("/usr/bin/systemctl", &["start".into(), UNIT.into()])?;
     }
     revoked
@@ -6082,16 +6084,23 @@ async fn revoke_console_trusted_key_authorized(public_key: &str) -> Result<(), S
         return Ok(());
     }
     let executable = appimage_or_current_exe()?;
-    let status = tokio::process::Command::new("/usr/bin/pkexec")
-        .arg(executable)
-        .arg("--rivetlink-console-service")
-        .args(["--action", "revoke-key", "--public-key", public_key])
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .await
-        .map_err(|_| "could not start the authorized console key revocation".to_string())?;
+    // Bounded: the owner gets time to answer the prompt, but a stuck helper
+    // must not hang the settings command forever.
+    let status = tokio::time::timeout(
+        std::time::Duration::from_secs(300),
+        tokio::process::Command::new("/usr/bin/pkexec")
+            .arg(executable)
+            .arg("--rivetlink-console-service")
+            .args(["--action", "revoke-key", "--public-key", public_key])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .status(),
+    )
+    .await
+    .map_err(|_| "console-revoke-failed".to_string())?
+    .map_err(|_| "could not start the authorized console key revocation".to_string())?;
     if !status.success() {
         return Err("console-revoke-failed".to_string());
     }
