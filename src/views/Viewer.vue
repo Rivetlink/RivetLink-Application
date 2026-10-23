@@ -93,59 +93,60 @@
 		<!-- Always-on toolbar — never folds, so zoom/control/disconnect stay one
 		     click away. Docked in its own row below the stage (no overlap). -->
 		<div v-if="hasFrame" class="zoom-controls">
-			<VBtn
-				icon="mdi-minus"
-				size="small"
-				variant="text"
-				:disabled="zoom <= MIN_ZOOM"
-				@click="zoomBy(-ZOOM_STEP)"
-			/>
-			<button
-				type="button"
-				class="zoom-label"
-				:title="t('viewer.resetZoom')"
-				@click="resetZoom"
-			>
-				{{ Math.round(zoom * 100) }}%
-			</button>
-			<VBtn
-				icon="mdi-plus"
-				size="small"
-				variant="text"
-				:disabled="zoom >= MAX_ZOOM"
-				@click="zoomBy(ZOOM_STEP)"
-			/>
-			<div class="sep" />
-			<VBtn
-				:icon="controlling ? 'mdi-mouse' : 'mdi-mouse-off'"
-				size="small"
-				variant="text"
-				:color="controlling ? 'primary' : undefined"
-				:title="controlling ? t('viewer.releaseControl') : t('viewer.takeControl')"
-				@click="toggleControl"
-			/>
-			<template v-if="sharing?.files">
-				<div class="sep" />
+			<div class="tools">
 				<VBtn
-					icon="mdi-folder-swap-outline"
+					icon="mdi-minus"
 					size="small"
 					variant="text"
-					:color="showShare ? 'primary' : undefined"
-					:title="t('share.title')"
-					@click="showShare = !showShare"
+					:disabled="zoom <= MIN_ZOOM"
+					@click="zoomBy(-ZOOM_STEP)"
 				/>
-			</template>
-			<div class="sep" />
+				<button
+					type="button"
+					class="zoom-label"
+					:title="t('viewer.resetZoom')"
+					@click="resetZoom"
+				>
+					{{ Math.round(zoom * 100) }}%
+				</button>
+				<VBtn
+					icon="mdi-plus"
+					size="small"
+					variant="text"
+					:disabled="zoom >= MAX_ZOOM"
+					@click="zoomBy(ZOOM_STEP)"
+				/>
+				<div class="sep" />
+				<VBtn
+					:icon="controlling ? 'mdi-mouse' : 'mdi-mouse-off'"
+					size="small"
+					variant="text"
+					:color="controlling ? 'primary' : undefined"
+					:title="controlling ? t('viewer.releaseControl') : t('viewer.takeControl')"
+					@click="toggleControl"
+				/>
+				<template v-if="sharing?.files">
+					<div class="sep" />
+					<VBtn
+						icon="mdi-folder-swap-outline"
+						size="small"
+						variant="text"
+						:color="showShare ? 'primary' : undefined"
+						:title="t('share.title')"
+						@click="showShare = !showShare"
+					/>
+				</template>
+				<div class="sep" />
+				<VBtn
+					icon="mdi-close-circle-outline"
+					size="small"
+					variant="text"
+					color="error"
+					:title="t('viewer.disconnect')"
+					@click="disconnect"
+				/>
+			</div>
 			<span class="stats" :title="t('viewer.statsHint')">{{ statsLabel }}</span>
-			<div class="sep" />
-			<VBtn
-				icon="mdi-close-circle-outline"
-				size="small"
-				variant="text"
-				color="error"
-				:title="t('viewer.disconnect')"
-				@click="disconnect"
-			/>
 		</div>
 	</div>
 </template>
@@ -1033,15 +1034,22 @@
 	}
 
 	/* Docked toolbar row below the stage — a real layout row, not an overlay, so
-	   it can never cover the shared screen. */
+	   it can never cover the shared screen. Three columns keep the tools centered
+	   and the stats at the right edge without overlapping. */
 	.zoom-controls {
 		flex: none;
-		display: flex;
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
-		justify-content: center;
-		gap: 2px;
 		padding: 4px;
 		background: rgba(0, 0, 0, 0.85);
+	}
+
+	.tools {
+		grid-column: 2;
+		display: flex;
+		align-items: center;
+		gap: 2px;
 	}
 
 	.sep {
@@ -1052,6 +1060,8 @@
 	}
 
 	.stats {
+		justify-self: end;
+		padding-right: 8px;
 		color: rgba(255, 255, 255, 0.6);
 		font-size: 0.75rem;
 		font-variant-numeric: tabular-nums;
