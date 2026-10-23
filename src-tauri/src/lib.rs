@@ -972,24 +972,32 @@ fn physical_console_units(
 
 /// Fixed, non-shell service controls for an already installed console.  This
 /// deliberately has no file, command or unit-name parameters: PolicyKit can
-/// only start/stop RivetLink's two known units.
+/// only start/stop RivetLink's two known units, or revoke one validated
+/// controller key from the broker's trust store.
 #[cfg(target_os = "linux")]
 pub fn run_console_service_action<I>(args: I) -> Result<(), String>
 where
     I: IntoIterator<Item = std::ffi::OsString>,
 {
     let values: Vec<_> = args.into_iter().collect();
-    if values.len() != 2 || values.first().and_then(|arg| arg.to_str()) != Some("--action") {
-        return Err("invalid physical-console service request".to_string());
-    }
-    let action = values[1]
-        .to_str()
-        .ok_or("invalid physical-console service action")?;
+    let values: Vec<&str> = values
+        .iter()
+        .map(|arg| arg.to_str())
+        .collect::<Option<_>>()
+        .ok_or("invalid physical-console service request")?;
+    let (action, public_key) = match values.as_slice() {
+        ["--action", action] => (*action, None),
+        ["--action", action @ "revoke-key", "--public-key", key] => (*action, Some(*key)),
+        _ => return Err("invalid physical-console service request".to_string()),
+    };
     let root = run_checked_output("/usr/bin/id", &["-u".into()])?;
     if root.trim() != "0" {
         return Err("physical-console service action must be authorized by PolicyKit".to_string());
     }
     match action {
+        "revoke-key" => revoke_console_trusted_key(
+            public_key.ok_or("invalid physical-console service request")?,
+        ),
         "enable" => {
             run_checked(
                 "/usr/bin/systemctl",
@@ -1027,6 +1035,99 @@ where
             )
         }
         _ => Err("invalid physical-console service action".to_string()),
+    }
+}
+
+/// Whether `public_key` is a base64 ed25519 identity, the only form the
+/// physical-console installer ever writes to the broker's trust store.
+#[cfg(target_os = "linux")]
+fn is_controller_key(public_key: &str) -> bool {
+    base64::engine::general_purpose::STANDARD
+        .decode(public_key)
+        .is_ok_and(|raw| raw.len() == 32)
+}
+
+/// Remove one controller from the physical-console broker's trust store. The
+/// broker also writes that store at runtime and its relay transport keeps a
+/// snapshot, so it is always stopped around the edit (even while activating)
+/// and started again when the owner has it enabled.
+#[cfg(target_os = "linux")]
+fn revoke_console_trusted_key(public_key: &str) -> Result<(), String> {
+    const UNIT: &str = "rivetlink-console-broker.service";
+    if !is_controller_key(public_key) {
+        return Err("invalid controller identity".to_string());
+    }
+    let revoked = run_checked("/usr/bin/systemctl", &["stop".into(), UNIT.into()]).and_then(|()| {
+        as_console_service_user(|| {
+            let mut trusted = TrustedClients::load_or_empty(Path::new(
+                "/var/lib/rivetlink/keys/trusted_clients.json",
+            ))
+            .map_err(|error| error.to_string())?;
+            if trusted.is_trusted(public_key) {
+                trusted
+                    .revoke(public_key)
+                    .map_err(|error| error.to_string())?;
+            }
+            Ok(())
+        })
+    });
+    // Start again even when the stop or the edit failed, so a revoke never
+    // leaves an enabled console down.
+    if run_checked(
+        "/usr/bin/systemctl",
+        &["is-enabled".into(), "--quiet".into(), UNIT.into()],
+    )
+    .is_ok()
+    {
+        run_checked("/usr/bin/systemctl", &["start".into(), UNIT.into()])?;
+    }
+    revoked
+}
+
+/// Run `edit` with only the `rivetlink` service user's file access. That user
+/// owns `/var/lib/rivetlink`, so as root a planted symlink or device node there
+/// could make the helper open or overwrite any file; as `rivetlink` it gains
+/// nothing the service user could not already do.
+#[cfg(target_os = "linux")]
+fn as_console_service_user(edit: impl FnOnce() -> Result<(), String>) -> Result<(), String> {
+    let id = |flag: &str| -> Result<u32, String> {
+        run_checked_output("/usr/bin/id", &[flag.into(), "rivetlink".into()])?
+            .trim()
+            .parse()
+            .map_err(|_| "invalid rivetlink service user".to_string())
+    };
+    let (uid, gid) = (id("-u")?, id("-g")?);
+    // SAFETY: plain credential syscalls in the single-threaded PolicyKit
+    // helper; root's real and saved ids stay 0, so root can be restored.
+    let dropped = unsafe {
+        libc::setgroups(0, std::ptr::null()) == 0
+            && libc::setegid(gid) == 0
+            && libc::seteuid(uid) == 0
+    };
+    let result = if dropped {
+        edit()
+    } else {
+        Err("could not switch to the rivetlink service user".to_string())
+    };
+    // SAFETY: as above.
+    if unsafe { libc::seteuid(0) != 0 || libc::setegid(0) != 0 } {
+        return Err("could not restore root after the trust-store edit".to_string());
+    }
+    result
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod controller_key_check_tests {
+    use super::is_controller_key;
+    use base64::Engine;
+
+    #[test]
+    fn only_32_byte_base64_keys_count() {
+        let engine = base64::engine::general_purpose::STANDARD;
+        assert!(is_controller_key(&engine.encode([7u8; 32])));
+        assert!(!is_controller_key(&engine.encode([7u8; 31])));
+        assert!(!is_controller_key("not a key"));
+        assert!(!is_controller_key(""));
     }
 }
 
@@ -5970,6 +6071,47 @@ fn revoke_headless_trusted_key(_public_key: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// The physical-console broker keeps its own root-owned trust store. Revoke the
+/// key there first (one PolicyKit prompt), so a cancelled prompt leaves the
+/// device allowed everywhere instead of silently keeping console access.
+#[cfg(target_os = "linux")]
+async fn revoke_console_trusted_key_authorized(public_key: &str) -> Result<(), String> {
+    // A malformed key can never be in the broker's store (the installer
+    // validates keys), so it must not block removing the entry here.
+    if !is_controller_key(public_key)
+        || !Path::new("/etc/systemd/system/rivetlink-console-broker.service").exists()
+    {
+        return Ok(());
+    }
+    let executable = appimage_or_current_exe()?;
+    // Bounded: the owner gets time to answer the prompt, but a stuck helper
+    // must not hang the settings command forever.
+    let status = tokio::time::timeout(
+        std::time::Duration::from_secs(300),
+        tokio::process::Command::new("/usr/bin/pkexec")
+            .arg(executable)
+            .arg("--rivetlink-console-service")
+            .args(["--action", "revoke-key", "--public-key", public_key])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .kill_on_drop(true)
+            .status(),
+    )
+    .await
+    .map_err(|_| "console-revoke-failed".to_string())?
+    .map_err(|_| "could not start the authorized console key revocation".to_string())?;
+    if !status.success() {
+        return Err("console-revoke-failed".to_string());
+    }
+    Ok(())
+}
+
+#[cfg(not(target_os = "linux"))]
+async fn revoke_console_trusted_key_authorized(_public_key: &str) -> Result<(), String> {
+    Ok(())
+}
+
 /// Remove a trusted client, after the owner confirms with their OS password.
 #[tauri::command]
 async fn remove_trusted_key(
@@ -5980,12 +6122,19 @@ async fn remove_trusted_key(
     if !os_password_ok(&os_password) {
         return Err("wrong-os-password".to_string());
     }
-    let mut settings = state.settings.lock().await;
-    let removed_key = settings
+    let removed_key = state
+        .settings
+        .lock()
+        .await
         .trusted_keys
         .iter()
         .find(|key| key.id == id)
         .map(|key| key.public_key.clone());
+    // Outside the settings lock: the PolicyKit prompt can stay open a while.
+    if let Some(public_key) = &removed_key {
+        revoke_console_trusted_key_authorized(public_key.trim()).await?;
+    }
+    let mut settings = state.settings.lock().await;
     settings.trusted_keys.retain(|k| k.id != id);
     settings.save(&state.data_dir)?;
     let result = settings.clone();

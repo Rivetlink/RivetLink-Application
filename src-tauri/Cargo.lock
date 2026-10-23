@@ -4396,6 +4396,7 @@ version = "0.1.102"
 dependencies = [
  "arboard",
  "base64 0.22.1",
+ "libc",
  "pam",
  "rand 0.8.6",
  "rivetlink-agent",
