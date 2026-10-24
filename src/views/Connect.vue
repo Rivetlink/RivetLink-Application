@@ -831,10 +831,7 @@
 					candidate.public_key === device.public_key,
 				);
 				if (relayDevice) {
-					devices.value = relayDevices;
-					selected.value = relayDevice.id;
-					tab.value = "devices";
-					await capture();
+					await lanConsoleAutoConnect(device, relayDevice.id);
 					return;
 				}
 			}
