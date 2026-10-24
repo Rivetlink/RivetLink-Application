@@ -296,8 +296,12 @@ export async function lanConsoleConnect(device: SavedLanDevice): Promise<void> {
 
 /// A physical-console broker owns one pinned LAN endpoint across LightDM and
 /// the authenticated desktop. Let the host select login capture before
-/// authentication or the normal live desktop stream after it.
-export async function lanConsoleAutoConnect(device: SavedLanDevice): Promise<void> {
+/// authentication or the normal live desktop stream after it. With
+/// `relayDeviceId` the same session runs through an encrypted relay tunnel.
+export async function lanConsoleAutoConnect(
+	device: SavedLanDevice,
+	relayDeviceId?: string,
+): Promise<void> {
 	await invoke("lan_console_auto_connect", {
 		target: {
 			name: device.name,
@@ -305,6 +309,7 @@ export async function lanConsoleAutoConnect(device: SavedLanDevice): Promise<voi
 			port: device.port,
 			deviceId: device.id,
 			publicKey: device.public_key,
+			relayDeviceId,
 		},
 	});
 }

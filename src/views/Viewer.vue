@@ -334,6 +334,7 @@
 		port: number;
 		deviceId: string;
 		publicKey?: string;
+		relayDeviceId?: string;
 	};
 
 	function base64ToBytes(b64: string): Uint8Array {

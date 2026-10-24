@@ -155,6 +155,8 @@ struct LanTarget {
     port: u16,
     device_id: String,
     public_key: Option<String>,
+    /// Set when the host is reached through the relay instead of `address`.
+    relay_device_id: Option<String>,
 }
 
 impl AppState {
@@ -3815,6 +3817,68 @@ fn update_relay_host_pin(
     Ok(true)
 }
 
+/// Open a pinned key-mode LAN session to `target`: straight over TCP, or
+/// through a relay tunnel when the host is only reachable that way. Both run
+/// the same handshake and requests; the relay only carries ciphertext.
+async fn open_key_session(
+    state: &AppState,
+    target: &LanTarget,
+    identity: &Identity,
+) -> Result<(rivetlink_sdk::lan::BoxedIo, rivetlink_sdk::SealedChannel), String> {
+    let Some(device_id) = &target.relay_device_id else {
+        let (stream, channel) = rivetlink_sdk::lan::connect_key_pinned(
+            target_addr(target)?,
+            identity,
+            target.public_key.as_deref(),
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        return Ok((Box::new(stream), channel));
+    };
+    let device = {
+        let guard = state.client.lock().await;
+        guard
+            .as_ref()
+            .ok_or("not connected to a relay")?
+            .find_device(device_id)
+            .await
+            .map_err(|e| e.to_string())?
+    };
+    // A saved host keeps its identity on every route: the relay's record must
+    // match it, and the tunnel handshake must then prove that same key. The
+    // relay alone never introduces a host key here.
+    let saved = target
+        .public_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .ok_or("the relay route requires the saved host identity")?;
+    if saved != device.public_key.trim() {
+        return Err("relay host identity does not match the saved host".to_string());
+    }
+    verify_or_pin_relay_host(state, &device).await?;
+    let (stream, channel) = state
+        .client
+        .lock()
+        .await
+        .as_ref()
+        .ok_or("not connected to a relay")?
+        .connect_tunnel(&device)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok((Box::new(stream), channel))
+}
+
+/// The direct address of a LAN target. Built from the parsed IP so IPv6 is
+/// handled correctly; `format!("{}:{}", v6, port)` is unparseable.
+fn target_addr(target: &LanTarget) -> Result<std::net::SocketAddr, String> {
+    let ip: std::net::IpAddr = target
+        .address
+        .parse()
+        .map_err(|_| format!("bad address: {}", target.address))?;
+    Ok(std::net::SocketAddr::new(ip, target.port))
+}
+
 /// Capture one screenshot from `device_id`, returned as a PNG data URL.
 #[tauri::command]
 async fn capture_screenshot(
@@ -4373,16 +4437,20 @@ async fn lan_console_connect(
     target: LanTarget,
 ) -> Result<(), String> {
     let upgrade_target = target.clone();
-    let ip: std::net::IpAddr = target
-        .address
-        .parse()
-        .map_err(|_| format!("bad address: {}", target.address))?;
-    let host_key = target
-        .public_key
-        .filter(|key| !key.trim().is_empty())
-        .ok_or(
-            "physical-console LAN access requires the host identity from discovery or a saved key",
-        )?;
+    // Over the relay the device key pinned by `open_key_session` is the host
+    // identity; a direct connection needs it from discovery or a saved key.
+    let direct = if target.relay_device_id.is_some() {
+        None
+    } else {
+        let host_key = target
+            .public_key
+            .clone()
+            .filter(|key| !key.trim().is_empty())
+            .ok_or(
+                "physical-console LAN access requires the host identity from discovery or a saved key",
+            )?;
+        Some((target_addr(&target)?, host_key))
+    };
 
     // Stop a stale desktop/console viewer before rebuilding the shared window.
     stop_stream(&state);
@@ -4390,13 +4458,13 @@ async fn lan_console_connect(
 
     let identity =
         Identity::load_or_create(&state.identity_path()).map_err(|error| error.to_string())?;
-    let addr = std::net::SocketAddr::new(ip, target.port);
     let (input_tx, mut input_rx) = tokio::sync::mpsc::channel::<ConsoleInputPacket>(128);
     if let Ok(mut guard) = state.console_input_tx.lock() {
         *guard = Some(input_tx);
     }
 
     let app_for_task = app.clone();
+    let tunnel_target = target.clone();
     let task = tokio::spawn(async move {
         // The broker captures a complete PNG for each request. 25 polls per
         // second gives the X11 login screen and normal desktop visibly smoother
@@ -4411,6 +4479,15 @@ async fn lan_console_connect(
         // indefinite reconnect loop.
         const LOGIN_HANDOFF_GRACE: std::time::Duration = std::time::Duration::from_secs(60);
         const LOGIN_HANDOFF_RETRY: std::time::Duration = std::time::Duration::from_secs(1);
+        // A direct poll opens a fresh connection; a relay tunnel is kept for
+        // the whole view. The broker refuses a capture without input on the
+        // same connection more often than every `min_capture_interval_secs`,
+        // so an idle tunnel refreshes at that pace and input refreshes at once.
+        // ponytail: assumes the default 2 s; a host configured slower ends the
+        // view with its rate-limit error.
+        const TUNNEL_IDLE_REFRESH: std::time::Duration = std::time::Duration::from_secs(2);
+        let mut tunnel = None;
+        let mut last_tunnel_capture: Option<std::time::Instant> = None;
         let mut last_console_state = None;
         let mut handoff_deadline = None;
         let mut upgraded_to_desktop = false;
@@ -4433,19 +4510,51 @@ async fn lan_console_connect(
             if let Some(move_event) = latest_move {
                 inputs.push(move_event);
             }
+            if direct.is_none()
+                && inputs.is_empty()
+                && last_tunnel_capture.is_some_and(|at| at.elapsed() < TUNNEL_IDLE_REFRESH)
+            {
+                tokio::time::sleep(POLL_INTERVAL).await;
+                continue;
+            }
 
-            let capture = tokio::time::timeout(
-                std::time::Duration::from_secs(15),
-                rivetlink_sdk::lan::console_capture_key_pinned(
-                    addr,
-                    &identity,
-                    Some(&host_key),
-                    inputs,
-                ),
-            )
+            // Reopening a tunnel (relay connect, host accept, handshake) gets
+            // its own time on top of the capture.
+            let bound = if direct.is_none() && tunnel.is_none() {
+                45
+            } else {
+                15
+            };
+            let capture = tokio::time::timeout(std::time::Duration::from_secs(bound), async {
+                match &direct {
+                    Some((addr, host_key)) => rivetlink_sdk::lan::console_capture_key_pinned(
+                        *addr,
+                        &identity,
+                        Some(host_key),
+                        inputs,
+                    )
+                    .await
+                    .map_err(|e| e.to_string()),
+                    None => {
+                        tunnel_console_capture(
+                            &app_for_task,
+                            &tunnel_target,
+                            &identity,
+                            &mut tunnel,
+                            inputs,
+                        )
+                        .await
+                    }
+                }
+            })
             .await;
+            if capture.is_err() {
+                // A timed-out request leaves the tunnel mid-message.
+                tunnel = None;
+            }
             match capture {
                 Ok(Ok(capture)) => {
+                    last_tunnel_capture = Some(std::time::Instant::now());
                     // Once the authenticated GNOME session owns the worker,
                     // stop polling PNG physical-console frames. The same
                     // pinned direct-LAN listener now exposes the existing
@@ -4530,13 +4639,38 @@ async fn lan_console_connect(
     let _ = app.emit("lan://connected", target.device_id);
     tracing::info!(
         name = %target.name,
-        %addr,
+        via_relay = target.relay_device_id.is_some(),
         backend = "PhysicalConsole",
         state = "LoginScreen",
         max_fps = 25_u16,
         "lan_console_connect: physical-console bootstrap started"
     );
     Ok(())
+}
+
+/// One physical-console transaction through the relay, opening the tunnel on
+/// first use and dropping it after any failure so the next poll reconnects.
+async fn tunnel_console_capture(
+    app: &tauri::AppHandle,
+    target: &LanTarget,
+    identity: &Identity,
+    tunnel: &mut Option<(rivetlink_sdk::lan::BoxedIo, rivetlink_sdk::SealedChannel)>,
+    inputs: Vec<ConsoleInputPacket>,
+) -> Result<rivetlink_sdk::lan::ConsoleCapture, String> {
+    if tunnel.is_none() {
+        let state = app.state::<AppState>();
+        *tunnel = Some(open_key_session(&state, target, identity).await?);
+    }
+    let Some((stream, channel)) = tunnel.as_mut() else {
+        return Err("relay tunnel is not open".to_string());
+    };
+    let capture = rivetlink_sdk::lan::console_capture_on(stream, channel, inputs)
+        .await
+        .map_err(|e| e.to_string());
+    if capture.is_err() {
+        *tunnel = None;
+    }
+    capture
 }
 
 /// Pick the appropriate backend before opening the viewer. The boot-time
@@ -4550,8 +4684,7 @@ async fn lan_console_auto_connect(
     state: State<'_, AppState>,
     target: LanTarget,
 ) -> Result<(), String> {
-    let identity_path = state.identity_path();
-    if physical_console_desktop_is_ready(&target, &identity_path).await? {
+    if physical_console_desktop_is_ready(&state, &target).await? {
         tracing::info!(
             name = %target.name,
             backend = "NormalDesktopEngine",
@@ -4576,29 +4709,34 @@ async fn lan_console_auto_connect(
 /// ready. This request neither captures a frame nor injects input, and the
 /// host identity is pinned before its answer influences routing.
 async fn physical_console_desktop_is_ready(
+    state: &AppState,
     target: &LanTarget,
-    identity_path: &std::path::Path,
 ) -> Result<bool, String> {
-    let ip: std::net::IpAddr = target
-        .address
-        .parse()
-        .map_err(|_| format!("bad address: {}", target.address))?;
-    let host_key = target
-        .public_key
-        .as_deref()
-        .filter(|key| !key.trim().is_empty())
-        .ok_or(
-            "physical-console LAN access requires the host identity from discovery or a saved key",
-        )?;
-    let identity = Identity::load_or_create(identity_path).map_err(|error| error.to_string())?;
-    let addr = std::net::SocketAddr::new(ip, target.port);
+    if target.relay_device_id.is_none()
+        && target
+            .public_key
+            .as_deref()
+            .is_none_or(|key| key.trim().is_empty())
+    {
+        return Err(
+            "physical-console LAN access requires the host identity from discovery or a saved key"
+                .to_string(),
+        );
+    }
+    let identity =
+        Identity::load_or_create(&state.identity_path()).map_err(|error| error.to_string())?;
+    // The relay route also opens its tunnel within this bound.
+    let bound = if target.relay_device_id.is_some() {
+        20
+    } else {
+        10
+    };
     let (mut stream, channel) = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        rivetlink_sdk::lan::connect_key_pinned(addr, &identity, Some(host_key)),
+        std::time::Duration::from_secs(bound),
+        open_key_session(state, target, &identity),
     )
     .await
-    .map_err(|_| "physical-console availability check timed out".to_string())?
-    .map_err(|error| error.to_string())?;
+    .map_err(|_| "physical-console availability check timed out".to_string())??;
 
     match tokio::time::timeout(
         std::time::Duration::from_secs(5),
@@ -4895,20 +5033,14 @@ async fn lan_connect_inner(
     rebuild_viewer: bool,
     allow_login_fallback: bool,
 ) -> Result<(), String> {
-    // Build the address from the parsed IP so IPv6 is handled correctly —
-    // `format!("{}:{}", v6, port)` produces an unbracketed, unparseable string.
-    let ip: std::net::IpAddr = target
-        .address
-        .parse()
-        .map_err(|_| format!("bad address: {}", target.address))?;
-    let addr = std::net::SocketAddr::new(ip, target.port);
+    let via_relay = target.relay_device_id.is_some();
     let has_pin = pin
         .as_deref()
         .map(|p| !p.trim().is_empty())
         .unwrap_or(false);
     tracing::info!(
         name = %target.name,
-        %addr,
+        via_relay,
         has_pin,
         pinned_host = target.public_key.is_some(),
         "lan_connect: connecting"
@@ -4916,33 +5048,40 @@ async fn lan_connect_inner(
 
     // Establish the encrypted channel (PIN/PAKE, or key/TOFU with host pinning),
     // bounded by a timeout so an unreachable host fails instead of hanging the
-    // UI on "Connecting…" forever.
+    // UI on "Connecting…" forever. The relay route opens a tunnel first.
     let connect = async {
         match &pin {
-            Some(p) if !p.trim().is_empty() => rivetlink_sdk::lan::connect_password(addr, p.trim())
-                .await
-                .map_err(|e| e.to_string()),
+            Some(p) if via_relay && !p.trim().is_empty() => {
+                Err("PIN pairing works only on the local network".to_string())
+            }
+            Some(p) if !p.trim().is_empty() => {
+                let (stream, channel) =
+                    rivetlink_sdk::lan::connect_password(target_addr(&target)?, p.trim())
+                        .await
+                        .map_err(|e| e.to_string())?;
+                Ok((Box::new(stream) as rivetlink_sdk::lan::BoxedIo, channel))
+            }
             _ => {
                 let identity =
                     Identity::load_or_create(&state.identity_path()).map_err(|e| e.to_string())?;
-                rivetlink_sdk::lan::connect_key_pinned(
-                    addr,
-                    &identity,
-                    target.public_key.as_deref(),
-                )
-                .await
-                .map_err(|e| e.to_string())
+                open_key_session(&state, &target, &identity).await
             }
         }
     };
-    let (mut stream, channel) = tokio::time::timeout(std::time::Duration::from_secs(15), connect)
-        .await
-        .map_err(|_| {
-            tracing::warn!(%addr, "lan_connect: timed out after 15s");
-            "connection timed out".to_string()
-        })?
-        .inspect_err(|e| tracing::warn!(%addr, error = %e, "lan_connect: handshake failed"))?;
-    tracing::info!(%addr, "lan_connect: channel established, opening viewer");
+    let bound = if via_relay { 30 } else { 15 };
+    let (mut stream, channel) = tokio::time::timeout(
+        std::time::Duration::from_secs(bound),
+        connect,
+    )
+    .await
+    .map_err(|_| {
+        tracing::warn!(name = %target.name, "lan_connect: timed out after {bound}s");
+        "connection timed out".to_string()
+    })?
+    .inspect_err(
+        |e| tracing::warn!(name = %target.name, error = %e, "lan_connect: handshake failed"),
+    )?;
+    tracing::info!(name = %target.name, "lan_connect: channel established, opening viewer");
 
     // Stop any previous session before starting a new one.
     stop_stream(&state);
@@ -4954,7 +5093,7 @@ async fn lan_connect_inner(
     // screen picker. Bounded: an unresponsive host shouldn't stall the stream.
     // The same reply says whether this host lets us share clipboard/files.
     let (displays, features) = match tokio::time::timeout(
-        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(if via_relay { 15 } else { 5 }),
         rivetlink_sdk::lan::list_displays_and_features(&mut stream, &channel),
     )
     .await
