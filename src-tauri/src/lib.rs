@@ -667,8 +667,16 @@ fn physical_console_status(app: tauri::AppHandle) -> PhysicalConsoleStatus {
     });
     // The rollback record is the durable explicit owner opt-in. It remains
     // visible when an older partially applied setup needs a safe retry, while
-    // `lightdm_login_enabled` below still requires the complete verifier.
-    let lightdm_login_configured = std::path::Path::new(LIGHTDM_ROLLBACK_METADATA).is_file();
+    // `lightdm_login_enabled` below still requires the complete verifier. It
+    // sits in a root-only directory this unprivileged app cannot stat, so the
+    // world-readable LightDM override and verifier unit count as well.
+    let lightdm_login_configured = [
+        LIGHTDM_ROLLBACK_METADATA,
+        LIGHTDM_RIVETLINK_CONFIG,
+        LIGHTDM_VERIFY_UNIT,
+    ]
+    .iter()
+    .any(|path| std::path::Path::new(path).is_file());
     let login_manager = std::fs::read_to_string("/etc/X11/default-display-manager")
         .unwrap_or_default()
         .trim()
@@ -1017,6 +1025,15 @@ where
             )
         }
         "disable" => {
+            // The LightDM login screen only exists for the console; turning
+            // the console off hands the next boot back to GDM. Restored first
+            // so the units are off afterwards either way, and the console
+            // stays off even when the restore fails.
+            let restored = if Path::new(LIGHTDM_ROLLBACK_METADATA).is_file() {
+                restore_lightdm_rollback()
+            } else {
+                Ok(())
+            };
             run_checked(
                 "/usr/bin/systemctl",
                 &[
@@ -1032,7 +1049,8 @@ where
                     "disable".into(),
                     "rivetlink-console-worker.service".into(),
                 ],
-            )
+            )?;
+            restored
         }
         _ => Err("invalid physical-console service action".to_string()),
     }
@@ -1710,9 +1728,13 @@ fn restore_lightdm_rollback() -> Result<(), String> {
         "/usr/bin/systemctl",
         &["enable".into(), "gdm.service".into()],
     );
+    // try-restart: a console the owner turned off must stay off.
     let _ = run_checked(
         "/usr/bin/systemctl",
-        &["restart".into(), "rivetlink-console-broker.service".into()],
+        &[
+            "try-restart".into(),
+            "rivetlink-console-broker.service".into(),
+        ],
     );
     std::fs::remove_file(LIGHTDM_ROLLBACK_METADATA)
         .map_err(|error| format!("remove LightDM rollback metadata: {error}"))?;

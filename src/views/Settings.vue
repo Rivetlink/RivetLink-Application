@@ -141,6 +141,15 @@
 							<strong>{{ t("physicalConsole.lightdmRebootRequiredTitle") }}</strong>
 							<div>{{ t("physicalConsole.lightdmRebootRequiredHint") }}</div>
 						</VAlert>
+						<VAlert
+							v-if="gdmRestorePending"
+							type="info"
+							variant="tonal"
+							icon="mdi-restart"
+							class="mb-3"
+						>
+							{{ t("physicalConsole.gdmRestoredHint") }}
+						</VAlert>
 						<VList v-if="physicalConsole.configured" density="compact" class="bg-transparent mb-2">
 							<VListItem :title="t('physicalConsole.bootService')">
 								<template #append>
@@ -580,11 +589,21 @@
 		}
 	}
 
+	// GDM returns only at the next boot; say so once LightDM was handed back.
+	const gdmRestorePending = ref(false);
+	function noteGdmRestore(before: boolean): void {
+		if (before && !physicalConsole.value.lightdmLoginConfigured) {
+			gdmRestorePending.value = true;
+		}
+	}
+
 	async function setPhysicalConsoleService(action: "enable" | "disable") {
 		physicalConsoleBusy.value = true;
 		physicalConsoleServiceError.value = "";
 		try {
+			const before = physicalConsole.value.lightdmLoginConfigured;
 			physicalConsole.value = await invoke<typeof physicalConsole.value>("physical_console_service_action", { action });
+			noteGdmRestore(before);
 		} catch (error) {
 			physicalConsoleServiceError.value = String(error);
 		} finally {
@@ -596,7 +615,9 @@
 		physicalConsoleBusy.value = true;
 		physicalConsoleServiceError.value = "";
 		try {
+			const before = physicalConsole.value.lightdmLoginConfigured;
 			physicalConsole.value = await invoke<typeof physicalConsole.value>("restore_physical_console_gdm");
+			noteGdmRestore(before);
 		} catch (error) {
 			physicalConsoleServiceError.value = String(error);
 		} finally {
