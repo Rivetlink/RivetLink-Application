@@ -3845,11 +3845,16 @@ async fn open_key_session(
             .map_err(|e| e.to_string())?
     };
     // A saved host keeps its identity on every route: the relay's record must
-    // match it, and the tunnel handshake must then prove that same key.
-    if let Some(saved) = target.public_key.as_deref().map(str::trim) {
-        if !saved.is_empty() && saved != device.public_key.trim() {
-            return Err("relay host identity does not match the saved host".to_string());
-        }
+    // match it, and the tunnel handshake must then prove that same key. The
+    // relay alone never introduces a host key here.
+    let saved = target
+        .public_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|key| !key.is_empty())
+        .ok_or("the relay route requires the saved host identity")?;
+    if saved != device.public_key.trim() {
+        return Err("relay host identity does not match the saved host".to_string());
     }
     verify_or_pin_relay_host(state, &device).await?;
     let (stream, channel) = state
@@ -4513,7 +4518,14 @@ async fn lan_console_connect(
                 continue;
             }
 
-            let capture = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+            // Reopening a tunnel (relay connect, host accept, handshake) gets
+            // its own time on top of the capture.
+            let bound = if direct.is_none() && tunnel.is_none() {
+                45
+            } else {
+                15
+            };
+            let capture = tokio::time::timeout(std::time::Duration::from_secs(bound), async {
                 match &direct {
                     Some((addr, host_key)) => rivetlink_sdk::lan::console_capture_key_pinned(
                         *addr,
@@ -5081,7 +5093,7 @@ async fn lan_connect_inner(
     // screen picker. Bounded: an unresponsive host shouldn't stall the stream.
     // The same reply says whether this host lets us share clipboard/files.
     let (displays, features) = match tokio::time::timeout(
-        std::time::Duration::from_secs(5),
+        std::time::Duration::from_secs(if via_relay { 15 } else { 5 }),
         rivetlink_sdk::lan::list_displays_and_features(&mut stream, &channel),
     )
     .await
