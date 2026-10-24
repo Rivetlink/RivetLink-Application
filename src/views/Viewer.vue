@@ -45,16 +45,6 @@
 				{{ t("viewer.poor") }}
 			</VChip>
 			<VChip
-				v-if="controlling"
-				class="controlling-chip"
-				color="primary"
-				size="small"
-				variant="flat"
-				prepend-icon="mdi-mouse"
-			>
-				{{ t("viewer.controlling") }}
-			</VChip>
-			<VChip
 				v-if="consoleHandoff"
 				class="handoff-chip"
 				color="info"
@@ -93,6 +83,18 @@
 		<!-- Always-on toolbar — never folds, so zoom/control/disconnect stay one
 		     click away. Docked in its own row below the stage (no overlap). -->
 		<div v-if="hasFrame" class="zoom-controls">
+			<!-- In the toolbar, not over the stage: an overlay would block clicks
+			     on the remote's top-left corner while controlling. -->
+			<VChip
+				v-if="controlling"
+				class="controlling-chip"
+				color="primary"
+				size="small"
+				variant="flat"
+				prepend-icon="mdi-mouse"
+			>
+				{{ t("viewer.controlling") }}
+			</VChip>
 			<div class="tools">
 				<VBtn
 					icon="mdi-minus"
@@ -1012,10 +1014,9 @@
 	}
 
 	.controlling-chip {
-		position: absolute;
-		top: 12px;
-		left: 12px;
-		opacity: 0.9;
+		grid-column: 1;
+		justify-self: start;
+		margin-left: 4px;
 	}
 
 	.handoff-chip {
@@ -1060,6 +1061,7 @@
 	}
 
 	.stats {
+		grid-column: 3;
 		justify-self: end;
 		padding-right: 8px;
 		color: rgba(255, 255, 255, 0.6);
