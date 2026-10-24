@@ -6263,6 +6263,11 @@ pub fn run() {
             // Resolve the data dir, load settings, and seed the shared state.
             let data_dir = app.path().app_data_dir()?;
             std::fs::create_dir_all(&data_dir)?;
+            // Hosts that completed the post-quantum handshake once may not be
+            // downgraded to the classical one later.
+            if let Err(e) = rivetlink_sdk::pq_pins::use_store(data_dir.join("pq_hosts")) {
+                tracing::warn!(error = %e, "could not load post-quantum host pins");
+            }
             let settings = AppSettings::load(&data_dir);
             let trusted: Vec<String> = settings
                 .trusted_keys
