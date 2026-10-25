@@ -10,11 +10,49 @@ import { createVuetify } from "vuetify";
 import * as components from "vuetify/components";
 import * as directives from "vuetify/directives";
 import "@mdi/font/css/materialdesignicons.css";
+// Bundled, not fetched: the CSP only allows fonts from the app itself.
+import "@fontsource-variable/inter";
+import "./theme.css";
 
 const vuetify = createVuetify({
 	components,
 	directives,
-	theme: { defaultTheme: "dark" },
+	theme: {
+		defaultTheme: "rivet",
+		themes: {
+			rivet: {
+				dark: true,
+				colors: {
+					background: "#0F1115",
+					surface: "#171A20",
+					"surface-bright": "#1F2430",
+					"surface-light": "#1F2430",
+					"surface-variant": "#1F2430",
+					"on-surface-variant": "#E8EAED",
+					"on-background": "#E8EAED",
+					"on-surface": "#E8EAED",
+					primary: "#3F5FE0",
+					"on-primary": "#FFFFFF",
+					secondary: "#8EA6FF",
+					success: "#3FD08A",
+					info: "#8EA6FF",
+					warning: "#F2B04C",
+					error: "#FF6B6B",
+				},
+				variables: { "medium-emphasis-opacity": 0.72 },
+			},
+		},
+	},
+	defaults: {
+		VBtn: { rounded: "lg" },
+		VTextField: { variant: "outlined" },
+		VTextarea: { variant: "outlined" },
+		VSelect: { variant: "outlined" },
+		VSwitch: {
+			color: "primary",
+			inset: true,
+		},
+	},
 	icons: { defaultSet: "mdi" },
 });
 

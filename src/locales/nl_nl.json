@@ -15,7 +15,7 @@
         "unnamedDevice": "Naamloos apparaat"
     },
     "nav": {
-        "connect": "Verbinden",
+        "connect": "Apparaten",
         "device": "Hulp ontvangen",
         "relays": "Servers",
         "resources": "Bronnen",
@@ -146,7 +146,9 @@
         "serverHint": "De app maakt zelf de beveiligde verbinding aan.",
         "empty": "Nog geen servers opgeslagen.",
         "active": "actief",
-        "activate": "Activeren"
+        "activate": "Activeren",
+        "subtitle": "Je relay brengt je apparaten samen, ook buiten je netwerk.",
+        "remove": "Server verwijderen"
     },
     "settings": {
         "thisDevice": "Dit apparaat",
@@ -175,8 +177,14 @@
         "tabs": {
             "general": "Algemeen",
             "security": "Beveiliging",
-            "about": "Over"
-        }
+            "about": "Over en updates",
+            "servers": "Servers",
+            "console": "Ubuntu-console"
+        },
+        "preferences": "Voorkeuren",
+        "checkUpdates": "Controleren op updates",
+        "copyKey": "Sleutel kopiëren",
+        "copied": "Gekopieerd"
     },
     "headless": {
         "title": "Headless Ubuntu-host",
@@ -252,7 +260,9 @@
         "savedControllers": "Vertrouwde bedienende apparaten",
         "savedControllersHint": "Geselecteerde sleutels worden opnieuw gebruikt voor deze console. Apparaten kun je toevoegen of verwijderen via Instellingen → Beveiliging.",
         "additionalControllerKey": "Nog een publieke sleutel van een bedienend apparaat toevoegen",
-        "confirm": "Installeren en inschakelen"
+        "confirm": "Installeren en inschakelen",
+        "reachableVia": "Bereikbaar via",
+        "statusTitle": "Status"
     },
     "resources": {
         "title": "Bronnengebruik van de app",

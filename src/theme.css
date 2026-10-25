@@ -1,0 +1,171 @@
+/* RivetLink look: calm dark graphite, one blue accent. Colors live in the
+   Vuetify theme (main.ts); this file holds type and the shared page, group
+   and row styles the views use. */
+
+:root {
+	--rl-border: #232831;
+	--rl-border-strong: #2A2F38;
+	--rl-muted: #9AA3AE;
+	--rl-soft: #AEB6C2;
+	--rl-sidebar: #13161B;
+	--rl-raised: #1F2430;
+	--rl-ok: #3FD08A;
+	--rl-warn: #F2B04C;
+	--rl-off: #5C6470;
+	--rl-accent: #8EA6FF;
+	--rl-mono: ui-monospace, "SF Mono", "Cascadia Mono", "Ubuntu Mono", Menlo, monospace;
+}
+
+html,
+body,
+.v-application {
+	font-family: "Inter Variable", system-ui, sans-serif;
+}
+
+/* Vuetify's typography helpers pin Roboto; follow the app font instead. */
+.v-application [class*="text-h"],
+.v-application [class*="text-subtitle"],
+.v-application [class*="text-body"],
+.v-application [class*="text-caption"],
+.v-application [class*="text-overline"],
+.v-application [class*="text-button"] {
+	font-family: inherit !important;
+}
+
+.v-btn {
+	text-transform: none;
+	letter-spacing: normal;
+	font-weight: 600;
+}
+
+.v-card {
+	border-radius: 14px;
+}
+
+/* Page frame: title block on top, content below. */
+.rl-page {
+	box-sizing: border-box;
+	padding: 32px clamp(16px, 4vw, 48px);
+	display: flex;
+	flex-direction: column;
+	gap: 28px;
+	max-width: 1180px;
+}
+
+.rl-header {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: flex-end;
+	justify-content: space-between;
+	gap: 16px;
+}
+
+.rl-h1 {
+	margin: 0;
+	font-size: 26px;
+	font-weight: 700;
+	letter-spacing: -0.02em;
+	line-height: 1.2;
+}
+
+.rl-h2 {
+	margin: 0;
+	font-size: 20px;
+	font-weight: 600;
+}
+
+.rl-lead {
+	margin: 4px 0 0;
+	color: var(--rl-muted);
+}
+
+.rl-section-title {
+	margin: 0 0 8px;
+	font-size: 12px;
+	font-weight: 600;
+	text-transform: uppercase;
+	letter-spacing: 0.06em;
+	color: var(--rl-muted);
+}
+
+/* A group of rows (libadwaita-style preference group). */
+.rl-group {
+	border-radius: 12px;
+	background: rgb(var(--v-theme-surface));
+	border: 1px solid var(--rl-border);
+}
+
+.rl-row {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: center;
+	gap: 8px 16px;
+	min-height: 60px;
+	padding: 10px 16px;
+	box-sizing: border-box;
+}
+
+.rl-row + .rl-row {
+	border-top: 1px solid var(--rl-border);
+}
+
+.rl-row-text {
+	flex: 1 1 220px;
+	min-width: 0;
+	display: flex;
+	flex-direction: column;
+	gap: 2px;
+}
+
+.rl-row-title {
+	font-weight: 500;
+}
+
+.rl-row-sub {
+	color: var(--rl-muted);
+	font-size: 13px;
+}
+
+.rl-mono {
+	font-family: var(--rl-mono);
+	font-size: 12px;
+}
+
+/* Status: a dot plus text. */
+.rl-status {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	font-size: 13px;
+	color: var(--rl-soft);
+}
+
+.rl-status::before {
+	content: "";
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: var(--rl-off);
+	flex-shrink: 0;
+}
+
+.rl-status.ok::before { background: var(--rl-ok); }
+.rl-status.warn::before { background: var(--rl-warn); }
+.rl-status.info::before { background: var(--rl-accent); }
+.rl-status.ok { color: #CFF5E2; }
+.rl-status.warn { color: #F2C27A; }
+
+/* Vuetify's off-track is near-invisible on this surface. */
+.v-switch .v-switch__track {
+	background-color: #353B46;
+	opacity: 1;
+}
+
+.v-application a {
+	color: var(--rl-accent);
+	text-decoration: none;
+}
+
+.v-application a:hover {
+	text-decoration: underline;
+}

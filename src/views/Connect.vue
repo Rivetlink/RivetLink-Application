@@ -21,7 +21,7 @@
 					variant="tonal"
 				>
 					{{ t("connect.noRelayBefore") }}
-					<RouterLink to="/relays">
+					<RouterLink to="/settings?s=servers">
 						{{ t("connect.noRelayLink") }}
 					</RouterLink>{{ t("connect.noRelayAfter") }}
 				</VAlert>

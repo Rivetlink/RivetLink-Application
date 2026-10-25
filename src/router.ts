@@ -8,8 +8,6 @@ import {
 
 import Connect from "./views/Connect.vue";
 import ThisDevice from "./views/ThisDevice.vue";
-import Relays from "./views/Relays.vue";
-import Resources from "./views/Resources.vue";
 import Settings from "./views/Settings.vue";
 import Viewer from "./views/Viewer.vue";
 import OverlayPanel from "./views/OverlayPanel.vue";
@@ -26,7 +24,7 @@ export const router = createRouter({
 			component: Connect,
 			meta: {
 				titleKey: "nav.connect",
-				icon: "mdi-monitor-share",
+				icon: "mdi-monitor",
 				role: "client",
 			},
 		},
@@ -35,24 +33,8 @@ export const router = createRouter({
 			component: ThisDevice,
 			meta: {
 				titleKey: "nav.device",
-				icon: "mdi-laptop",
+				icon: "mdi-lifebuoy",
 				role: "host",
-			},
-		},
-		{
-			path: "/relays",
-			component: Relays,
-			meta: {
-				titleKey: "nav.relays",
-				icon: "mdi-server-network",
-			},
-		},
-		{
-			path: "/resources",
-			component: Resources,
-			meta: {
-				titleKey: "nav.resources",
-				icon: "mdi-chart-areaspline",
 			},
 		},
 		{
@@ -60,7 +42,7 @@ export const router = createRouter({
 			component: Settings,
 			meta: {
 				titleKey: "nav.settings",
-				icon: "mdi-cog",
+				icon: "mdi-cog-outline",
 			},
 		},
 		{

@@ -23,32 +23,35 @@
 
 			<!-- Main shell -->
 			<template v-else>
-				<VNavigationDrawer v-model="drawer" color="grey-darken-4">
-					<div class="pa-4 d-flex align-center">
-						<VIcon icon="mdi-shield-lock-outline" color="primary" class="mr-2" />
-						<span class="text-h6">RivetLink</span>
+				<VNavigationDrawer permanent width="240" class="rl-sidebar">
+					<div class="rl-brand">
+						<VIcon icon="mdi-shield-lock-outline" color="secondary" size="26" />
+						<span>RivetLink</span>
 					</div>
-					<VDivider />
-					<VList nav density="comfortable">
+					<VList nav density="comfortable" class="pt-0">
 						<VListItem
 							v-for="item in navItems"
 							:key="item.path"
 							:to="item.path"
 							:prepend-icon="item.icon"
 							:title="t(item.titleKey)"
+							rounded="lg"
 						/>
 					</VList>
 					<template #append>
-						<div class="pa-3 text-caption text-medium-emphasis">
-							{{ store.settings.device_name || t("app.unnamedDevice") }}
+						<div class="rl-whoami">
+							<div class="rl-whoami-name">
+								{{ store.settings.device_name || t("app.unnamedDevice") }}
+							</div>
+							<span v-if="relay" class="rl-status" :class="store.connected ? 'ok' : ''">
+								{{ relayHost }}
+							</span>
+							<span v-if="net && (net.ssid || net.ip)" class="rl-status ok">
+								{{ [net.ssid, net.ip].filter(Boolean).join(" · ") }}
+							</span>
 						</div>
 					</template>
 				</VNavigationDrawer>
-
-				<VAppBar flat color="grey-darken-4" density="comfortable">
-					<VAppBarNavIcon @click="drawer = !drawer" />
-					<VAppBarTitle>{{ currentTitle }}</VAppBarTitle>
-				</VAppBar>
 
 				<VMain>
 					<RouterView />
@@ -77,7 +80,7 @@
 	import { getCurrentWindow } from "@tauri-apps/api/window";
 	import { router } from "./router";
 	import {
-		isClient, isHost, loadSettings, refreshHostState, startHost, store,
+		activeRelay, isClient, isHost, loadSettings, type NetworkInfo, networkInfo, refreshHostState, startHost, store,
 	} from "./store";
 	import {
 		checkForUpdates, checkForUpdatesOnStartup,
@@ -89,7 +92,25 @@
 
 	const route = useRoute();
 	const { t } = useI18n();
-	const drawer = ref(true);
+
+	// Sidebar footer: which relay and network this device is on.
+	const relay = computed(() => activeRelay());
+	const relayHost = computed(() => {
+		try {
+			return new URL(relay.value?.http_url ?? "").host;
+		} catch {
+			return relay.value?.http_url ?? "";
+		}
+	});
+	const net = ref<NetworkInfo | null>(null);
+	const netTimer = ref<ReturnType<typeof setInterval>>();
+	async function refreshNet() {
+		try {
+			net.value = await networkInfo();
+		} catch {
+			// Best-effort; the footer just leaves the line out.
+		}
+	}
 
 	// The host badge window is dedicated to one component. Pick it synchronously
 	// from the window label so it never goes through the router/store/loadSettings
@@ -127,6 +148,10 @@
 			store.connectedLanId = null;
 		});
 		await loadSettings();
+		if (getCurrentWindow().label === "main") {
+			void refreshNet();
+			netTimer.value = setInterval(refreshNet, 15000);
+		}
 		if (getCurrentWindow().label === "main" && store.settings.setup_complete) {
 			// A configured Ubuntu Physical Console has a small native agent beside
 			// the AppImage. After a desktop update, bring that agent to the exact
@@ -165,6 +190,7 @@
 
 	onUnmounted(() => {
 		window.removeEventListener("keydown", onKeydown);
+		clearInterval(netTimer.value);
 		unlistenMenu.value?.();
 		unlistenConnected.value?.();
 		unlistenDisconnected.value?.();
@@ -186,9 +212,66 @@
 				icon: r.meta?.icon as string,
 			}));
 	});
-
-	const currentTitle = computed(() => {
-		const key = route.meta?.titleKey as string | undefined;
-		return key ? t(key) : "RivetLink";
-	});
 </script>
+
+<style scoped>
+	.rl-sidebar {
+		background: var(--rl-sidebar) !important;
+		border-right: 1px solid var(--rl-border) !important;
+	}
+
+	.rl-sidebar :deep(.v-list) {
+		padding-inline: 14px;
+	}
+
+	.rl-sidebar :deep(.v-list-item__spacer) {
+		width: 12px !important;
+	}
+
+	.rl-sidebar :deep(.v-list-item) {
+		color: var(--rl-soft);
+	}
+
+	.rl-sidebar :deep(.v-list-item--active) {
+		background: var(--rl-raised);
+		color: rgb(var(--v-theme-on-surface));
+	}
+
+	.rl-sidebar :deep(.v-list-item--active .v-list-item__overlay) {
+		opacity: 0;
+	}
+
+	.rl-sidebar :deep(.v-list-item--active .v-list-item-title) {
+		font-weight: 600;
+	}
+
+	.rl-brand {
+		display: flex;
+		align-items: center;
+		gap: 10px;
+		padding: 24px 24px 20px;
+		font-size: 16px;
+		font-weight: 700;
+		letter-spacing: -0.01em;
+	}
+
+	.rl-whoami {
+		margin: 14px;
+		padding: 12px;
+		border-radius: 10px;
+		background: rgb(var(--v-theme-surface));
+		border: 1px solid var(--rl-border);
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+
+	.rl-whoami-name {
+		font-weight: 600;
+	}
+
+	.rl-whoami .rl-status {
+		font-size: 12px;
+		color: var(--rl-muted);
+	}
+</style>
