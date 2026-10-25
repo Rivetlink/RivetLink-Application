@@ -1,121 +1,96 @@
 <template>
-	<VContainer style="max-width: 880px">
-		<VCard variant="tonal" class="mb-4">
-			<VCardText class="d-flex align-center">
-				<VIcon icon="mdi-laptop" size="32" class="mr-3" />
-				<div>
-					<div class="text-h6">
-						{{ store.settings.device_name || t("app.unnamedDevice") }}
-					</div>
-					<div class="text-caption text-medium-emphasis">
-						{{ t("device.thisDevice") }}
-					</div>
-					<div v-if="net && (net.ssid || net.ip)" class="text-caption text-medium-emphasis mt-1">
-						<VIcon :icon="net.ssid ? 'mdi-wifi' : 'mdi-lan'" size="x-small" class="mr-1" />
-						<span v-if="net.ssid">{{ t("connect.lanNetworkWifi", { ssid: net.ssid }) }} · </span>
-						<span v-if="net.ip">{{ t("connect.lanNetworkIp", { ip: net.ip }) }}</span>
-					</div>
-				</div>
-				<VSpacer />
-				<VChip :color="statusColor" size="small" variant="flat">
-					<VIcon start icon="mdi-circle" size="x-small" /> {{ t(statusKey) }}
-				</VChip>
-			</VCardText>
-		</VCard>
+	<div class="rl-page">
+		<header>
+			<h1 class="rl-h1">
+				{{ t("device.receiveHelpTitle") }}
+			</h1>
+			<p class="rl-lead">
+				{{ t("device.receiveHelpIntro") }}
+			</p>
+		</header>
 
-		<VCard variant="tonal" class="mb-4">
-			<VCardTitle>{{ t("device.receiveHelpTitle") }}</VCardTitle>
-			<VCardText>
-				<p class="text-body-2 text-medium-emphasis mb-4">
-					{{ t("device.receiveHelpIntro") }}
-				</p>
+		<div class="layout">
+			<div class="main">
+				<section v-if="store.hosting" class="panel" :class="{ live: store.hostPeer }">
+					<span class="rl-status" :class="store.hostPeer ? 'ok' : 'info'">
+						{{ t(statusKey) }}
+					</span>
 
-				<template v-if="store.hosting">
-					<div class="d-flex align-center ga-4 mb-4">
+					<!-- Waiting: the code and how to use it -->
+					<template v-if="!store.hostPeer">
 						<div>
-							<div class="text-overline text-medium-emphasis">
+							<h2 class="rl-section-title">
 								{{ t("device.code") }}
-							</div>
-							<div class="code-display">
-								{{ store.hostPin }}
+							</h2>
+							<div class="d-flex flex-wrap align-center ga-4">
+								<span class="code-display">{{ pinDisplay }}</span>
+								<VBtn
+									variant="outlined"
+									:prepend-icon="copied === 'pin' ? 'mdi-check' : 'mdi-content-copy'"
+									@click="copyCode"
+								>
+									{{ copied === "pin" ? t("device.copied") : t("device.copy") }}
+								</VBtn>
 							</div>
 						</div>
-						<VBtn
-							variant="text"
-							icon="mdi-content-copy"
-							:title="t('device.copied')"
-							@click="copyCode"
-						/>
-						<VFadeTransition>
-							<span v-if="copied" class="text-caption text-success">
-								{{ t("device.copied") }}
-							</span>
-						</VFadeTransition>
-					</div>
+						<ol class="steps">
+							<li>
+								<span class="step-no">1</span>
+								<span>{{ t("device.step1") }} <strong>{{ store.settings.device_name || t("app.unnamedDevice") }}</strong></span>
+							</li>
+							<li>
+								<span class="step-no">2</span>
+								<span>{{ t("device.step2") }}</span>
+							</li>
+							<li>
+								<span class="step-no">3</span>
+								<span>{{ t("device.step3") }}</span>
+							</li>
+						</ol>
+					</template>
 
-					<VAlert
-						:type="store.hostPeer ? 'success' : 'info'"
-						variant="tonal"
-						density="comfortable"
-						class="mb-0"
-					>
-						<div class="d-flex align-center ga-3">
+					<!-- A helper is connected -->
+					<template v-else>
+						<div class="d-flex flex-wrap align-center ga-4">
+							<div class="avatar">
+								{{ initials }}
+							</div>
 							<div class="flex-grow-1">
-								<div class="text-subtitle-2">
-									{{ store.hostPeer ? t("device.connectedTitle") : t("device.waitingTitle") }}
+								<div class="peer-name">
+									{{ store.hostPeer }}
 								</div>
-								<div class="text-caption">
-									{{ store.hostPeer
-										? t("device.connectedHint", { name: store.hostPeer })
-										: t("device.waitingHint") }}
+								<div class="rl-row-sub">
+									{{ t("device.connectedHint", { name: store.hostPeer }) }}
 								</div>
-								<div
-									v-if="store.hostPeer && store.hostClientTrusted"
-									class="text-caption d-flex align-center ga-1 mt-1"
-								>
-									<VIcon icon="mdi-shield-check" size="small" />
+								<div v-if="store.hostClientTrusted" class="rl-row-sub d-flex align-center ga-1 mt-1">
+									<VIcon icon="mdi-shield-check-outline" size="small" color="success" />
 									{{ t("device.helperRemembered") }}
 								</div>
 							</div>
 							<VBtn
-								v-if="store.hostPeer"
 								color="error"
 								variant="tonal"
-								size="small"
-								prepend-icon="mdi-close-circle-outline"
 								:loading="disconnecting"
 								@click="onDisconnect"
 							>
 								{{ t("device.disconnect") }}
 							</VBtn>
 						</div>
-					</VAlert>
-
-					<!-- Trust-on-connect: offer to remember an as-yet-untrusted
-					     device that proved its identity, so it can reconnect
-					     without the code. -->
-					<VAlert
-						v-if="store.hostPeer && store.hostClientKey && !store.hostClientTrusted"
-						type="info"
-						variant="tonal"
-						density="comfortable"
-						class="mt-3 mb-0"
-						icon="mdi-shield-key-outline"
-					>
-						<div class="d-flex align-center ga-3">
+						<!-- Trust-on-connect: offer to remember an as-yet-untrusted
+						     device that proved its identity, so it can reconnect
+						     without the code. -->
+						<div v-if="store.hostClientKey && !store.hostClientTrusted" class="remember">
 							<div class="flex-grow-1">
-								<div class="text-subtitle-2">
+								<div class="rl-row-title">
 									{{ t("device.rememberTitle", { name: store.hostPeer }) }}
 								</div>
-								<div class="text-caption">
+								<div class="rl-row-sub">
 									{{ t("device.rememberHint") }}
-									<code>{{ fingerprint }}</code>
+									<span class="rl-mono">{{ fingerprint }}</span>
 								</div>
 							</div>
 							<VBtn
-								color="primary"
-								variant="flat"
-								size="small"
+								variant="outlined"
 								prepend-icon="mdi-check"
 								:loading="remembering"
 								@click="onRemember"
@@ -123,48 +98,65 @@
 								{{ t("device.remember") }}
 							</VBtn>
 						</div>
-					</VAlert>
-				</template>
+					</template>
+				</section>
 
-				<template v-else>
-					<VAlert
-						type="warning"
-						variant="tonal"
-						density="comfortable"
-						class="mb-4"
-					>
+				<section v-else class="panel">
+					<VAlert type="warning" variant="tonal">
 						{{ t("device.unavailable") }}
 					</VAlert>
-					<VBtn
-						color="primary"
-						variant="tonal"
-						prepend-icon="mdi-refresh"
-						:loading="busy"
-						@click="onStart"
-					>
-						{{ t("device.retry") }}
-					</VBtn>
-				</template>
-			</VCardText>
-		</VCard>
+					<div>
+						<VBtn
+							color="primary"
+							prepend-icon="mdi-refresh"
+							:loading="busy"
+							@click="onStart"
+						>
+							{{ t("device.retry") }}
+						</VBtn>
+					</div>
+				</section>
+			</div>
 
-		<VCard variant="tonal">
-			<VCardTitle>{{ t("device.identityTitle") }}</VCardTitle>
-			<VCardSubtitle class="text-wrap">
-				{{ t("device.identitySubtitle") }}
-			</VCardSubtitle>
-			<VCardText>
-				<VTextField
-					:model-value="store.publicKey"
-					:label="t('device.publicKey')"
-					readonly
-					density="comfortable"
-					append-inner-icon="mdi-content-copy"
-					@click:append-inner="copyKey"
-				/>
-			</VCardText>
-		</VCard>
-	</VContainer>
+			<div class="side">
+				<section class="rl-group">
+					<div class="rl-row">
+						<div class="rl-row-text">
+							<span class="rl-row-title">{{ t("access.title") }}</span>
+						</div>
+						<RouterLink to="/settings?s=security">
+							{{ t("device.manage") }}
+						</RouterLink>
+					</div>
+					<div v-if="store.settings.trusted_keys.length === 0" class="rl-row rl-row-sub">
+						{{ t("access.empty") }}
+					</div>
+					<div v-for="k in store.settings.trusted_keys" :key="k.id" class="rl-row">
+						<VIcon icon="mdi-shield-check-outline" color="success" size="18" />
+						<span class="rl-row-text">{{ k.name || "—" }}</span>
+						<span class="rl-mono rl-row-sub">{{ shortKey(k.public_key) }}</span>
+					</div>
+				</section>
+
+				<section class="rl-group">
+					<div class="rl-row">
+						<div class="rl-row-text">
+							<span class="rl-row-title">{{ t("device.identityTitle") }}</span>
+							<span class="rl-row-sub">{{ t("device.identitySubtitle") }}</span>
+							<span class="rl-mono key-text">{{ store.publicKey || "—" }}</span>
+						</div>
+						<VBtn
+							variant="text"
+							:icon="copied === 'key' ? 'mdi-check' : 'mdi-content-copy'"
+							:aria-label="t('settings.copyKey')"
+							:disabled="!store.publicKey"
+							@click="copyKey"
+						/>
+					</div>
+				</section>
+			</div>
+		</div>
+	</div>
 </template>
 
 <script setup lang="ts">
@@ -176,8 +168,7 @@
 		listen, type UnlistenFn,
 	} from "@tauri-apps/api/event";
 	import {
-		hostDisconnect, loadPublicKey, type NetworkInfo, networkInfo,
-		refreshHostState, startHost, store, trustClient,
+		hostDisconnect, loadPublicKey, refreshHostState, startHost, store, trustClient,
 	} from "../store";
 
 	type ClientIdentity = {
@@ -187,11 +178,10 @@
 	};
 
 	const { t } = useI18n();
-	const copied = ref(false);
+	const copied = ref<"pin" | "key" | null>(null);
 	const busy = ref(false);
 	const disconnecting = ref(false);
 	const remembering = ref(false);
-	const net = ref<NetworkInfo | null>(null);
 
 	// Short, human-comparable fingerprint of the connected client's key.
 	const fingerprint = computed(() => (store.hostClientKey ?? "").slice(0, 12));
@@ -200,15 +190,6 @@
 	const unlistenDisconnected = ref<UnlistenFn | null>(null);
 	const unlistenStopped = ref<UnlistenFn | null>(null);
 	const unlistenIdentity = ref<UnlistenFn | null>(null);
-	const netTimer = ref<ReturnType<typeof setInterval>>();
-
-	async function refreshNet() {
-		try {
-			net.value = await networkInfo();
-		} catch {
-			// Best-effort; the page works without it.
-		}
-	}
 
 	const statusKey = computed(() => {
 		if (!store.hosting) {
@@ -217,20 +198,24 @@
 		return store.hostPeer ? "device.statusConnected" : "device.statusWaiting";
 	});
 
-	const statusColor = computed(() => {
-		if (!store.hosting) {
-			return "grey";
-		}
-		return store.hostPeer ? "success" : "amber";
-	});
+	// "482913" reads easier as "482 913".
+	const pinDisplay = computed(() => store.hostPin.replace(/(\d{3})(?=\d)/g, "$1 "));
+	const initials = computed(() => (store.hostPeer ?? "?")
+		.split(/\s+/)
+		.map((w) => w[0])
+		.join("")
+		.slice(0, 2)
+		.toUpperCase());
+
+	function shortKey(key: string): string {
+		const k = key.replace(/^ed25519:/, "");
+		return k.length > 10 ? `${k.slice(0, 4)}…${k.slice(-4)}` : k;
+	}
 
 	onMounted(async () => {
 		if (!store.publicKey) {
 			await loadPublicKey();
 		}
-		await refreshNet();
-		// Re-check periodically so the shown network follows Wi-Fi switches.
-		netTimer.value = setInterval(refreshNet, 5000);
 		await refreshHostState();
 		// The host runs as a daemon: if it isn't up yet (e.g. first open on this
 		// page), start it so the device is always reachable — no manual toggle.
@@ -266,9 +251,6 @@
 		unlistenDisconnected.value?.();
 		unlistenStopped.value?.();
 		unlistenIdentity.value?.();
-		if (netTimer.value) {
-			clearInterval(netTimer.value);
-		}
 	});
 
 	async function onStart() {
@@ -304,18 +286,18 @@
 	}
 
 	async function copyCode() {
-		await copyText(store.hostPin);
+		await copyText(store.hostPin, "pin");
 	}
 
 	async function copyKey() {
-		await copyText(store.publicKey);
+		await copyText(store.publicKey, "key");
 	}
 
-	async function copyText(value: string) {
+	async function copyText(value: string, what: "pin" | "key") {
 		try {
 			await navigator.clipboard.writeText(value);
-			copied.value = true;
-			setTimeout(() => (copied.value = false), 1500);
+			copied.value = what;
+			setTimeout(() => (copied.value = null), 1500);
 		} catch {
 			// Clipboard may be unavailable; fields stay selectable as a fallback.
 		}
@@ -323,10 +305,107 @@
 </script>
 
 <style scoped>
+	.layout {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 20px;
+		align-items: flex-start;
+	}
+
+	.main {
+		flex: 3 1 420px;
+		min-width: 0;
+	}
+
+	.side {
+		flex: 2 1 300px;
+		min-width: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 20px;
+	}
+
+	.panel {
+		padding: 28px;
+		border-radius: 16px;
+		background: rgb(var(--v-theme-surface));
+		border: 1px solid var(--rl-border);
+		display: flex;
+		flex-direction: column;
+		gap: 22px;
+	}
+
+	.panel.live {
+		border-color: rgba(63, 208, 138, 0.35);
+	}
+
+	.panel .rl-status {
+		font-size: 14px;
+		font-weight: 600;
+	}
+
 	.code-display {
-		font-family: monospace;
-		font-size: 2rem;
+		font-family: var(--rl-mono);
+		font-size: 52px;
 		font-weight: 700;
-		letter-spacing: 0.4rem;
+		letter-spacing: 0.08em;
+		line-height: 1;
+	}
+
+	.steps {
+		margin: 0;
+		padding: 0;
+		list-style: none;
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+		gap: 12px;
+	}
+
+	.steps li {
+		padding: 14px;
+		font-size: 14px;
+		border-radius: 10px;
+		background: var(--rl-sidebar);
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.step-no {
+		font-family: var(--rl-mono);
+		font-size: 12px;
+		color: var(--rl-accent);
+	}
+
+	.avatar {
+		width: 52px;
+		height: 52px;
+		border-radius: 12px;
+		background: var(--rl-raised);
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		font-weight: 700;
+		font-size: 18px;
+	}
+
+	.peer-name {
+		font-size: 18px;
+		font-weight: 600;
+	}
+
+	.remember {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 12px;
+		padding: 14px 16px;
+		border-radius: 10px;
+		background: var(--rl-sidebar);
+	}
+
+	.key-text {
+		color: var(--rl-soft);
+		overflow-wrap: anywhere;
 	}
 </style>

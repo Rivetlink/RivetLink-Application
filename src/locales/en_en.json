@@ -145,7 +145,12 @@
         "rememberTitle": "Remember {name}?",
         "rememberHint": "Then it can connect without the code next time. Key:",
         "remember": "Remember",
-        "helperRemembered": "This helper is remembered and can join without the code."
+        "helperRemembered": "This helper is remembered and can join without the code.",
+        "copy": "Copy",
+        "step1": "Tell the helper your computer name:",
+        "step2": "The helper picks you under Devices.",
+        "step3": "They enter the code.",
+        "manage": "Manage"
     },
     "relays": {
         "title": "Saved servers",
