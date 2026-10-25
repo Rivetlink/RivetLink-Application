@@ -160,3 +160,12 @@ body,
 	background-color: #353B46;
 	opacity: 1;
 }
+
+.v-application a {
+	color: var(--rl-accent);
+	text-decoration: none;
+}
+
+.v-application a:hover {
+	text-decoration: underline;
+}
