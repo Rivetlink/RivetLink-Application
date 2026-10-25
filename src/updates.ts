@@ -26,6 +26,13 @@ function isForced(body?: string | null): boolean {
 	return (body ?? "").toLowerCase().includes(FORCE_MARKER);
 }
 
+// The release body is "<notes>\n---\n<install info>" (see release.yml). Only the
+// part above the first `---` line is shown; a body without one has no notes.
+function releaseNotes(body?: string | null): string {
+	const parts = (body ?? "").split(/\r?\n---\r?\n/);
+	return parts.length > 1 ? parts[0].trim() : "";
+}
+
 // Tauri's updater can't replace a system package; deb/rpm Linux falls back to
 // notify. An AppImage install *can* self-update, detected at runtime (Rust).
 const isLinux = navigator.userAgent.includes("Linux")
@@ -53,6 +60,8 @@ export const updateState = reactive({
 	// When the available release is flagged mandatory, the dialog is persistent
 	// (no close button, can't click away) — the user must update to continue.
 	forced: false,
+	// Plain-text release notes of the available version; rendered as text.
+	notes: "",
 });
 
 let pending: Update | null = null;
@@ -75,6 +84,7 @@ async function checkDesktop(): Promise<void> {
 		pending = update;
 		updateState.latest = update.version;
 		updateState.forced = isForced(update.body);
+		updateState.notes = releaseNotes(update.body);
 		updateState.status = UpdateStatus.Available;
 	} else {
 		updateState.status = UpdateStatus.UpToDate;
@@ -93,6 +103,7 @@ async function checkLinux(): Promise<void> {
 	updateState.latest = tag;
 	const isNewer = compareVersions(tag, updateState.current) > 0;
 	updateState.forced = isNewer && isForced(data.body);
+	updateState.notes = isNewer ? releaseNotes(data.body) : "";
 	updateState.status = isNewer ? UpdateStatus.Available : UpdateStatus.UpToDate;
 }
 
@@ -101,6 +112,7 @@ async function runCheck(): Promise<void> {
 	updateState.status = UpdateStatus.Idle;
 	updateState.latest = "";
 	updateState.forced = false;
+	updateState.notes = "";
 	pending = null;
 	try {
 		updateState.current = await invoke<string>("app_version");

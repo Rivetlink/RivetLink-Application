@@ -293,7 +293,8 @@
         "required": "Deze update is verplicht — je moet updaten om door te gaan.",
         "error": "Kon nu niet op updates controleren.",
         "download": "Downloaden",
-        "install": "Updaten en herstarten"
+        "install": "Updaten en herstarten",
+        "whatsNew": "Wat is er nieuw"
     },
     "viewer": {
         "connecting": "Verbinden — scherm van de andere computer wordt geladen…",

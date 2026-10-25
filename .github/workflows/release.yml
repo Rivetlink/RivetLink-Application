@@ -38,6 +38,12 @@ jobs:
     outputs:
       id: ${{ steps.draft.outputs.id }}
     steps:
+      - name: Checkout release notes
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          sparse-checkout: release-notes
+          persist-credentials: false
+
       - name: Create (or reuse) the draft release
         id: draft
         env:
@@ -54,6 +60,11 @@ jobs:
             - **Windows**: 10 (1809) or newer, 64-bit.
         run: |
           set -euo pipefail
+          # Notes go above a `---` line; the app shows only that part.
+          NOTES="release-notes/$TAG.md"
+          if [ -f "$NOTES" ]; then
+            BODY="$(cat "$NOTES")"$'\n\n---\n\n'"$BODY"
+          fi
           # Drafts are not found by /releases/tags/, so list instead.
           ID=$(gh api --paginate "repos/$REPO/releases" \
             --jq ".[] | select(.tag_name == \"$TAG\") | .id" | head -1)
@@ -370,10 +381,14 @@ jobs:
           if [ -n "$SIG_URL" ]; then
             NEW_SIG=$(gh api "${SIG_URL#https://api.github.com}" -H "Accept: application/octet-stream")
           fi
+          # The desktop updater reads `notes` (release notes and the
+          # [force-update] marker); tauri-action leaves it empty.
+          BODY=$(gh release view "$TAG" --repo "$REPO" --json body -q .body)
           APPIMAGE_URL="https://github.com/${REPO}/releases/download/${TAG}/RivetLink_${V}_linux_amd64.AppImage" \
-          NEW_SIG="$NEW_SIG" python3 - <<'PY'
+          NEW_SIG="$NEW_SIG" BODY="$BODY" python3 - <<'PY'
           import json, os
           m = json.load(open("latest.json"))
+          m["notes"] = os.environ["BODY"]
           p = m.setdefault("platforms", {})
           sig = os.environ.get("NEW_SIG", "").strip()
           url = os.environ["APPIMAGE_URL"]
