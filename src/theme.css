@@ -161,11 +161,11 @@ body,
 	opacity: 1;
 }
 
-.v-application a {
+.v-application a:not(.v-list-item, .v-btn) {
 	color: var(--rl-accent);
 	text-decoration: none;
 }
 
-.v-application a:hover {
+.v-application a:not(.v-list-item, .v-btn):hover {
 	text-decoration: underline;
 }
