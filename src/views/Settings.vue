@@ -1,183 +1,294 @@
 <template>
-	<VContainer style="max-width: 880px">
-		<VTabs v-model="tab" class="mb-4">
-			<VTab value="general">
-				{{ t("settings.tabs.general") }}
-			</VTab>
-			<VTab value="security">
-				{{ t("settings.tabs.security") }}
-			</VTab>
-			<VTab value="about">
-				{{ t("settings.tabs.about") }}
-			</VTab>
-		</VTabs>
+	<div class="rl-page">
+		<h1 class="rl-h1">
+			{{ t("nav.settings") }}
+		</h1>
 
-		<VWindow v-model="tab">
-			<VWindowItem value="general">
-				<VCard variant="tonal" class="mb-4">
-					<VCardTitle class="d-flex align-center">
-						{{ t("settings.thisDevice") }}
-						<VSpacer />
-						<VBtn
-							variant="text"
-							size="small"
-							prepend-icon="mdi-pencil"
-							@click="editOpen = true"
-						>
-							{{ t("common.edit") }}
-						</VBtn>
-					</VCardTitle>
-					<VCardText>
-						<div class="text-overline text-medium-emphasis">
-							{{ t("settings.name") }}
-						</div>
-						<div class="text-body-1 mb-4">
-							{{ store.settings.device_name || "—" }}
-						</div>
-						<div class="text-overline text-medium-emphasis">
-							{{ t("settings.roles") }}
-						</div>
-						<div class="mt-1 d-flex flex-wrap ga-2">
-							<VChip v-if="isHost()" size="small" prepend-icon="mdi-monitor-share">
-								{{ t("common.host") }}
-							</VChip>
-							<VChip v-if="isClient()" size="small" prepend-icon="mdi-account-arrow-right">
-								{{ t("common.client") }}
-							</VChip>
-							<span v-if="!isHost() && !isClient()">—</span>
-						</div>
-					</VCardText>
-				</VCard>
+		<div class="settings-layout">
+			<nav class="settings-nav" :aria-label="t('nav.settings')">
+				<button
+					v-for="s in sections"
+					:key="s.id"
+					type="button"
+					class="settings-nav-item"
+					:class="{ active: section === s.id }"
+					:aria-current="section === s.id ? 'page' : undefined"
+					@click="section = s.id"
+				>
+					{{ s.label }}
+				</button>
+			</nav>
 
-				<VCard variant="tonal" class="mb-4">
-					<VCardTitle>{{ t("settings.language") }}</VCardTitle>
-					<VCardText>
-						<VSelect
-							:model-value="locale"
-							:items="SUPPORTED"
-							item-title="label"
-							item-value="code"
-							density="comfortable"
-							hide-details
-							prepend-inner-icon="mdi-translate"
-							@update:model-value="onLocaleChange"
-						/>
-					</VCardText>
-				</VCard>
+			<div class="settings-body">
+				<!-- General -->
+				<template v-if="section === 'general'">
+					<h2 class="rl-h2">
+						{{ t("settings.tabs.general") }}
+					</h2>
+					<section>
+						<h3 class="rl-section-title">
+							{{ t("settings.thisDevice") }}
+						</h3>
+						<div class="rl-group">
+							<div class="rl-row">
+								<div class="rl-row-text">
+									<span class="rl-row-title">{{ t("settings.name") }}</span>
+									<span class="rl-row-sub">{{ store.settings.device_name || "—" }}</span>
+								</div>
+								<VBtn variant="outlined" prepend-icon="mdi-pencil-outline" @click="editOpen = true">
+									{{ t("common.edit") }}
+								</VBtn>
+							</div>
+							<div class="rl-row">
+								<div class="rl-row-text">
+									<span class="rl-row-title">{{ t("settings.roles") }}</span>
+								</div>
+								<div class="d-flex flex-wrap ga-2">
+									<VChip
+										v-if="isHost()"
+										label
+										size="small"
+										prepend-icon="mdi-lifebuoy"
+									>
+										{{ t("common.host") }}
+									</VChip>
+									<VChip
+										v-if="isClient()"
+										label
+										size="small"
+										prepend-icon="mdi-monitor"
+									>
+										{{ t("common.client") }}
+									</VChip>
+									<span v-if="!isHost() && !isClient()">—</span>
+								</div>
+							</div>
+						</div>
+					</section>
+					<section>
+						<h3 class="rl-section-title">
+							{{ t("settings.preferences") }}
+						</h3>
+						<div class="rl-group">
+							<div class="rl-row">
+								<div class="rl-row-text">
+									<span class="rl-row-title">{{ t("settings.language") }}</span>
+								</div>
+								<VSelect
+									:model-value="locale"
+									:items="SUPPORTED"
+									item-title="label"
+									item-value="code"
+									density="compact"
+									hide-details
+									class="row-control"
+									@update:model-value="onLocaleChange"
+								/>
+							</div>
+							<div class="rl-row">
+								<div class="rl-row-text">
+									<span class="rl-row-title">{{ t("settings.scrollSpeed") }}</span>
+									<span class="rl-row-sub">{{ t("settings.scrollHint") }}</span>
+								</div>
+								<VSelect
+									:model-value="store.settings.scroll_speed"
+									:items="scrollSpeedOptions"
+									item-title="label"
+									item-value="value"
+									:loading="scrollSpeedBusy"
+									:disabled="scrollSpeedBusy"
+									density="compact"
+									hide-details
+									class="row-control"
+									@update:model-value="onScrollSpeedChange"
+								/>
+							</div>
+							<div class="rl-row">
+								<div class="rl-row-text">
+									<span class="rl-row-title">{{ t("settings.videoToggle") }}</span>
+									<span class="rl-row-sub">{{ t("settings.videoHint") }}</span>
+								</div>
+								<VSwitch
+									:model-value="store.settings.video_h264"
+									:aria-label="t('settings.videoToggle')"
+									density="compact"
+									hide-details
+									class="flex-grow-0"
+									:loading="videoBusy"
+									:disabled="videoBusy"
+									@update:model-value="onVideoChange"
+								/>
+							</div>
+							<div class="rl-row">
+								<div class="rl-row-text">
+									<span class="rl-row-title">{{ t("settings.startupToggle") }}</span>
+									<span class="rl-row-sub">{{ t("settings.startupHint") }}</span>
+								</div>
+								<VSwitch
+									:model-value="autostart"
+									:aria-label="t('settings.startupToggle')"
+									density="compact"
+									hide-details
+									class="flex-grow-0"
+									:loading="autostartBusy"
+									@update:model-value="onAutostartChange"
+								/>
+							</div>
+						</div>
+					</section>
+				</template>
 
-				<VCard variant="tonal" class="mb-4">
-					<VCardTitle>{{ t("settings.scrollTitle") }}</VCardTitle>
-					<VCardText>
-						<VSelect
-							:model-value="store.settings.scroll_speed"
-							:items="scrollSpeedOptions"
-							item-title="label"
-							item-value="value"
-							:label="t('settings.scrollSpeed')"
-							:loading="scrollSpeedBusy"
-							:disabled="scrollSpeedBusy"
-							density="comfortable"
-							hide-details
-							prepend-inner-icon="mdi-mouse-scroll-wheel"
-							@update:model-value="onScrollSpeedChange"
-						/>
-						<p class="text-caption text-medium-emphasis mt-2 mb-0">
-							{{ t("settings.scrollHint") }}
+				<!-- Security -->
+				<template v-else-if="section === 'security'">
+					<h2 class="rl-h2">
+						{{ t("settings.tabs.security") }}
+					</h2>
+					<section>
+						<h3 class="rl-section-title">
+							{{ t("settings.identityTitle") }}
+						</h3>
+						<div class="rl-group">
+							<div class="rl-row">
+								<div class="rl-row-text">
+									<span class="rl-row-title">{{ t("settings.publicKey") }}</span>
+									<span class="rl-mono key-text">{{ store.publicKey || "—" }}</span>
+									<span class="rl-row-sub">{{ t("settings.privateNote") }}</span>
+								</div>
+								<VBtn
+									variant="outlined"
+									:prepend-icon="keyCopied ? 'mdi-check' : 'mdi-content-copy'"
+									:disabled="!store.publicKey"
+									@click="copyKey"
+								>
+									{{ keyCopied ? t("settings.copied") : t("settings.copyKey") }}
+								</VBtn>
+							</div>
+						</div>
+					</section>
+					<section v-if="isHost()">
+						<div class="d-flex align-center justify-space-between flex-wrap ga-2 mb-2">
+							<h3 class="rl-section-title mb-0">
+								{{ t("access.title") }}
+							</h3>
+							<VBtn variant="outlined" prepend-icon="mdi-plus" @click="openAdd">
+								{{ t("access.addBtn") }}
+							</VBtn>
+						</div>
+						<p class="rl-row-sub mt-0 mb-3">
+							{{ t("access.subtitle") }}
 						</p>
-						<VSwitch
-							:model-value="store.settings.video_h264"
-							:label="t('settings.videoToggle')"
-							color="primary"
-							density="comfortable"
-							hide-details
-							class="mt-2"
-							:loading="videoBusy"
-							:disabled="videoBusy"
-							@update:model-value="onVideoChange"
-						/>
-						<p class="text-caption text-medium-emphasis mt-1 mb-0">
-							{{ t("settings.videoHint") }}
-						</p>
-					</VCardText>
-				</VCard>
+						<div class="rl-group">
+							<div v-if="store.settings.trusted_keys.length === 0" class="rl-row rl-row-sub">
+								{{ t("access.empty") }}
+							</div>
+							<div v-for="k in store.settings.trusted_keys" :key="k.id" class="rl-row">
+								<VIcon icon="mdi-shield-check-outline" color="success" size="20" />
+								<div class="rl-row-text">
+									<span class="rl-row-title">{{ k.name || "—" }}</span>
+									<span class="rl-mono key-text">{{ k.public_key }}</span>
+								</div>
+								<VBtn
+									variant="text"
+									icon="mdi-delete-outline"
+									:aria-label="t('access.removeTitle')"
+									@click="openRemove(k)"
+								/>
+							</div>
+						</div>
+					</section>
+				</template>
 
-				<VCard variant="tonal">
-					<VCardTitle>{{ t("settings.startupTitle") }}</VCardTitle>
-					<VCardText>
-						<VSwitch
-							:model-value="autostart"
-							:label="t('settings.startupToggle')"
-							color="primary"
-							density="comfortable"
-							hide-details
-							:loading="autostartBusy"
-							@update:model-value="onAutostartChange"
-						/>
-						<p class="text-caption text-medium-emphasis mt-1 mb-0">
-							{{ t("settings.startupHint") }}
-						</p>
-					</VCardText>
-				</VCard>
+				<!-- Servers -->
+				<Relays v-else-if="section === 'servers'" />
 
-				<VCard v-if="physicalConsole.supported" variant="tonal" class="mt-4">
-					<VCardTitle class="d-flex align-center">
-						{{ t("physicalConsole.title") }}
-						<VSpacer />
-						<VChip v-if="physicalConsole.configured" :color="physicalConsole.brokerActive && physicalConsole.nativeServiceAgentCurrent ? 'success' : 'warning'" size="small">
-							{{ physicalConsole.brokerActive && physicalConsole.nativeServiceAgentCurrent ? t("physicalConsole.running") : t("physicalConsole.needsAttention") }}
-						</VChip>
-					</VCardTitle>
-					<VCardText>
-						<p class="text-body-2 mb-3">
+				<!-- Ubuntu physical console -->
+				<template v-else-if="section === 'console'">
+					<div>
+						<div class="d-flex align-center flex-wrap ga-3">
+							<h2 class="rl-h2">
+								{{ t("physicalConsole.title") }}
+							</h2>
+							<span v-if="physicalConsole.configured" class="rl-status" :class="consoleHealthy ? 'ok' : 'warn'">
+								{{ consoleHealthy ? t("physicalConsole.running") : t("physicalConsole.needsAttention") }}
+							</span>
+						</div>
+						<p class="rl-lead">
 							{{ physicalConsole.configured ? t("physicalConsole.configuredHint") : t("physicalConsole.intro") }}
 						</p>
-						<VAlert
-							v-if="physicalConsole.lightdmLoginConfigured && !physicalConsole.lightdmLoginEnabled && physicalConsole.loginManager === 'lightdm' && physicalConsole.gdmAvailable"
-							type="warning"
-							variant="tonal"
-							icon="mdi-restart-alert"
-							class="mb-3"
-						>
-							<strong>{{ t("physicalConsole.lightdmRebootRequiredTitle") }}</strong>
-							<div>{{ t("physicalConsole.lightdmRebootRequiredHint") }}</div>
-						</VAlert>
-						<VAlert
-							v-if="gdmRestorePending"
-							type="info"
-							variant="tonal"
-							icon="mdi-restart"
-							class="mb-3"
-						>
-							{{ t("physicalConsole.gdmRestoredHint") }}
-						</VAlert>
-						<VList v-if="physicalConsole.configured" density="compact" class="bg-transparent mb-2">
-							<VListItem :title="t('physicalConsole.bootService')">
-								<template #append>
-									<VChip size="x-small" :color="physicalConsole.bootServiceEnabled ? 'success' : 'warning'">
+					</div>
+					<VAlert
+						v-if="physicalConsole.lightdmLoginConfigured && !physicalConsole.lightdmLoginEnabled && physicalConsole.loginManager === 'lightdm' && physicalConsole.gdmAvailable"
+						type="warning"
+						variant="tonal"
+						icon="mdi-restart-alert"
+					>
+						<strong>{{ t("physicalConsole.lightdmRebootRequiredTitle") }}</strong>
+						<div>{{ t("physicalConsole.lightdmRebootRequiredHint") }}</div>
+					</VAlert>
+					<VAlert
+						v-if="gdmRestorePending"
+						type="info"
+						variant="tonal"
+						icon="mdi-restart"
+					>
+						{{ t("physicalConsole.gdmRestoredHint") }}
+					</VAlert>
+					<template v-if="physicalConsole.configured">
+						<section v-if="physicalConsole.lanEnabled || physicalConsole.relayEnabled">
+							<h3 class="rl-section-title">
+								{{ t("physicalConsole.reachableVia") }}
+							</h3>
+							<div class="rl-group">
+								<div v-if="physicalConsole.lanEnabled" class="rl-row">
+									<div class="rl-row-text">
+										<span class="rl-row-title">{{ t("physicalConsole.localNetwork") }}</span>
+									</div>
+									<span class="rl-status" :class="physicalConsole.lanListening ? 'ok' : 'warn'">
+										{{ physicalConsole.lanListening ? t('physicalConsole.listening', { port: physicalConsole.lanPort || '—' }) : t('physicalConsole.notListening') }}
+									</span>
+								</div>
+								<div v-if="physicalConsole.relayEnabled" class="rl-row">
+									<div class="rl-row-text">
+										<span class="rl-row-title">{{ t("physicalConsole.relay") }}</span>
+									</div>
+									<span class="rl-status ok">{{ t('physicalConsole.configured') }}</span>
+								</div>
+							</div>
+						</section>
+						<section>
+							<h3 class="rl-section-title">
+								{{ t("physicalConsole.statusTitle") }}
+							</h3>
+							<div class="rl-group">
+								<div class="rl-row">
+									<div class="rl-row-text">
+										<span class="rl-row-title">{{ t("physicalConsole.bootService") }}</span>
+									</div>
+									<span class="rl-status" :class="physicalConsole.bootServiceEnabled ? 'ok' : 'warn'">
 										{{ physicalConsole.bootServiceEnabled ? t('physicalConsole.active') : t('physicalConsole.inactive') }}
-									</VChip>
-								</template>
-							</VListItem>
-							<VListItem :title="t('physicalConsole.serviceAgent')">
-								<template #append>
-									<VChip size="x-small" :color="physicalConsole.nativeServiceAgentCurrent ? 'success' : 'warning'">
+									</span>
+								</div>
+								<div class="rl-row">
+									<div class="rl-row-text">
+										<span class="rl-row-title">{{ t("physicalConsole.serviceAgent") }}</span>
+									</div>
+									<span class="rl-status" :class="physicalConsole.nativeServiceAgentCurrent ? 'ok' : 'warn'">
 										{{ physicalConsole.nativeServiceAgentCurrent ? t('physicalConsole.native') : t('physicalConsole.updateRequired') }}
-									</VChip>
-								</template>
-							</VListItem>
-							<VListItem :title="t('physicalConsole.gdm')">
-								<template #append>
-									<VChip size="x-small" :color="physicalConsole.gdmAvailable ? 'success' : 'warning'">
+									</span>
+								</div>
+								<div class="rl-row">
+									<div class="rl-row-text">
+										<span class="rl-row-title">{{ t("physicalConsole.gdm") }}</span>
+									</div>
+									<span class="rl-status" :class="physicalConsole.gdmAvailable ? 'ok' : 'warn'">
 										{{ physicalConsole.gdmAvailable ? t('physicalConsole.available') : t('physicalConsole.unavailable') }}
-									</VChip>
-								</template>
-							</VListItem>
-							<VListItem :title="t('physicalConsole.loginScreen')">
-								<template #append>
-									<VChip
-										size="x-small"
-										:color="physicalConsole.lightdmLoginEnabled ? 'success' : 'warning'"
-									>
+									</span>
+								</div>
+								<div class="rl-row">
+									<div class="rl-row-text">
+										<span class="rl-row-title">{{ t("physicalConsole.loginScreen") }}</span>
+									</div>
+									<span class="rl-status" :class="physicalConsole.lightdmLoginEnabled ? 'ok' : 'warn'">
 										{{
 											physicalConsole.lightdmLoginEnabled
 												? t('physicalConsole.lightdmEnabled')
@@ -185,24 +296,12 @@
 													? t('physicalConsole.lightdmPending')
 													: t('physicalConsole.gdmProtected')
 										}}
-									</VChip>
-								</template>
-							</VListItem>
-							<VListItem v-if="physicalConsole.lanEnabled" :title="t('physicalConsole.localNetwork')">
-								<template #append>
-									<VChip size="x-small" :color="physicalConsole.lanListening ? 'success' : 'warning'">
-										{{ physicalConsole.lanListening ? t('physicalConsole.listening', { port: physicalConsole.lanPort || '—' }) : t('physicalConsole.notListening') }}
-									</VChip>
-								</template>
-							</VListItem>
-							<VListItem v-if="physicalConsole.relayEnabled" :title="t('physicalConsole.relay')">
-								<template #append>
-									<VChip size="x-small" color="primary">
-										{{ t('physicalConsole.configured') }}
-									</VChip>
-								</template>
-							</VListItem>
-						</VList>
+									</span>
+								</div>
+							</div>
+						</section>
+					</template>
+					<div class="d-flex flex-wrap ga-2">
 						<VBtn
 							v-if="!physicalConsole.configured"
 							color="primary"
@@ -215,7 +314,7 @@
 							<VBtn
 								v-if="physicalConsole.lightdmLoginConfigured"
 								color="warning"
-								variant="text"
+								variant="tonal"
 								prepend-icon="mdi-restore"
 								:loading="physicalConsoleBusy"
 								@click="restorePhysicalConsoleGdm"
@@ -224,8 +323,7 @@
 							</VBtn>
 							<VBtn
 								v-if="physicalConsole.lightdmLoginConfigured && !physicalConsole.lightdmLoginEnabled"
-								color="primary"
-								variant="text"
+								variant="outlined"
 								prepend-icon="mdi-refresh"
 								:loading="physicalConsoleBusy"
 								@click="retryPhysicalConsoleLightdm"
@@ -235,7 +333,6 @@
 							<VBtn
 								v-if="!physicalConsole.nativeServiceAgentCurrent"
 								color="primary"
-								variant="text"
 								prepend-icon="mdi-update"
 								:loading="physicalConsoleBusy"
 								@click="updatePhysicalConsoleAgent"
@@ -243,8 +340,7 @@
 								{{ t("physicalConsole.updateAgent") }}
 							</VBtn>
 							<VBtn
-								color="primary"
-								variant="text"
+								variant="outlined"
 								prepend-icon="mdi-cog-outline"
 								:disabled="physicalConsoleBusy"
 								@click="physicalConsoleDialog = true"
@@ -252,9 +348,17 @@
 								{{ t("physicalConsole.update") }}
 							</VBtn>
 							<VBtn
+								variant="outlined"
+								prepend-icon="mdi-refresh"
+								@click="refreshPhysicalConsoleStatus"
+							>
+								{{ t("physicalConsole.refresh") }}
+							</VBtn>
+							<VSpacer />
+							<VBtn
 								v-if="physicalConsole.bootServiceEnabled"
 								color="error"
-								variant="text"
+								variant="tonal"
 								prepend-icon="mdi-stop-circle-outline"
 								:loading="physicalConsoleBusy"
 								@click="setPhysicalConsoleService('disable')"
@@ -264,106 +368,44 @@
 							<VBtn
 								v-else
 								color="success"
-								variant="text"
+								variant="tonal"
 								prepend-icon="mdi-play-circle-outline"
 								:loading="physicalConsoleBusy"
 								@click="setPhysicalConsoleService('enable')"
 							>
 								{{ t("physicalConsole.enable") }}
 							</VBtn>
-							<VBtn
-								variant="text"
-								prepend-icon="mdi-refresh"
-								@click="refreshPhysicalConsoleStatus"
-							>
-								{{ t("physicalConsole.refresh") }}
-							</VBtn>
 						</template>
-						<VAlert
-							v-if="physicalConsoleServiceError"
-							type="error"
-							variant="tonal"
-							class="mt-3"
-						>
-							{{ physicalConsoleServiceError }}
-						</VAlert>
-					</VCardText>
-				</VCard>
-			</VWindowItem>
+					</div>
+					<VAlert
+						v-if="physicalConsoleServiceError"
+						type="error"
+						variant="tonal"
+					>
+						{{ physicalConsoleServiceError }}
+					</VAlert>
+				</template>
 
-			<VWindowItem value="security">
-				<VCard variant="tonal" class="mb-4">
-					<VCardTitle>{{ t("settings.identityTitle") }}</VCardTitle>
-					<VCardText>
-						<VTextField
-							:model-value="store.publicKey"
-							:label="t('settings.publicKey')"
-							readonly
-							density="comfortable"
-							hide-details
-						/>
-						<p class="text-caption text-medium-emphasis mt-2">
-							{{ t("settings.privateNote") }}
-						</p>
-					</VCardText>
-				</VCard>
-
-				<VCard v-if="isHost()" variant="tonal">
-					<VCardTitle class="d-flex align-center">
-						{{ t("access.title") }}
-						<VSpacer />
-						<VBtn
-							variant="text"
-							size="small"
-							prepend-icon="mdi-plus"
-							@click="openAdd"
-						>
-							{{ t("access.addBtn") }}
-						</VBtn>
-					</VCardTitle>
-					<VCardSubtitle class="text-wrap">
-						{{ t("access.subtitle") }}
-					</VCardSubtitle>
-					<VCardText>
-						<p
-							v-if="store.settings.trusted_keys.length === 0"
-							class="text-body-2 text-medium-emphasis mb-0"
-						>
-							{{ t("access.empty") }}
-						</p>
-						<VList v-else class="bg-transparent">
-							<VListItem v-for="k in store.settings.trusted_keys" :key="k.id">
-								<template #prepend>
-									<VIcon icon="mdi-key-chain" />
-								</template>
-								<VListItemTitle>{{ k.name || "—" }}</VListItemTitle>
-								<VListItemSubtitle class="text-truncate">
-									{{ k.public_key }}
-								</VListItemSubtitle>
-								<template #append>
-									<VBtn
-										size="small"
-										variant="text"
-										icon="mdi-delete-outline"
-										@click="openRemove(k)"
-									/>
-								</template>
-							</VListItem>
-						</VList>
-					</VCardText>
-				</VCard>
-			</VWindowItem>
-
-			<VWindowItem value="about">
-				<VCard variant="tonal">
-					<VCardTitle>{{ t("settings.about") }}</VCardTitle>
-					<VList class="bg-transparent">
-						<VListItem title="RivetLink" :subtitle="t('settings.tagline')" />
-						<VListItem :title="t('settings.version')" :subtitle="version || '—'" />
-					</VList>
-				</VCard>
-			</VWindowItem>
-		</VWindow>
+				<!-- About & updates -->
+				<template v-else-if="section === 'about'">
+					<h2 class="rl-h2">
+						{{ t("settings.tabs.about") }}
+					</h2>
+					<div class="rl-group">
+						<div class="rl-row">
+							<div class="rl-row-text">
+								<span class="rl-row-title">RivetLink {{ version || "—" }}</span>
+								<span class="rl-row-sub">{{ t("settings.tagline") }}</span>
+							</div>
+							<VBtn variant="outlined" prepend-icon="mdi-update" @click="checkForUpdates">
+								{{ t("settings.checkUpdates") }}
+							</VBtn>
+						</div>
+					</div>
+					<Resources />
+				</template>
+			</div>
+		</div>
 
 		<EditDeviceModal v-model="editOpen" />
 		<TrustedKeyModal v-model="accessOpen" :target="accessTarget" />
@@ -439,6 +481,7 @@
 				<VCardActions>
 					<VSpacer />
 					<VBtn
+						variant="text"
 						:disabled="physicalConsoleBusy"
 						@click="closePhysicalConsoleDialog"
 					>
@@ -446,6 +489,7 @@
 					</VBtn>
 					<VBtn
 						color="primary"
+						variant="flat"
 						:loading="physicalConsoleBusy"
 						:disabled="!canInstallPhysicalConsole()"
 						@click="installPhysicalConsole"
@@ -455,7 +499,7 @@
 				</VCardActions>
 			</VCard>
 		</VDialog>
-	</VContainer>
+	</div>
 </template>
 
 <script setup lang="ts">
@@ -467,20 +511,55 @@
 		disable, enable, isEnabled,
 	} from "@tauri-apps/plugin-autostart";
 	import { useI18n } from "vue-i18n";
+	import { useRoute } from "vue-router";
 	import {
 		isClient, isHost, loadPublicKey, setScrollSpeed, setVideoH264, store, type ScrollSpeed, type TrustedKey,
 	} from "../store";
 	import {
 		SUPPORTED, setLocale,
 	} from "../i18n";
+	import { checkForUpdates } from "../updates";
 	import EditDeviceModal from "../components/EditDeviceModal.vue";
 	import TrustedKeyModal from "../components/TrustedKeyModal.vue";
+	import Relays from "../components/Relays.vue";
+	import Resources from "../components/Resources.vue";
 
 	const {
 		t, locale,
 	} = useI18n();
 
-	const tab = ref("general");
+	// `?s=servers` (e.g. from the Devices page) opens that section directly.
+	const section = ref(String(useRoute().query.s ?? "general"));
+	const sections = computed(() => [
+		{
+			id: "general",
+			label: t("settings.tabs.general"),
+		},
+		{
+			id: "security",
+			label: t("settings.tabs.security"),
+		},
+		{
+			id: "servers",
+			label: t("settings.tabs.servers"),
+		},
+		...(physicalConsole.value.supported
+			? [{
+				id: "console",
+				label: t("settings.tabs.console"),
+			}]
+			: []),
+		{
+			id: "about",
+			label: t("settings.tabs.about"),
+		},
+	]);
+	const keyCopied = ref(false);
+	async function copyKey() {
+		await navigator.clipboard.writeText(store.publicKey);
+		keyCopied.value = true;
+		setTimeout(() => (keyCopied.value = false), 1500);
+	}
 	const editOpen = ref(false);
 	const version = ref("");
 	const accessOpen = ref(false);
@@ -529,6 +608,8 @@
 		lanEnabled: false,
 		relayEnabled: false,
 	});
+	const consoleHealthy = computed(() =>
+		physicalConsole.value.brokerActive && physicalConsole.value.nativeServiceAgentCurrent);
 
 	async function refreshPhysicalConsoleStatus() {
 		try {
@@ -711,3 +792,63 @@
 		setLocale(code);
 	}
 </script>
+
+<style scoped>
+	.settings-layout {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 28px;
+		align-items: flex-start;
+	}
+
+	.settings-nav {
+		flex: 1 1 180px;
+		max-width: 220px;
+		display: flex;
+		flex-direction: column;
+		gap: 2px;
+	}
+
+	.settings-nav-item {
+		min-height: 40px;
+		padding: 0 12px;
+		border-radius: 8px;
+		text-align: left;
+		color: var(--rl-soft);
+		font: inherit;
+		cursor: pointer;
+	}
+
+	.settings-nav-item:hover {
+		background: rgba(255, 255, 255, 0.04);
+	}
+
+	.settings-nav-item.active {
+		background: var(--rl-raised);
+		color: rgb(var(--v-theme-on-surface));
+		font-weight: 600;
+	}
+
+	.settings-nav-item:focus-visible {
+		outline: 2px solid var(--rl-accent);
+		outline-offset: 2px;
+	}
+
+	.settings-body {
+		flex: 999 1 420px;
+		min-width: 0;
+		max-width: 760px;
+		display: flex;
+		flex-direction: column;
+		gap: 24px;
+	}
+
+	.row-control {
+		flex: 0 0 200px;
+	}
+
+	.key-text {
+		color: var(--rl-soft);
+		overflow-wrap: anywhere;
+	}
+</style>

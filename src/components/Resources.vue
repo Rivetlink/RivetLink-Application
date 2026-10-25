@@ -1,48 +1,44 @@
 <template>
-	<VContainer style="max-width: 880px">
-		<VCard variant="tonal">
-			<VCardTitle>{{ t("resources.title") }}</VCardTitle>
-			<VCardSubtitle class="text-wrap">
-				{{ t("resources.subtitle") }}
-			</VCardSubtitle>
-			<VCardText v-if="usage">
-				<div class="text-overline text-medium-emphasis">
-					{{ t("resources.cpu") }}
-				</div>
-				<div class="d-flex align-center ga-3 mb-4">
+	<section>
+		<h3 class="rl-section-title">
+			{{ t("resources.title") }}
+		</h3>
+		<div class="rl-group">
+			<template v-if="usage">
+				<div class="rl-row">
+					<span class="label">{{ t("resources.cpu") }}</span>
 					<VProgressLinear
 						:model-value="usage.cpu_percent"
-						color="primary"
-						height="10"
+						color="secondary"
+						height="6"
 						rounded
+						class="flex-grow-1"
+						style="flex-basis: 120px"
 					/>
-					<span class="value">{{ usage.cpu_percent.toFixed(1) }}%</span>
+					<span class="value rl-mono">{{ usage.cpu_percent.toFixed(1) }}%</span>
 				</div>
-
-				<div class="text-overline text-medium-emphasis">
-					{{ t("resources.memory") }}
-				</div>
-				<div class="d-flex align-center ga-3">
+				<div class="rl-row">
+					<span class="label">{{ t("resources.memory") }}</span>
 					<VProgressLinear
 						:model-value="memPercent"
-						color="teal"
-						height="10"
+						color="success"
+						height="6"
 						rounded
+						class="flex-grow-1"
+						style="flex-basis: 120px"
 					/>
-					<span class="value">{{ formatBytes(usage.mem_bytes) }}</span>
+					<span class="value rl-mono">{{ formatBytes(usage.mem_bytes) }}</span>
 				</div>
-				<p class="text-caption text-medium-emphasis mt-2 mb-0">
+				<div class="rl-row rl-row-sub">
 					{{ t("resources.ofTotal", { total: formatBytes(usage.total_mem_bytes) }) }}
 					· {{ t("resources.cores", { count: usage.cores }) }}
-				</p>
-			</VCardText>
-			<VCardText v-else>
-				<p class="text-body-2 text-medium-emphasis mb-0">
-					{{ t("resources.unavailable") }}
-				</p>
-			</VCardText>
-		</VCard>
-	</VContainer>
+				</div>
+			</template>
+			<div v-else class="rl-row rl-row-sub">
+				{{ t("resources.unavailable") }}
+			</div>
+		</div>
+	</section>
 </template>
 
 <script setup lang="ts">
@@ -101,8 +97,13 @@
 </script>
 
 <style scoped>
+	.label {
+		width: 80px;
+		color: var(--rl-muted);
+	}
+
 	.value {
-		min-width: 96px;
+		min-width: 72px;
 		text-align: right;
 		font-variant-numeric: tabular-nums;
 	}
