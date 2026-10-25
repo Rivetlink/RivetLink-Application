@@ -295,6 +295,7 @@
 		computed, onMounted, onUnmounted, ref,
 	} from "vue";
 	import { useI18n } from "vue-i18n";
+	import { useRoute } from "vue-router";
 	import {
 		activeRelay,
 		addLanDevice,
@@ -476,7 +477,13 @@
 		online.value = Object.fromEntries(results);
 	}
 
+	// `?scan=1` (from the Help page) searches the local network right away.
+	const scanOnOpen = useRoute().query.scan === "1";
+
 	onMounted(async () => {
+		if (scanOnOpen) {
+			void scan();
+		}
 		if (activeRelay() && !store.connected) {
 			doConnect();
 		}

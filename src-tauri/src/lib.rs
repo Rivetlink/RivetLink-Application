@@ -3818,13 +3818,22 @@ fn update_relay_host_pin(
 }
 
 /// Open a pinned key-mode LAN session to `target`: straight over TCP, or
-/// through a relay tunnel when the host is only reachable that way. Both run
-/// the same handshake and requests; the relay only carries ciphertext.
+/// through a relay tunnel when the host is only reachable that way (switched
+/// to a direct peer-to-peer path when one can be made). All run the same
+/// handshake and requests; the relay only carries ciphertext. Also returns
+/// the route taken: "lan", "p2p" or "relay".
 async fn open_key_session(
     state: &AppState,
     target: &LanTarget,
     identity: &Identity,
-) -> Result<(rivetlink_sdk::lan::BoxedIo, rivetlink_sdk::SealedChannel), String> {
+) -> Result<
+    (
+        rivetlink_sdk::lan::BoxedIo,
+        rivetlink_sdk::SealedChannel,
+        &'static str,
+    ),
+    String,
+> {
     let Some(device_id) = &target.relay_device_id else {
         let (stream, channel) = rivetlink_sdk::lan::connect_key_pinned(
             target_addr(target)?,
@@ -3833,7 +3842,7 @@ async fn open_key_session(
         )
         .await
         .map_err(|e| e.to_string())?;
-        return Ok((Box::new(stream), channel));
+        return Ok((Box::new(stream), channel, "lan"));
     };
     let device = {
         let guard = state.client.lock().await;
@@ -3857,7 +3866,7 @@ async fn open_key_session(
         return Err("relay host identity does not match the saved host".to_string());
     }
     verify_or_pin_relay_host(state, &device).await?;
-    let (stream, channel) = state
+    let (stream, channel, transport) = state
         .client
         .lock()
         .await
@@ -3866,7 +3875,11 @@ async fn open_key_session(
         .connect_tunnel(&device)
         .await
         .map_err(|e| e.to_string())?;
-    Ok((Box::new(stream), channel))
+    let route = match transport {
+        rivetlink_sdk::Transport::P2p => "p2p",
+        rivetlink_sdk::Transport::Relay => "relay",
+    };
+    Ok((Box::new(stream), channel, route))
 }
 
 /// The direct address of a LAN target. Built from the parsed IP so IPv6 is
@@ -4659,7 +4672,8 @@ async fn tunnel_console_capture(
 ) -> Result<rivetlink_sdk::lan::ConsoleCapture, String> {
     if tunnel.is_none() {
         let state = app.state::<AppState>();
-        *tunnel = Some(open_key_session(&state, target, identity).await?);
+        let (stream, channel, _) = open_key_session(&state, target, identity).await?;
+        *tunnel = Some((stream, channel));
     }
     let Some((stream, channel)) = tunnel.as_mut() else {
         return Err("relay tunnel is not open".to_string());
@@ -4731,7 +4745,7 @@ async fn physical_console_desktop_is_ready(
     } else {
         10
     };
-    let (mut stream, channel) = tokio::time::timeout(
+    let (mut stream, channel, _) = tokio::time::timeout(
         std::time::Duration::from_secs(bound),
         open_key_session(state, target, &identity),
     )
@@ -5059,7 +5073,7 @@ async fn lan_connect_inner(
                     rivetlink_sdk::lan::connect_password(target_addr(&target)?, p.trim())
                         .await
                         .map_err(|e| e.to_string())?;
-                Ok((Box::new(stream) as rivetlink_sdk::lan::BoxedIo, channel))
+                Ok((Box::new(stream) as rivetlink_sdk::lan::BoxedIo, channel, "lan"))
             }
             _ => {
                 let identity =
@@ -5069,7 +5083,7 @@ async fn lan_connect_inner(
         }
     };
     let bound = if via_relay { 30 } else { 15 };
-    let (mut stream, channel) = tokio::time::timeout(
+    let (mut stream, channel, route) = tokio::time::timeout(
         std::time::Duration::from_secs(bound),
         connect,
     )
@@ -5081,7 +5095,7 @@ async fn lan_connect_inner(
     .inspect_err(
         |e| tracing::warn!(name = %target.name, error = %e, "lan_connect: handshake failed"),
     )?;
-    tracing::info!(name = %target.name, "lan_connect: channel established, opening viewer");
+    tracing::info!(name = %target.name, route, "lan_connect: channel established, opening viewer");
 
     // Stop any previous session before starting a new one.
     stop_stream(&state);
@@ -5104,6 +5118,7 @@ async fn lan_connect_inner(
     // First (optimistic) emit; the viewer window may not have registered its
     // listener yet, so the stream task re-emits on the first frame too.
     let _ = app.emit("lan://displays", &displays);
+    let _ = app.emit("lan://route", route);
 
     // The viewer's screen picker pushes display ids here to switch mid-stream.
     let (switch_tx, switch_rx) = tokio::sync::mpsc::channel::<u32>(4);
@@ -5174,6 +5189,7 @@ async fn lan_connect_inner(
                 if !announced {
                     announced = true;
                     let _ = app_for_task.emit("lan://displays", &displays_for_viewer);
+                    let _ = app_for_task.emit("lan://route", route);
                 }
                 // Forward the frame to the viewer window. If emit fails the
                 // window is gone — stop the stream.
