@@ -109,7 +109,17 @@
         "errAuth": "The connection was refused. Is the code correct?",
         "errNotTrusted": "This device isn't allowed yet. Enter the code, or ask the other computer to allow it under Access.",
         "errKeyRejected": "The host doesn't know this device's key. Add your key (Settings → Security) on the host; for an Ubuntu console, through the physical console setup.",
-        "errNoRoute": "This computer is not available on your local network and no matching relay connection is ready. If it is an Ubuntu physical console, enable its physical-console service first."
+        "errNoRoute": "This computer is not available on your local network and no matching relay connection is ready. If it is an Ubuntu physical console, enable its physical-console service first.",
+        "summary": "{saved} saved · {online} online.",
+        "autoRoute": "RivetLink picks the local network or your relay by itself.",
+        "search": "Search devices",
+        "routeLan": "Local network",
+        "routeRelay": "Via relay",
+        "loginScreen": "Login screen & desktop",
+        "viaRelayTitle": "Through your relay",
+        "more": "More options for {name}",
+        "forget": "Forget",
+        "signInRelay": "Sign in to {name} to reach your devices outside this network too."
     },
     "device": {
         "thisDevice": "This device",
