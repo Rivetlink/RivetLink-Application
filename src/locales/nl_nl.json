@@ -335,7 +335,10 @@
         "controlling": "Aan het besturen",
         "loginHandoff": "Inloggen — opnieuw verbinden met het bureaublad…",
         "statsHint": "Streamformaat, beelden per seconde en bandbreedte",
-        "videoFailed": "H.264-video kan hier niet worden gedecodeerd. Verbind opnieuw om JPEG te gebruiken."
+        "videoFailed": "H.264-video kan hier niet worden gedecodeerd. Verbind opnieuw om JPEG te gebruiken.",
+        "viewOnly": "Alleen kijken",
+        "zoomIn": "Inzoomen",
+        "zoomOut": "Uitzoomen"
     },
     "overlay": {
         "watching": "{name} kijkt mee",
