@@ -19,7 +19,8 @@
         "device": "Receive help",
         "relays": "Servers",
         "resources": "Resources",
-        "settings": "Settings"
+        "settings": "Settings",
+        "help": "Help"
     },
     "onboarding": {
         "welcomeTitle": "Welcome to RivetLink",
@@ -338,7 +339,13 @@
         "videoFailed": "H.264 video could not be decoded here. Reconnect to use JPEG instead.",
         "viewOnly": "View only",
         "zoomIn": "Zoom in",
-        "zoomOut": "Zoom out"
+        "zoomOut": "Zoom out",
+        "route": {
+            "lan": "Local network",
+            "p2p": "Direct",
+            "relay": "Via relay"
+        },
+        "routeHint": "How this session reaches the other computer"
     },
     "overlay": {
         "watching": "{name} is viewing",
@@ -378,5 +385,54 @@
         "download": "Download",
         "openLocal": "Open my Downloads/RivetLink",
         "transfers": "Transfers"
+    },
+    "help": {
+        "title": "Help",
+        "intro": "How to connect computers with RivetLink: on your own network, or from anywhere through your own server (relay). Everything is end-to-end encrypted; the server cannot see your screen either.",
+        "lan": {
+            "title": "Connect on your own network",
+            "intro": "Both computers are on the same network. You need no server or account.",
+            "step1": "On the computer that gets help: open Receive help. It shows the computer name and a code.",
+            "step2": "On your computer: open Devices and click Search this network. The other computer appears in the list.",
+            "step3": "Click Connect and enter the code. If the other side remembers you, you won't need the code next time."
+        },
+        "relay": {
+            "title": "Add a server (relay)",
+            "intro": "A relay lets you reach your computers outside your own network too. After signing in you see every computer in your organization under Devices.",
+            "step1": "Open Settings → Servers, add your relay's address (for example https://relay.yourdomain.com) and make it active.",
+            "step2": "Go to Devices and sign in with your email address and password.",
+            "step3": "Your organization's computers are listed under Through your relay. Click one to connect."
+        },
+        "addHost": {
+            "title": "Add a computer to your relay",
+            "intro": "Put a computer (host) on your relay so you can always reach it. This works with Ubuntu today; Windows and macOS share on the local network only for now.",
+            "step1": "On your own computer: open Settings → Security and copy your public key.",
+            "step2": "On the Ubuntu computer: add the same relay and sign in under Devices with the same account. If Devices is missing, also turn on the Client role under Edit this device.",
+            "step3": "There, open Settings → Ubuntu console, choose Set up physical console, paste your key and tick Via relay.",
+            "step4": "Done: the computer now shows under Devices → Through your relay, on every computer signed in with this account."
+        },
+        "routes": {
+            "title": "How RivetLink connects",
+            "intro": "RivetLink picks the fastest route by itself. The bottom of the viewer shows which route your session uses.",
+            "step1": "Local network: straight across your own network. The fastest.",
+            "step2": "Direct: outside your network, but straight between the two computers. The relay only helps set it up; the picture does not pass through it.",
+            "step3": "Via relay: everything goes through your server. This always works and is used when Direct does not."
+        },
+        "trouble": {
+            "title": "Not working?",
+            "intro": "The most common causes:",
+            "step1": "Not found on the network: is Receive help open on the other computer, and are both on the same network (not a guest network)?",
+            "step2": "Key rejected: the host does not know your device yet. Add your public key on the host.",
+            "step3": "Always Via relay, never Direct: your server offers no STUN, or a strict router or firewall blocks it. The administrator can enable STUN (UDP port 3478). Connecting keeps working.",
+            "step4": "No computers under Through your relay: are you signed in with the same account, and is the host switched on?"
+        },
+        "actions": {
+            "receiveHelp": "Receive help",
+            "scan": "Search this network",
+            "servers": "Servers",
+            "devices": "Devices",
+            "security": "My key",
+            "console": "Ubuntu console"
+        }
     }
 }

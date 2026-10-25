@@ -19,7 +19,8 @@
         "device": "Hulp ontvangen",
         "relays": "Servers",
         "resources": "Bronnen",
-        "settings": "Instellingen"
+        "settings": "Instellingen",
+        "help": "Help"
     },
     "onboarding": {
         "welcomeTitle": "Welkom bij RivetLink",
@@ -338,7 +339,13 @@
         "videoFailed": "H.264-video kan hier niet worden gedecodeerd. Verbind opnieuw om JPEG te gebruiken.",
         "viewOnly": "Alleen kijken",
         "zoomIn": "Inzoomen",
-        "zoomOut": "Uitzoomen"
+        "zoomOut": "Uitzoomen",
+        "route": {
+            "lan": "Lokaal netwerk",
+            "p2p": "Direct",
+            "relay": "Via relay"
+        },
+        "routeHint": "Hoe deze sessie de andere computer bereikt"
     },
     "overlay": {
         "watching": "{name} kijkt mee",
@@ -378,5 +385,54 @@
         "download": "Downloaden",
         "openLocal": "Mijn Downloads/RivetLink openen",
         "transfers": "Overdrachten"
+    },
+    "help": {
+        "title": "Help",
+        "intro": "Zo verbind je computers met RivetLink: op je eigen netwerk, of overal vandaan via je eigen server (relay). Alles is end-to-end versleuteld; ook de server kan niet meekijken.",
+        "lan": {
+            "title": "Verbinden op je eigen netwerk",
+            "intro": "Beide computers zitten op hetzelfde netwerk. Je hebt geen server of account nodig.",
+            "step1": "Op de computer die hulp krijgt: open Hulp ontvangen. Daar staan de computernaam en een code.",
+            "step2": "Op jouw computer: open Apparaten en klik op Zoek op dit netwerk. De andere computer verschijnt in de lijst.",
+            "step3": "Klik op Verbinden en voer de code in. Laat de ander je onthouden, dan is de code de volgende keer niet nodig."
+        },
+        "relay": {
+            "title": "Een server (relay) toevoegen",
+            "intro": "Met een relay bereik je je computers ook buiten je eigen netwerk. Na het inloggen zie je alle computers van je organisatie onder Apparaten.",
+            "step1": "Open Instellingen → Servers, voeg het adres van je relay toe (bijvoorbeeld https://relay.jouwdomein.nl) en maak hem actief.",
+            "step2": "Ga naar Apparaten en log in met je e-mailadres en wachtwoord.",
+            "step3": "De computers van je organisatie staan onder Via je relay. Klik er een aan om te verbinden."
+        },
+        "addHost": {
+            "title": "Een computer aan je relay toevoegen",
+            "intro": "Zet een computer (host) op je relay, zodat je er altijd bij kunt. Dit kan nu met Ubuntu; Windows en macOS delen voorlopig alleen op het lokale netwerk.",
+            "step1": "Op jouw eigen computer: open Instellingen → Beveiliging en kopieer je publieke sleutel.",
+            "step2": "Op de Ubuntu-computer: voeg dezelfde relay toe en log in onder Apparaten met hetzelfde account. Zie je Apparaten niet, zet dan bij Dit apparaat wijzigen ook de rol Client aan.",
+            "step3": "Open daar Instellingen → Ubuntu-console, kies Fysieke console instellen, plak je sleutel en vink Via relay aan.",
+            "step4": "Klaar: de computer staat nu onder Apparaten → Via je relay, op elke computer waarop je met dit account bent ingelogd."
+        },
+        "routes": {
+            "title": "Hoe RivetLink verbindt",
+            "intro": "RivetLink kiest zelf de snelste route. Onderin de viewer zie je welke route je sessie gebruikt.",
+            "step1": "Lokaal netwerk: rechtstreeks binnen je eigen netwerk. Dit is het snelst.",
+            "step2": "Direct: buiten je netwerk, maar rechtstreeks tussen de twee computers. De relay helpt alleen bij het opzetten; het beeld gaat er niet doorheen.",
+            "step3": "Via relay: alles loopt via je server. Dit werkt altijd en wordt gebruikt als Direct niet lukt."
+        },
+        "trouble": {
+            "title": "Lukt het niet?",
+            "intro": "De meest voorkomende oorzaken:",
+            "step1": "Niet gevonden op het netwerk: staat Hulp ontvangen open op de andere computer, en zitten beide op hetzelfde netwerk (geen gastnetwerk)?",
+            "step2": "Sleutel geweigerd: de host kent jouw apparaat nog niet. Voeg je publieke sleutel toe op de host.",
+            "step3": "Altijd Via relay, nooit Direct: je server biedt geen STUN aan, of een strenge router of firewall blokkeert het. De beheerder kan STUN aanzetten (UDP-poort 3478). Verbinden blijft gewoon werken.",
+            "step4": "Geen computers onder Via je relay: ben je met hetzelfde account ingelogd, en staat de host aan?"
+        },
+        "actions": {
+            "receiveHelp": "Hulp ontvangen",
+            "scan": "Zoek op dit netwerk",
+            "servers": "Servers",
+            "devices": "Apparaten",
+            "security": "Mijn sleutel",
+            "console": "Ubuntu-console"
+        }
     }
 }

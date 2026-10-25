@@ -9,6 +9,7 @@ import {
 import Connect from "./views/Connect.vue";
 import ThisDevice from "./views/ThisDevice.vue";
 import Settings from "./views/Settings.vue";
+import Help from "./views/Help.vue";
 import Viewer from "./views/Viewer.vue";
 import OverlayPanel from "./views/OverlayPanel.vue";
 
@@ -43,6 +44,14 @@ export const router = createRouter({
 			meta: {
 				titleKey: "nav.settings",
 				icon: "mdi-cog-outline",
+			},
+		},
+		{
+			path: "/help",
+			component: Help,
+			meta: {
+				titleKey: "nav.help",
+				icon: "mdi-help-circle-outline",
 			},
 		},
 		{

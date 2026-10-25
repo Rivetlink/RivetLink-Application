@@ -146,6 +146,7 @@
 				</template>
 			</div>
 			<div class="tb-side end">
+				<span v-if="route" class="stats rl-status" :title="t('viewer.routeHint')">{{ t(`viewer.route.${route}`) }}</span>
 				<span class="stats rl-status" :class="slow ? 'warn' : 'ok'" :title="t('viewer.statsHint')">{{ statsLabel }}</span>
 				<VBtn
 					color="error"
@@ -313,6 +314,9 @@
 	const unlistenConsoleUpgrade = ref<UnlistenFn | null>(null);
 	const unlistenDesktopFallback = ref<UnlistenFn | null>(null);
 	const unlistenDisplays = ref<UnlistenFn | null>(null);
+	const unlistenRoute = ref<UnlistenFn | null>(null);
+	// How this session reaches the host: "lan", "p2p" or "relay".
+	const route = ref<"lan" | "p2p" | "relay" | null>(null);
 	const unlistenBlur = ref<UnlistenFn | null>(null);
 	const unlistenSharing = ref<UnlistenFn | null>(null);
 	const unlistenClipboard = ref<UnlistenFn | null>(null);
@@ -941,6 +945,9 @@
 				currentDisplay.value = e.payload[0].id;
 			}
 		});
+		unlistenRoute.value = await listen<"lan" | "p2p" | "relay">("lan://route", (e) => {
+			route.value = e.payload;
+		});
 		// Flag a slow link when no frame (not even a heartbeat) arrives in time.
 		slowTimer.value = setInterval(() => {
 			if (hasFrame.value && !ended.value) {
@@ -975,6 +982,7 @@
 		unlistenConsoleUpgrade.value?.();
 		unlistenDesktopFallback.value?.();
 		unlistenDisplays.value?.();
+		unlistenRoute.value?.();
 		unlistenBlur.value?.();
 		unlistenSharing.value?.();
 		unlistenClipboard.value?.();
