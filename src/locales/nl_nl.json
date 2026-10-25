@@ -109,7 +109,17 @@
         "errAuth": "De verbinding werd geweigerd. Klopt de code?",
         "errNotTrusted": "Dit apparaat is nog niet toegelaten. Voer de code in, of laat de andere computer het toelaten bij Toegang.",
         "errKeyRejected": "De host kent de sleutel van dit apparaat niet. Voeg je sleutel (Instellingen → Beveiliging) toe op de host; voor een Ubuntu-console via de setup van de physical console.",
-        "errNoRoute": "Deze computer is niet beschikbaar op je lokale netwerk en er is geen passende relay-verbinding gereed. Schakel bij een Ubuntu fysieke console eerst de fysieke-console-service in."
+        "errNoRoute": "Deze computer is niet beschikbaar op je lokale netwerk en er is geen passende relay-verbinding gereed. Schakel bij een Ubuntu fysieke console eerst de fysieke-console-service in.",
+        "summary": "{saved} opgeslagen · {online} online.",
+        "autoRoute": "RivetLink kiest zelf het lokale netwerk of je relay.",
+        "search": "Zoek een apparaat",
+        "routeLan": "Lokaal netwerk",
+        "routeRelay": "Via relay",
+        "loginScreen": "Inlogscherm & bureaublad",
+        "viaRelayTitle": "Via je relay",
+        "more": "Meer opties voor {name}",
+        "forget": "Vergeten",
+        "signInRelay": "Log in bij {name} om je apparaten ook buiten dit netwerk te bereiken."
     },
     "device": {
         "thisDevice": "Dit apparaat",

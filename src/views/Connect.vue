@@ -1,404 +1,273 @@
 <template>
-	<VContainer style="max-width: 880px">
-		<VTabs v-model="tab" class="mb-4">
-			<VTab value="devices" prepend-icon="mdi-server-network">
-				{{ t("connect.tabDevices") }}
-			</VTab>
-			<VTab value="lan" prepend-icon="mdi-lan">
-				{{ t("connect.tabLan") }}
-			</VTab>
-			<VTab value="code" prepend-icon="mdi-numeric">
-				{{ t("connect.tabCode") }}
-			</VTab>
-		</VTabs>
-
-		<VWindow v-model="tab">
-			<!-- Managed devices (via a relay) -->
-			<VWindowItem value="devices">
-				<VAlert
-					v-if="!activeRelay()"
-					type="info"
-					variant="tonal"
+	<div class="rl-page">
+		<header class="rl-header">
+			<div>
+				<h1 class="rl-h1">
+					{{ t("nav.connect") }}
+				</h1>
+				<p class="rl-lead">
+					{{ t("connect.summary", { saved: savedCards.length, online: onlineCount }) }}
+					{{ t("connect.autoRoute") }}
+				</p>
+			</div>
+			<div class="d-flex flex-wrap align-center ga-2">
+				<VTextField
+					v-model="query"
+					:placeholder="t('connect.search')"
+					:aria-label="t('connect.search')"
+					prepend-inner-icon="mdi-magnify"
+					density="compact"
+					hide-details
+					clearable
+					class="search"
+				/>
+				<VBtn
+					variant="outlined"
+					prepend-icon="mdi-wifi"
+					:loading="scanning"
+					@click="refreshAll"
 				>
-					{{ t("connect.noRelayBefore") }}
-					<RouterLink to="/settings?s=servers">
-						{{ t("connect.noRelayLink") }}
-					</RouterLink>{{ t("connect.noRelayAfter") }}
-				</VAlert>
+					{{ t("connect.lanScan") }}
+				</VBtn>
+			</div>
+		</header>
 
-				<template v-else>
-					<VCard variant="tonal" class="mb-4">
-						<VCardText class="d-flex align-center">
-							<VIcon icon="mdi-server-network" class="mr-2" />
-							<div>
-								<div class="text-body-1">
-									{{ activeRelay()?.name }}
-								</div>
-								<div class="text-caption text-medium-emphasis">
-									{{ activeRelay()?.http_url }}
-								</div>
-							</div>
-							<VSpacer />
-							<VChip
-								:color="store.connected ? 'green' : 'grey'"
-								size="small"
-								variant="flat"
-							>
-								{{ store.connected ? t("connect.connected") : t("connect.notConnected") }}
-							</VChip>
-						</VCardText>
-					</VCard>
+		<!-- Relay: not set up, or not signed in -->
+		<div v-if="!activeRelay()" class="rl-row-sub">
+			{{ t("connect.noRelayBefore") }}
+			<RouterLink to="/settings?s=servers">
+				{{ t("connect.noRelayLink") }}
+			</RouterLink>{{ t("connect.noRelayAfter") }}
+		</div>
+		<section v-else-if="!store.loggedIn" class="rl-group pa-4">
+			<p class="mt-0 mb-3">
+				{{ t("connect.signInRelay", { name: activeRelay()?.name }) }}
+			</p>
+			<div class="d-flex flex-wrap ga-2 align-center">
+				<VTextField
+					v-model="email"
+					:label="t('connect.email')"
+					density="compact"
+					hide-details
+					class="login-field"
+				/>
+				<VTextField
+					v-model="password"
+					:label="t('connect.password')"
+					type="password"
+					density="compact"
+					hide-details
+					class="login-field"
+					@keyup.enter="doLogin"
+				/>
+				<VBtn
+					color="primary"
+					:loading="busy"
+					:disabled="!store.connected"
+					@click="doLogin"
+				>
+					{{ t("connect.signIn") }}
+				</VBtn>
+			</div>
+		</section>
 
-					<!-- Sign in -->
-					<VCard v-if="!store.loggedIn" variant="tonal">
-						<VCardTitle>{{ t("connect.signInTitle") }}</VCardTitle>
-						<VCardSubtitle>{{ t("connect.signInSubtitle") }}</VCardSubtitle>
-						<VCardText>
-							<VTextField
-								v-model="email"
-								:label="t('connect.email')"
-								prepend-inner-icon="mdi-email-outline"
-								density="comfortable"
-							/>
-							<VTextField
-								v-model="password"
-								:label="t('connect.password')"
-								type="password"
-								prepend-inner-icon="mdi-lock-outline"
-								density="comfortable"
-								hide-details
-								@keyup.enter="doLogin"
-							/>
-						</VCardText>
-						<VCardActions>
-							<VSpacer />
-							<VBtn
-								color="primary"
-								variant="flat"
-								:loading="busy"
-								:disabled="!store.connected"
-								@click="doLogin"
-							>
-								{{ t("connect.signIn") }}
-							</VBtn>
-						</VCardActions>
-					</VCard>
-
-					<!-- Device list -->
-					<template v-else>
-						<VCard variant="tonal">
-							<VCardTitle class="d-flex align-center">
-								{{ t("connect.devices") }}
-								<VSpacer />
-								<VBtn
-									size="small"
-									variant="text"
-									icon="mdi-refresh"
-									:loading="busy"
-									@click="refresh"
-								/>
-							</VCardTitle>
-							<VCardText>
-								<VAlert
-									v-if="!busy && devices.length === 0"
-									type="warning"
-									variant="tonal"
-									density="compact"
-								>
-									{{ t("connect.noDevices") }}
-								</VAlert>
-								<VList v-else lines="two" density="comfortable">
-									<VListItem
-										v-for="d in devices"
-										:key="d.id"
-										:active="selected === d.id"
-										@click="selected = d.id"
-									>
-										<template #prepend>
-											<VBadge :color="d.online ? 'green' : 'grey'" dot location="bottom end">
-												<VIcon icon="mdi-monitor" />
-											</VBadge>
-										</template>
-										<VListItemTitle>{{ d.hostname || d.id }}</VListItemTitle>
-										<VListItemSubtitle>{{ deviceMeta(d) }}</VListItemSubtitle>
-										<template #append>
-											<VIcon
-												v-if="selected === d.id"
-												icon="mdi-check-circle"
-												color="primary"
-											/>
-										</template>
-									</VListItem>
-								</VList>
-							</VCardText>
-							<VCardActions>
-								<VSpacer />
-								<VBtn
-									color="primary"
-									variant="flat"
-									prepend-icon="mdi-camera"
-									:disabled="!selected"
-									:loading="!!busyMsg"
-									@click="capture"
-								>
-									{{ t("connect.capture") }}
-								</VBtn>
-							</VCardActions>
-						</VCard>
-
-						<VCard v-if="screenshot" class="mt-4">
-							<VCardTitle class="d-flex align-center">
-								{{ t("connect.screenshot") }}
-								<VSpacer />
-								<VChip v-if="consoleState" size="small" color="primary">
-									{{ consoleStateLabel }}
-								</VChip>
-								<VChip size="small" variant="tonal" class="ml-2">
-									{{ t("connect.connectionRelay") }}
-								</VChip>
-							</VCardTitle>
-							<VCardSubtitle>{{ t("connect.consoleInputHint") }}</VCardSubtitle>
-							<VImg
-								:src="screenshot"
-								tabindex="0"
-								class="console-screen"
-								@contextmenu.prevent
-								@click="consoleClick"
-								@keydown.prevent="consoleKey($event, true)"
-								@keyup.prevent="consoleKey($event, false)"
-							/>
-						</VCard>
-					</template>
-				</template>
-			</VWindowItem>
-
-			<!-- Local network (direct, no relay) -->
-			<VWindowItem value="lan">
-				<VCard variant="tonal" class="mb-4">
-					<VCardText class="d-flex align-center">
-						<VIcon icon="mdi-lan" class="mr-3" />
+		<!-- Saved hosts -->
+		<section v-if="savedCards.length > 0">
+			<h2 class="rl-section-title">
+				{{ t("connect.lanSaved") }}
+			</h2>
+			<div class="cards">
+				<article v-for="c in savedCards" :key="c.device.id" class="card">
+					<div class="thumb">
+						<VIcon
+							:icon="c.device.physical_console ? 'mdi-monitor-lock' : 'mdi-monitor'"
+							size="56"
+							:class="{ dim: !c.online }"
+						/>
+						<span class="pill rl-status" :class="c.online ? 'ok' : ''">
+							{{ c.online ? t("connect.lanOnline") : t("connect.lanOffline") }}
+						</span>
+					</div>
+					<div class="card-body">
 						<div>
-							<div class="text-body-1">
-								{{ t("connect.lanTitle") }}
-							</div>
-							<div class="text-caption text-medium-emphasis">
-								{{ t("connect.lanSubtitle") }}
-							</div>
-							<div v-if="net && (net.ssid || net.ip)" class="text-caption text-medium-emphasis mt-1">
-								<VIcon :icon="net.ssid ? 'mdi-wifi' : 'mdi-lan'" size="x-small" class="mr-1" />
-								<span v-if="net.ssid">{{ t("connect.lanNetworkWifi", { ssid: net.ssid }) }} · </span>
-								<span v-if="net.ip">{{ t("connect.lanNetworkIp", { ip: net.ip }) }}</span>
+							<h3 class="card-title">
+								{{ c.device.name }}
+							</h3>
+							<div class="rl-row-sub rl-mono">
+								{{ c.device.address }}:{{ c.device.port }}
 							</div>
 						</div>
-						<VSpacer />
-						<VBtn
-							color="primary"
-							variant="flat"
-							prepend-icon="mdi-magnify"
-							:loading="scanning"
-							@click="scan"
-						>
-							{{ t("connect.lanScan") }}
-						</VBtn>
-					</VCardText>
-				</VCard>
-
-				<!-- Newly found, not yet remembered -->
-				<VCard v-if="lanUnsaved.length > 0" variant="tonal" class="mb-4">
-					<VCardTitle>{{ t("connect.lanFound") }}</VCardTitle>
-					<VList class="bg-transparent" lines="two" density="comfortable">
-						<VListItem v-for="d in lanUnsaved" :key="`${d.address}:${d.port}`">
-							<template #prepend>
-								<VIcon icon="mdi-monitor-share" />
-							</template>
-							<VListItemTitle>{{ d.name }}</VListItemTitle>
-							<VListItemSubtitle>{{ d.address }}:{{ d.port }}</VListItemSubtitle>
-							<template #append>
+						<div class="d-flex flex-wrap ga-2">
+							<span v-if="c.route === 'lan'" class="tag lan">{{ t("connect.routeLan") }}</span>
+							<span v-else-if="c.route === 'relay'" class="tag relay">{{ t("connect.routeRelay") }}</span>
+							<span v-if="c.device.physical_console" class="tag">{{ t("connect.loginScreen") }}</span>
+							<span v-if="store.connectedLanId === c.device.id" class="tag ok">{{ t("connect.lanConnected") }}</span>
+						</div>
+						<div class="d-flex ga-2 align-center card-actions">
+							<template v-if="connectingId === c.device.id">
 								<VBtn
-									size="small"
-									variant="tonal"
-									prepend-icon="mdi-plus"
-									@click="remember(d)"
-								>
-									{{ t("connect.lanAdd") }}
-								</VBtn>
-							</template>
-						</VListItem>
-					</VList>
-				</VCard>
-
-				<VAlert
-					v-else-if="!scanning && lanFound.length === 0 && store.settings.lan_devices.length === 0"
-					type="info"
-					variant="tonal"
-					class="mb-4"
-				>
-					{{ t("connect.lanNoneFound") }}
-				</VAlert>
-
-				<!-- Remembered hosts -->
-				<VCard v-if="store.settings.lan_devices.length > 0" variant="tonal">
-					<VCardTitle>{{ t("connect.lanSaved") }}</VCardTitle>
-					<VList class="bg-transparent" lines="two" density="comfortable">
-						<VListItem v-for="d in store.settings.lan_devices" :key="d.id">
-							<template #prepend>
-								<VIcon icon="mdi-monitor" />
-							</template>
-							<VListItemTitle>
-								{{ d.name }}
-								<VChip
-									v-if="d.physical_console"
-									size="x-small"
 									color="primary"
-									variant="tonal"
-									class="ml-2"
+									loading
+									disabled
+									class="flex-grow-1"
 								>
-									{{ t("connect.lanPhysicalConsole") }}
-								</VChip>
-								<VChip
-									v-if="store.connectedLanId === d.id"
-									size="x-small"
-									color="green"
-									variant="flat"
-									class="ml-2"
-								>
-									{{ t("connect.lanConnected") }}
-								</VChip>
-							</VListItemTitle>
-							<VListItemSubtitle>
-								<VIcon
-									icon="mdi-circle"
-									:color="online[d.id] ? 'green' : 'grey'"
-									size="8"
-									class="mr-1"
-								/>
-								<span>{{ online[d.id] ? t("connect.lanOnline") : t("connect.lanOffline") }} · {{ d.address }}:{{ d.port }}</span>
-							</VListItemSubtitle>
-							<template #append>
-								<!-- Setting up a connection: progress + a cancel -->
-								<template v-if="connectingId === d.id">
-									<VBtn
-										size="small"
-										color="primary"
-										variant="flat"
-										loading
-										disabled
-										class="mr-2"
-									>
-										{{ t("connect.lanConnecting") }}
-									</VBtn>
-									<VBtn
-										size="small"
-										color="error"
-										variant="tonal"
-										prepend-icon="mdi-close"
-										class="mr-2"
-										@click="onLanDisconnect"
-									>
-										{{ t("connect.lanDisconnect") }}
-									</VBtn>
-								</template>
-								<VBtn
-									v-else-if="store.connectedLanId === d.id"
-									size="small"
-									color="error"
-									variant="tonal"
-									prepend-icon="mdi-close"
-									class="mr-2"
-									@click="onLanDisconnect"
-								>
+									{{ t("connect.lanConnecting") }}
+								</VBtn>
+								<VBtn color="error" variant="tonal" @click="onLanDisconnect">
 									{{ t("connect.lanDisconnect") }}
 								</VBtn>
-								<VBtn
-									v-if="d.physical_console"
-									size="small"
-									color="primary"
-									variant="flat"
-									prepend-icon="mdi-monitor-lock"
-									:loading="lanCaptureId === d.id"
-									@click="smartConnect(d)"
-								>
-									{{ t("connect.lanConnect") }}
-								</VBtn>
-								<VBtn
-									v-else
-									size="small"
-									color="primary"
-									variant="flat"
-									prepend-icon="mdi-connection"
-									class="mr-2"
-									@click="openConnect(d)"
-								>
-									{{ t("connect.lanConnect") }}
-								</VBtn>
-								<VBtn
-									v-if="!d.physical_console"
-									size="small"
-									variant="tonal"
-									prepend-icon="mdi-camera"
-									class="mr-2"
-									:loading="lanCaptureId === d.id"
-									@click="captureLan(d)"
-								>
-									{{ t("connect.capture") }}
-								</VBtn>
-								<VBtn
-									size="small"
-									variant="text"
-									icon="mdi-delete-outline"
-									@click="forget(d.id)"
-								/>
 							</template>
-						</VListItem>
-					</VList>
-				</VCard>
-				<VCard v-if="lanScreenshotImage" class="mt-4">
-					<VCardTitle>{{ t("connect.screenshot") }}</VCardTitle>
-					<VImg :src="lanScreenshotImage" />
-				</VCard>
-				<VCard v-if="lanConsoleImage" class="mt-4">
-					<VCardTitle class="d-flex align-center">
-						{{ t("connect.lanPhysicalConsole") }}
-						<VSpacer />
-						<VChip v-if="lanConsoleState" size="small" color="primary">
-							{{ consoleStateText(lanConsoleState) }}
-						</VChip>
-						<VChip size="small" variant="tonal" class="ml-2">
-							{{ t("connect.connectionLan") }}
-						</VChip>
-					</VCardTitle>
-					<VCardSubtitle>{{ t("connect.consoleInputHint") }}</VCardSubtitle>
-					<VImg
-						:src="lanConsoleImage"
-						tabindex="0"
-						class="console-screen"
-						@contextmenu.prevent
-						@click="lanConsoleClick"
-						@keydown.prevent="lanConsoleKey($event, true)"
-						@keyup.prevent="lanConsoleKey($event, false)"
-					/>
-				</VCard>
-			</VWindowItem>
+							<VBtn
+								v-else-if="store.connectedLanId === c.device.id"
+								color="error"
+								variant="tonal"
+								class="flex-grow-1"
+								@click="onLanDisconnect"
+							>
+								{{ t("connect.lanDisconnect") }}
+							</VBtn>
+							<VBtn
+								v-else
+								:color="c.online ? 'primary' : undefined"
+								:variant="c.online ? 'flat' : 'outlined'"
+								:loading="lanCaptureId === c.device.id"
+								class="flex-grow-1"
+								@click="c.device.physical_console ? smartConnect(c.device) : openConnect(c.device)"
+							>
+								{{ t("connect.lanConnect") }}
+							</VBtn>
+							<VMenu location="bottom end">
+								<template #activator="{ props: menu }">
+									<VBtn
+										v-bind="menu"
+										variant="outlined"
+										icon="mdi-dots-horizontal"
+										size="40"
+										rounded="lg"
+										:aria-label="t('connect.more', { name: c.device.name })"
+									/>
+								</template>
+								<VList density="compact">
+									<VListItem
+										v-if="!c.device.physical_console"
+										prepend-icon="mdi-camera-outline"
+										:title="t('connect.capture')"
+										@click="captureLan(c.device)"
+									/>
+									<VListItem
+										prepend-icon="mdi-delete-outline"
+										:title="t('connect.forget')"
+										@click="forget(c.device.id)"
+									/>
+								</VList>
+							</VMenu>
+						</div>
+					</div>
+				</article>
+			</div>
+		</section>
 
-			<!-- Session code (planned) -->
-			<VWindowItem value="code">
-				<VCard variant="tonal">
-					<VCardTitle class="d-flex align-center">
-						{{ t("connect.sessionCodeTitle") }}
-						<VChip class="ml-2" size="x-small" color="amber">
-							{{ t("common.soon") }}
-						</VChip>
-					</VCardTitle>
-					<VCardSubtitle>{{ t("connect.sessionCodeSubtitle") }}</VCardSubtitle>
-					<VCardText>
-						<VOtpInput v-model="sessionCode" length="9" disabled />
-						<p class="text-caption text-medium-emphasis">
-							{{ t("connect.sessionCodeNote") }}
-						</p>
-					</VCardText>
-				</VCard>
-			</VWindowItem>
-		</VWindow>
+		<!-- Relay devices that are not saved here -->
+		<section v-if="relayOnly.length > 0">
+			<h2 class="rl-section-title">
+				{{ t("connect.viaRelayTitle") }}
+			</h2>
+			<div class="rl-group">
+				<div v-for="d in relayOnly" :key="d.id" class="rl-row">
+					<VIcon icon="mdi-monitor" color="medium-emphasis" />
+					<div class="rl-row-text">
+						<span class="rl-row-title">{{ d.hostname || d.id }}</span>
+						<span class="rl-row-sub">{{ deviceMeta(d) }}</span>
+					</div>
+					<span class="tag relay">{{ t("connect.routeRelay") }}</span>
+					<VBtn
+						variant="outlined"
+						prepend-icon="mdi-camera-outline"
+						:disabled="!d.online"
+						:loading="selected === d.id && !!busyMsg"
+						@click="captureRelay(d.id)"
+					>
+						{{ t("connect.capture") }}
+					</VBtn>
+				</div>
+			</div>
+		</section>
+
+		<!-- Found by a scan, not saved yet -->
+		<section v-if="lanUnsaved.length > 0">
+			<h2 class="rl-section-title">
+				{{ t("connect.lanFound") }}
+			</h2>
+			<div class="rl-group">
+				<div v-for="d in lanUnsaved" :key="`${d.address}:${d.port}`" class="rl-row">
+					<VIcon :icon="d.physical_console ? 'mdi-monitor-lock' : 'mdi-monitor'" color="medium-emphasis" />
+					<div class="rl-row-text">
+						<span class="rl-row-title">{{ d.name }}</span>
+						<span class="rl-row-sub rl-mono">{{ d.address }}:{{ d.port }}</span>
+					</div>
+					<VBtn variant="outlined" prepend-icon="mdi-plus" @click="remember(d)">
+						{{ t("connect.lanAdd") }}
+					</VBtn>
+				</div>
+			</div>
+		</section>
+
+		<div
+			v-if="!scanning && lanUnsaved.length === 0 && store.settings.lan_devices.length === 0 && relayOnly.length === 0"
+			class="rl-group rl-row rl-row-sub"
+		>
+			{{ t("connect.lanNoneFound") }}
+		</div>
+
+		<!-- One-shot screenshots and the legacy console view -->
+		<section v-if="screenshot" class="rl-group pa-4">
+			<div class="d-flex flex-wrap align-center ga-2 mb-2">
+				<h2 class="rl-h2 mr-auto">
+					{{ t("connect.screenshot") }}
+				</h2>
+				<span v-if="consoleState" class="tag">{{ consoleStateLabel }}</span>
+				<span class="tag relay">{{ t("connect.routeRelay") }}</span>
+			</div>
+			<p class="rl-row-sub mt-0">
+				{{ t("connect.consoleInputHint") }}
+			</p>
+			<VImg
+				:src="screenshot"
+				tabindex="0"
+				class="console-screen"
+				@contextmenu.prevent
+				@click="consoleClick"
+				@keydown.prevent="consoleKey($event, true)"
+				@keyup.prevent="consoleKey($event, false)"
+			/>
+		</section>
+		<section v-if="lanScreenshotImage" class="rl-group pa-4">
+			<h2 class="rl-h2 mb-2">
+				{{ t("connect.screenshot") }}
+			</h2>
+			<VImg :src="lanScreenshotImage" />
+		</section>
+		<section v-if="lanConsoleImage" class="rl-group pa-4">
+			<div class="d-flex flex-wrap align-center ga-2 mb-2">
+				<h2 class="rl-h2 mr-auto">
+					{{ t("connect.loginScreen") }}
+				</h2>
+				<span v-if="lanConsoleState" class="tag">{{ consoleStateText(lanConsoleState) }}</span>
+				<span class="tag lan">{{ t("connect.routeLan") }}</span>
+			</div>
+			<p class="rl-row-sub mt-0">
+				{{ t("connect.consoleInputHint") }}
+			</p>
+			<VImg
+				:src="lanConsoleImage"
+				tabindex="0"
+				class="console-screen"
+				@contextmenu.prevent
+				@click="lanConsoleClick"
+				@keydown.prevent="lanConsoleKey($event, true)"
+				@keyup.prevent="lanConsoleKey($event, false)"
+			/>
+		</section>
 
 		<LanConnectModal
 			v-model="connectOpen"
@@ -407,7 +276,7 @@
 		/>
 
 		<!-- Feedback -->
-		<VSnackbar :model-value="!!busyMsg" color="grey-darken-3" timeout="-1">
+		<VSnackbar :model-value="!!busyMsg" color="surface-bright" timeout="-1">
 			<VProgressCircular indeterminate size="18" class="mr-2" /> {{ busyMsg }}
 		</VSnackbar>
 		<VSnackbar
@@ -418,7 +287,7 @@
 		>
 			{{ error }}
 		</VSnackbar>
-	</VContainer>
+	</div>
 </template>
 
 <script setup lang="ts">
@@ -453,7 +322,7 @@
 
 	const { t } = useI18n();
 
-	const tab = ref("devices");
+	const query = ref<string | null>("");
 
 	const email = ref("");
 	const password = ref("");
@@ -478,8 +347,6 @@
 	const busy = ref(false);
 	const busyMsg = ref<string | null>(null);
 	const error = ref<string | null>(null);
-
-	const sessionCode = ref("");
 
 	// --- LAN state ---
 	const scanning = ref(false);
@@ -513,6 +380,39 @@
 			),
 		),
 	);
+
+	// One card per saved host. A host is matched to its relay record by public
+	// key (as smartConnect does), so the card can say which route is up.
+	const savedCards = computed(() => {
+		const q = (query.value ?? "").trim().toLowerCase();
+		return store.settings.lan_devices
+			.filter((d) => !q || d.name.toLowerCase().includes(q))
+			.map((device) => {
+				const lan = Boolean(online.value[device.id]);
+				const relay = !lan && devices.value.some((r) =>
+					r.online && device.public_key && r.public_key === device.public_key);
+				return {
+					device,
+					online: lan || relay,
+					route: lan ? "lan" : relay ? "relay" : null,
+				};
+			});
+	});
+	const onlineCount = computed(() => savedCards.value.filter((c) => c.online).length);
+
+	// Relay devices with no saved host of the same key: the legacy screenshot
+	// relay is their only route.
+	const relayOnly = computed(() => {
+		const q = (query.value ?? "").trim().toLowerCase();
+		return devices.value.filter((r) =>
+			!store.settings.lan_devices.some((s) => s.public_key && s.public_key === r.public_key)
+			&& (!q || (r.hostname ?? r.id).toLowerCase().includes(q)));
+	});
+
+	function captureRelay(id: string) {
+		selected.value = id;
+		void capture();
+	}
 
 	// Map a raw backend error string to a friendly, translated message. Unknown
 	// errors fall through unchanged so nothing is silently swallowed.
@@ -579,6 +479,9 @@
 	onMounted(async () => {
 		if (activeRelay() && !store.connected) {
 			doConnect();
+		}
+		if (store.loggedIn) {
+			void refresh();
 		}
 		await refreshNet();
 		await pingDevices();
@@ -699,6 +602,16 @@
 	}
 
 	// --- LAN actions ---
+	// The header button: look on the LAN, re-ping saved hosts and reload the
+	// relay's device list in one go.
+	async function refreshAll() {
+		await Promise.all([
+			scan(),
+			pingDevices(),
+			store.loggedIn ? refresh() : Promise.resolve(),
+		]);
+	}
+
 	async function scan() {
 		error.value = null;
 		scanning.value = true;
@@ -879,3 +792,106 @@
 		]);
 	}
 </script>
+
+<style scoped>
+	.search {
+		width: 220px;
+		flex: 0 1 220px;
+	}
+
+	.login-field {
+		flex: 1 1 200px;
+	}
+
+	.cards {
+		display: grid;
+		grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+		gap: 16px;
+	}
+
+	.card {
+		display: flex;
+		flex-direction: column;
+		border-radius: 14px;
+		background: rgb(var(--v-theme-surface));
+		border: 1px solid var(--rl-border);
+		overflow: hidden;
+	}
+
+	.thumb {
+		position: relative;
+		height: 130px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: #0B0D11;
+		border-bottom: 1px solid var(--rl-border);
+		color: var(--rl-soft);
+	}
+
+	.thumb .dim {
+		opacity: 0.4;
+	}
+
+	.pill {
+		position: absolute;
+		top: 10px;
+		left: 10px;
+		height: 24px;
+		padding: 0 9px;
+		border-radius: 12px;
+		background: rgba(15, 17, 21, 0.85);
+		font-size: 12px;
+	}
+
+	.card-body {
+		flex-grow: 1;
+		padding: 14px 16px 16px;
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.card-actions {
+		margin-top: auto;
+	}
+
+	.card-title {
+		margin: 0;
+		font-size: 16px;
+		font-weight: 600;
+	}
+
+	.tag {
+		display: inline-flex;
+		align-items: center;
+		height: 24px;
+		padding: 0 9px;
+		border-radius: 6px;
+		font-size: 12px;
+		font-weight: 500;
+		background: var(--rl-raised);
+		color: var(--rl-soft);
+		white-space: nowrap;
+	}
+
+	.tag.lan {
+		background: rgba(142, 166, 255, 0.14);
+		color: #B4C4FF;
+	}
+
+	.tag.relay {
+		background: rgba(242, 176, 76, 0.14);
+		color: #F2C27A;
+	}
+
+	.tag.ok {
+		background: rgba(63, 208, 138, 0.14);
+		color: #CFF5E2;
+	}
+
+	.console-screen {
+		cursor: crosshair;
+		border-radius: 8px;
+	}
+</style>
