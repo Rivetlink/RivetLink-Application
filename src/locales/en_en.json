@@ -293,7 +293,8 @@
         "required": "This update is mandatory — you must update to continue.",
         "error": "Couldn't check for updates right now.",
         "download": "Download",
-        "install": "Update & Restart"
+        "install": "Update & Restart",
+        "whatsNew": "What's new"
     },
     "viewer": {
         "connecting": "Connecting — loading the other computer's screen…",

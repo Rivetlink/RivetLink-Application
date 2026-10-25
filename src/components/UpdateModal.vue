@@ -27,6 +27,17 @@
 						{{ t("updates.required") }}
 					</div>
 				</VAlert>
+				<div
+					v-if="updateState.status === UpdateStatus.Available && updateState.notes"
+					class="mt-3"
+				>
+					<div class="text-subtitle-2 mb-1">
+						{{ t("updates.whatsNew") }}
+					</div>
+					<div class="update-notes text-body-2">
+						{{ updateState.notes }}
+					</div>
+				</div>
 				<VAlert
 					v-else-if="updateState.status === UpdateStatus.UpToDate"
 					type="success"
@@ -84,3 +95,11 @@
 		updateState.status === UpdateStatus.Available
 		|| (updateState.forced && updateState.status === UpdateStatus.Error));
 </script>
+
+<style scoped>
+	.update-notes {
+		white-space: pre-line;
+		max-height: 240px;
+		overflow-y: auto;
+	}
+</style>
