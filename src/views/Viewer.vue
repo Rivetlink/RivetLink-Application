@@ -12,19 +12,6 @@
 					:style="canvasStyle"
 				/>
 			</div>
-			<VSelect
-				v-if="displays.length > 1 && hasFrame"
-				v-model="currentDisplay"
-				:items="displays"
-				item-title="name"
-				item-value="id"
-				density="compact"
-				variant="solo"
-				hide-details
-				prepend-inner-icon="mdi-monitor-multiple"
-				class="display-picker"
-				@update:model-value="switchDisplay"
-			/>
 			<div v-if="!hasFrame" class="waiting">
 				<VProgressCircular
 					indeterminate
@@ -80,26 +67,52 @@
 				@close="showShare = false"
 			/>
 		</div>
-		<!-- Always-on toolbar — never folds, so zoom/control/disconnect stay one
-		     click away. Docked in its own row below the stage (no overlap). -->
-		<div v-if="hasFrame" class="zoom-controls">
-			<!-- In the toolbar, not over the stage: an overlay would block clicks
-			     on the remote's top-left corner while controlling. -->
-			<VChip
-				v-if="controlling"
-				class="controlling-chip"
-				color="primary"
-				size="small"
-				variant="flat"
-				prepend-icon="mdi-mouse"
-			>
-				{{ t("viewer.controlling") }}
-			</VChip>
-			<div class="tools">
+		<!-- Always-on toolbar — never folds, so control, screens, zoom and
+		     disconnect stay one click away. Docked in its own row below the stage,
+		     so it never covers the shared screen. -->
+		<div v-if="hasFrame" class="toolbar">
+			<div class="tb-side">
+				<VBtn
+					:color="controlling ? 'primary' : undefined"
+					:variant="controlling ? 'flat' : 'tonal'"
+					:prepend-icon="controlling ? 'mdi-mouse' : 'mdi-mouse-off'"
+					:title="controlling ? t('viewer.releaseControl') : t('viewer.takeControl')"
+					:aria-pressed="controlling"
+					@click="toggleControl"
+				>
+					{{ controlling ? t("viewer.controlling") : t("viewer.viewOnly") }}
+				</VBtn>
+			</div>
+			<div class="tb-group">
+				<template v-if="displays.length > 1">
+					<VMenu location="top">
+						<template #activator="{ props: menu }">
+							<VBtn
+								v-bind="menu"
+								variant="text"
+								prepend-icon="mdi-monitor-multiple"
+								append-icon="mdi-chevron-up"
+							>
+								{{ currentDisplayName }}
+							</VBtn>
+						</template>
+						<VList density="compact">
+							<VListItem
+								v-for="d in displays"
+								:key="d.id"
+								:title="d.name"
+								:active="d.id === currentDisplay"
+								@click="pickDisplay(d.id)"
+							/>
+						</VList>
+					</VMenu>
+					<div class="sep" />
+				</template>
 				<VBtn
 					icon="mdi-minus"
 					size="small"
 					variant="text"
+					:aria-label="t('viewer.zoomOut')"
 					:disabled="zoom <= MIN_ZOOM"
 					@click="zoomBy(-ZOOM_STEP)"
 				/>
@@ -115,17 +128,9 @@
 					icon="mdi-plus"
 					size="small"
 					variant="text"
+					:aria-label="t('viewer.zoomIn')"
 					:disabled="zoom >= MAX_ZOOM"
 					@click="zoomBy(ZOOM_STEP)"
-				/>
-				<div class="sep" />
-				<VBtn
-					:icon="controlling ? 'mdi-mouse' : 'mdi-mouse-off'"
-					size="small"
-					variant="text"
-					:color="controlling ? 'primary' : undefined"
-					:title="controlling ? t('viewer.releaseControl') : t('viewer.takeControl')"
-					@click="toggleControl"
 				/>
 				<template v-if="sharing?.files">
 					<div class="sep" />
@@ -133,22 +138,24 @@
 						icon="mdi-folder-swap-outline"
 						size="small"
 						variant="text"
-						:color="showShare ? 'primary' : undefined"
+						:color="showShare ? 'secondary' : undefined"
 						:title="t('share.title')"
+						:aria-pressed="showShare"
 						@click="showShare = !showShare"
 					/>
 				</template>
-				<div class="sep" />
-				<VBtn
-					icon="mdi-close-circle-outline"
-					size="small"
-					variant="text"
-					color="error"
-					:title="t('viewer.disconnect')"
-					@click="disconnect"
-				/>
 			</div>
-			<span class="stats" :title="t('viewer.statsHint')">{{ statsLabel }}</span>
+			<div class="tb-side end">
+				<span class="stats rl-status" :class="slow ? 'warn' : 'ok'" :title="t('viewer.statsHint')">{{ statsLabel }}</span>
+				<VBtn
+					color="error"
+					variant="tonal"
+					prepend-icon="mdi-power"
+					@click="disconnect"
+				>
+					{{ t("viewer.disconnect") }}
+				</VBtn>
+			</div>
 		</div>
 	</div>
 </template>
@@ -549,6 +556,14 @@
 		if (canvas && ctx.value) {
 			ctx.value.clearRect(0, 0, canvas.width, canvas.height);
 		}
+	}
+
+	const currentDisplayName = computed(() =>
+		displays.value.find((d) => d.id === currentDisplay.value)?.name ?? displays.value[0]?.name ?? "");
+
+	function pickDisplay(id: number): void {
+		currentDisplay.value = id;
+		void switchDisplay(id);
 	}
 
 	async function switchDisplay(id: number | null): Promise<void> {
@@ -1014,12 +1029,6 @@
 		bottom: 12px;
 	}
 
-	.controlling-chip {
-		grid-column: 1;
-		justify-self: start;
-		margin-left: 4px;
-	}
-
 	.handoff-chip {
 		position: absolute;
 		top: 12px;
@@ -1036,59 +1045,66 @@
 	}
 
 	/* Docked toolbar row below the stage — a real layout row, not an overlay, so
-	   it can never cover the shared screen. Three columns keep the tools centered
-	   and the stats at the right edge without overlapping. */
-	.zoom-controls {
+	   it can never cover the shared screen. The two sides share the spare width,
+	   which keeps the middle group centered. */
+	.toolbar {
 		flex: none;
-		display: grid;
-		grid-template-columns: 1fr auto 1fr;
+		display: flex;
+		flex-wrap: wrap;
 		align-items: center;
-		padding: 4px;
-		background: rgba(0, 0, 0, 0.85);
+		justify-content: space-between;
+		gap: 8px 16px;
+		min-height: 56px;
+		padding: 8px 12px;
+		box-sizing: border-box;
+		background: var(--rl-sidebar);
+		border-top: 1px solid var(--rl-border);
 	}
 
-	.tools {
-		grid-column: 2;
+	.tb-side {
+		flex: 1 1 0;
+		min-width: max-content;
+		display: flex;
+		align-items: center;
+		gap: 12px;
+	}
+
+	.tb-side.end {
+		justify-content: flex-end;
+	}
+
+	.tb-group {
 		display: flex;
 		align-items: center;
 		gap: 2px;
+		padding: 3px;
+		border-radius: 11px;
+		background: #0F1115;
+		border: 1px solid var(--rl-border);
 	}
 
 	.sep {
 		width: 1px;
 		height: 20px;
 		margin: 0 4px;
-		background: rgba(255, 255, 255, 0.2);
+		background: var(--rl-border-strong);
 	}
 
 	.stats {
-		grid-column: 3;
-		justify-self: end;
-		padding-right: 8px;
-		color: rgba(255, 255, 255, 0.6);
-		font-size: 0.75rem;
-		font-variant-numeric: tabular-nums;
+		font-family: var(--rl-mono);
+		font-size: 12px;
 		white-space: nowrap;
 	}
 
 	.zoom-label {
-		min-width: 48px;
+		min-width: 56px;
 		color: #fff;
-		font-size: 0.8rem;
+		font-family: var(--rl-mono);
+		font-size: 13px;
 		text-align: center;
 		background: none;
 		border: none;
 		cursor: pointer;
-	}
-
-	.display-picker {
-		position: absolute;
-		top: 12px;
-		left: 50%;
-		transform: translateX(-50%);
-		width: 240px;
-		max-width: 70vw;
-		opacity: 0.85;
 	}
 
 	.screen {

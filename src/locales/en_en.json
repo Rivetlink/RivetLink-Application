@@ -335,7 +335,10 @@
         "controlling": "Controlling",
         "loginHandoff": "Signing in — reconnecting to the desktop…",
         "statsHint": "Stream format, frames per second and bandwidth",
-        "videoFailed": "H.264 video could not be decoded here. Reconnect to use JPEG instead."
+        "videoFailed": "H.264 video could not be decoded here. Reconnect to use JPEG instead.",
+        "viewOnly": "View only",
+        "zoomIn": "Zoom in",
+        "zoomOut": "Zoom out"
     },
     "overlay": {
         "watching": "{name} is viewing",
