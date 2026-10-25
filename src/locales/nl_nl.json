@@ -145,7 +145,12 @@
         "rememberTitle": "{name} onthouden?",
         "rememberHint": "Dan kan't de volgende keer zonder code verbinden. Sleutel:",
         "remember": "Onthoud",
-        "helperRemembered": "Deze helper is onthouden en kan joinen zonder code."
+        "helperRemembered": "Deze helper is onthouden en kan joinen zonder code.",
+        "copy": "Kopiëren",
+        "step1": "Geef je computernaam door:",
+        "step2": "De helper kiest jou onder Apparaten.",
+        "step3": "Die voert de code in.",
+        "manage": "Beheren"
     },
     "relays": {
         "title": "Opgeslagen servers",
