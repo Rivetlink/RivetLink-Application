@@ -173,7 +173,7 @@
 	import { getCurrentWindow } from "@tauri-apps/api/window";
 	import { getCurrentWebview } from "@tauri-apps/api/webview";
 	import SharePanel from "../components/SharePanel.vue";
-	import { H264_CODEC } from "../video";
+	import { H264_CONFIG } from "../video";
 	import {
 		store, type ScrollSpeed,
 	} from "../store";
@@ -481,10 +481,7 @@
 					}
 				},
 			});
-			next.configure({
-				codec: H264_CODEC,
-				optimizeForLatency: true,
-			});
+			next.configure(H264_CONFIG);
 			decoder.value = next;
 		}
 		try {
